@@ -61,10 +61,27 @@ def _store(names: Sequence[str] = ("a.parquet", "b.parquet")) -> MemoryStore:
     return MemoryStore({"labels": files, "descriptions": files, "polygons": files})
 
 
-def test_hub_file_store_defaults_to_binary_reads() -> None:
+def test_hub_file_store_opens_binary_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     mode = inspect.signature(HubFileStore.open).parameters["mode"]
+    modes: list[str] = []
+
+    class FakeFilesystem:
+        def __init__(self, *, token: bool) -> None:
+            assert token is False
+
+        def open(self, path: str, mode: str) -> io.BytesIO:
+            assert path == "manifest.json"
+            modes.append(mode)
+            return io.BytesIO(b"manifest")
+
+    monkeypatch.setattr(source_module, "HfFileSystem", FakeFilesystem)
+    store = HubFileStore()
+
+    with store.open("manifest.json") as stream:
+        assert stream.read() == b"manifest"
 
     assert mode.default == "rb"
+    assert modes == ["rb"]
 
 
 def test_projected_reader_default_batch_size_is_fixed() -> None:
