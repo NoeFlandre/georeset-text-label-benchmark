@@ -99,6 +99,7 @@ class _PromptTokenizer:
         self.template_kwargs: list[dict[str, Any]] = []
 
     def apply_chat_template(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
+        assert isinstance(messages[0]["content"], str)
         self.messages.append(messages)
         self.prompts.append(messages[0]["content"])
         self.template_kwargs.append(kwargs)
@@ -117,6 +118,8 @@ class _FakeEngine:
         self.shutdown_called = False
 
     async def generate(self, input_ids: list[int]) -> dict[str, Any]:
+        assert isinstance(input_ids, list)
+        assert input_ids
         self.calls.append(input_ids)
         index = len(self.calls)
         if index == 1:
@@ -1383,3 +1386,18 @@ def test_gpu_gate_rejects_insufficient_memory_or_compute_capability() -> None:
     ) as error:
         dspark_runner._validate_gpu_record("H100, 81920, 8.0.1")
     assert str(error.value) == "invalid literal for int() with base 10: '0.1'"
+
+
+def test_grid5000_runner_loads_the_cuda_toolkit_before_installing_sglang() -> None:
+    script: Path | None = None
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "scripts/run-dspark-grid5000.sh"
+        if candidate.is_file():
+            script = candidate
+            break
+    assert script is not None
+    content = script.read_text(encoding="utf-8")
+
+    assert 'module load "${DS_CUDA_MODULE:-cuda-toolkit/12.9.1}"' in content
+    assert "if ! command -v nvcc" in content
+    assert content.index("export CUDA_HOME=") < content.index("run_bounded uv sync")

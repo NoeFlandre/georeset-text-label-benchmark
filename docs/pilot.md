@@ -188,7 +188,7 @@ revision whose exact file hashes match the manifest. Install the runtime in a
 dedicated environment:
 
 ```bash
-uv sync --locked --all-groups --extra dspark
+uv sync --locked --no-default-groups --extra dspark
 ```
 
 Then run the adapter against that frozen directory. By default it writes to
@@ -246,6 +246,12 @@ runtime caches. A monitor stops the run if job-local temporary use exceeds
 at most 55 minutes on environment installation and inference to leave time
 inside the one-hour allocation for cleanup. The persistent prediction,
 metrics, and manifest directory is checked to remain below 1 GiB.
+
+Before installing SGLang, the wrapper loads the Grid'5000 Lmod setup and
+`cuda-toolkit/12.9.1` (falling back to the site default `cuda-toolkit`), checks
+for `nvcc`, and exports `CUDA_HOME` and the toolkit library path. Set
+`DS_CUDA_MODULE` if the allocated site exposes the toolkit under another module
+name. The FlashInfer workspace cache also stays under the job-local limit.
 
 The script reads the fixed 100-row input directory and writes only the new
 DSpark output directory. It does not alter the E5 run or submit, inspect,

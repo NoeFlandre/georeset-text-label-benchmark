@@ -99,6 +99,21 @@ if memory_mib < 16_384 or compute < (8, 0):
 print(f"GPU preflight passed: {name}, {memory_mib} MiB, capability {capability}")
 PY
 
+# SGLang/FlashInfer JIT paths need the node's CUDA toolkit at import time.
+source /etc/profile.d/lmod.sh 2>/dev/null || true
+if command -v module >/dev/null 2>&1; then
+  module load "${DS_CUDA_MODULE:-cuda-toolkit/12.9.1}" 2>/dev/null \
+    || module load cuda-toolkit 2>/dev/null \
+    || true
+fi
+if ! command -v nvcc >/dev/null; then
+  echo "A CUDA toolkit with nvcc is required on the allocated GPU node." >&2
+  exit 2
+fi
+CUDA_ROOT=$(dirname -- "$(dirname -- "$(command -v nvcc)")")
+export CUDA_HOME="$CUDA_ROOT"
+export LD_LIBRARY_PATH="$CUDA_ROOT/lib64:$CUDA_ROOT/lib:${LD_LIBRARY_PATH:-}"
+
 JOB_TMP_ROOT=$(mktemp -d --tmpdir="$TMP_PARENT" georeset-dspark.XXXXXX)
 case "$JOB_TMP_ROOT" in
   "$TMP_PARENT"/*) ;;
@@ -131,6 +146,7 @@ export HF_HOME="$JOB_TMP_ROOT/hf"
 export HF_HUB_CACHE="$HF_HOME/hub"
 export XDG_CACHE_HOME="$JOB_TMP_ROOT/xdg"
 export TRITON_CACHE_DIR="$XDG_CACHE_HOME/triton"
+export FLASHINFER_WORKSPACE_BASE="$JOB_TMP_ROOT/flashinfer"
 export UV_CACHE_DIR="$JOB_TMP_ROOT/uv-cache"
 export UV_PROJECT_ENVIRONMENT="$JOB_TMP_ROOT/venv"
 
