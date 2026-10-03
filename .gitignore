@@ -1,0 +1,12 @@
+.venv/
+.cache/
+.coverage
+coverage.json
+htmlcov/
+mutants/
+mutmut-cache/
+site/
+artifacts/
+*.egg-info/
+__pycache__/
+.pytest_cache/

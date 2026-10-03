@@ -1,0 +1,20 @@
+site_name: GeoReset Text Label Overlap
+site_description: Reproducible Description sentence and EUNIS polygon join
+site_author: Noé Flandre
+repo_name: NoeFlandre/georeset-text-label-benchmark
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Overview: index.md
+  - Join contract: join-contract.md
+  - Provenance and attribution: provenance.md
+  - Outputs: outputs.md
+  - Validation: validation.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true

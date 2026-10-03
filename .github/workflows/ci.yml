@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Lint and format
+        run: |
+          uv run ruff check src tests scripts
+          uv run ruff format --check src tests scripts
+      - name: Type check
+        run: uv run ty check src tests scripts
+      - name: Unit tests and branch coverage
+        run: uv run pytest --cov=georeset_text_label_benchmark --cov-report=json:coverage.json --cov-report=term-missing
+      - name: CRAP score gate
+        run: uv run python scripts/check_crap.py coverage.json
+      - name: Mutation testing
+        run: uv run mutmut run
+      - name: Build documentation
+        run: uv run mkdocs build --strict
