@@ -5,8 +5,8 @@ labels from text across sources and reference datasets. This initial
 implementation produces a reproducible, occurrence-level join between pinned
 Description sentence labels and existing EUNIS habitat labels on OSM polygons.
 It is a data integration and coverage report. It does not train a model, fill
-missing values, or recompute geometry. A separate 100-sentence zero-shot
-embedding pilot is documented in [Pilot ranking](pilot.md).
+missing values, or recompute geometry. Separate 100-sentence E5-ranking and
+LFM2.5 + DSpark direct-label pilots are documented in [Label pilots](pilot.md).
 
 The local runner reads the public Hub snapshots by immutable revision and
 streams only projected Parquet columns. It checks all three collections for

@@ -1,4 +1,4 @@
-# Zero-shot EUNIS text-ranking pilot
+# 100-sentence EUNIS label pilots
 
 This pilot checks whether a pinned multilingual sentence-embedding model ranks
 the existing polygon-level EUNIS code among candidate habitat definitions for
@@ -22,7 +22,8 @@ recompute EUNIS geometry.
 
 The overlap dataset contains positive Description sentence / polygon EUNIS
 overlap records. It is not the entire relevance-label table and has no negative
-or missing-overlap examples. At the pinned revision it has 137,464 unique
+or missing-overlap examples. The 158 candidates cover the frozen natural-habitat
+vocabulary; built and intensive-cropland classes are absent. At the pinned revision it has 137,464 unique
 sentence hashes and 200,941 unique polygon keys. The pilot samples from this
 already-computed overlap only.
 
@@ -37,12 +38,13 @@ The model weights and tokenizer are MIT-licensed at the pinned model revision.
 
 Each overlap occurrence receives a stable ID from its source PBF, OSM type and
 ID, Description identity, tag key, zero-based sentence index, and sentence
-SHA-256. The sampler sorts these IDs by `SHA256("42:" + occurrence_id)` and
-walks that order, retaining the first 100 records with both an unseen exact
-sentence hash and an unseen `(source_pbf, osm_type, osm_id)` polygon key. This
-deterministically avoids counting duplicated sentence text or polygons more
-than once in this small pilot. The selected rows, IDs checksum, input hashes,
-coverage counts, and exact candidate CSV are written before model loading.
+SHA-256. Sampling ranks occurrence rows by `SHA256("42:" + occurrence_id)`,
+then keeps the first 100 with an unseen exact sentence hash and unseen
+`(source_pbf, osm_type, osm_id)` polygon key. This means the input is
+occurrence-weighted before the uniqueness filters. It deterministically avoids
+counting duplicated sentence text or polygons more than once in this small
+pilot. The selected rows, IDs checksum, input hashes, coverage counts, and exact
+candidate CSV are written before model loading.
 
 The frozen sample is reproducible from the pinned inputs and seed. Its manifest
 records the computation commit and validation commit so the published result
@@ -125,3 +127,105 @@ habitat judgment. Scientific validation of the EUNIS reference assignments is
 unconfirmed. Results only describe this 100-row sample from positive overlap;
 they do not estimate performance on negatives, missing labels, or a held-out
 population and should not be presented as a validated benchmark score.
+
+## Direct labels with LFM2.5 + DSpark
+
+The second adapter asks [`LiquidAI/LFM2.5-2.6B`](https://huggingface.co/LiquidAI/LFM2.5-2.6B)
+to choose one label directly from the same 158 EUNIS candidates, including each
+candidate's pinned EEA name and definition. It reads only the sentence text and
+candidate vocabulary; it does not pass the gold code/name, score embeddings, or
+shortlist candidates. The command accepts only the published 100-row ID digest
+(`74ab5826b51806947215b0e1635f173ce99af13577e41a431c263cd6a8e57e72`) and the
+pinned candidate CSV. It never calls `freeze` or the sampler.
+
+The target is pinned to revision
+`654f9463ce32b05d0429d76fe1f580b27d4c1ac0`; its paired
+[`LFM2.5-2.6B-DSpark` draft](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark)
+is pinned to `458cedab07d0f7b2b05700c77e1aa463d43d6f04`. The validated
+runtime is SGLang `0.5.20` with FlashInfer `0.6.18`, BF16, `DSPARK`, greedy
+temperature `0`, one request at a time, and at most `4096` generated tokens.
+This uses the [upstream LFM2 DSpark support](https://github.com/sgl-project/sglang/pull/31041)
+and the launch settings in the [official draft card](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark).
+DSpark is speculative decoding with a paired draft checkpoint; it is not a
+hardware device. Under greedy decoding the target verifies draft tokens, so
+DSpark accelerates the target model without changing its output.
+
+LiquidAI documents a `131,072`-token model context. The SGLang path used by this
+project has a `128,000`-token effective context; the adapter checks each rendered
+prompt plus the full `4096`-token generation cap before it loads the serving
+engine. The adapter uses the pinned tokenizer's chat template with
+`enable_thinking=False`; that template still opens a `<think>` region. Parsing
+uses only text after the final `</think>` and accepts an exact code from the
+candidate set. Truncated answers, unclosed reasoning, unknown codes, and other
+formats remain rows with their raw output and a parse failure reason.
+
+The adapter writes three files into a separate LLM run directory beside the
+frozen E5 directory: `dspark_predictions.parquet`, `dspark_metrics.json`, and
+`dspark_manifest.json`. Existing E5 files are not overwritten. Each prediction
+retains the raw generation, parsed code/name or null, parse status/error, prompt
+hash, token counts, finish reason, timing, and DSpark accepted/proposed token
+counts. Overall top-1 accuracy and macro-F1 use all 100 rows; invalid output
+counts as an incorrect prediction and is included in a separate coverage rate.
+The macro-F1 denominator remains all 158 candidates. Direct generation has one
+label per sentence and no top-5 ranking; compare only top-1 accuracy and
+macro-F1 with the E5 output.
+
+### Run requirements
+
+Use Linux with an NVIDIA CUDA GPU visible through `nvidia-smi`. The existing
+validated serving gate admits GPUs with compute capability `8.0` or newer and
+at least `16,384 MiB` of VRAM; this is an admission floor, not a guarantee that
+every runtime allocation fits. LiquidAI's published SGLang throughput test used
+one BF16 H100 with 80 GB. The DSpark extra resolves the CUDA 13 runtime and
+FlashInfer pins, and the command checks that the Hub cache has at least 8 GiB
+free before loading the tokenizer or weights. Do not run this adapter on the
+CPU-only workspace used for unit tests.
+
+First obtain `frozen_sample.json` and `candidate_labels.csv` from the authorized,
+versioned run at
+`pilot/runs/e5-small-100-seed42/`. The run must come from the published dataset
+revision whose exact file hashes match the manifest. Install the runtime in a
+dedicated environment:
+
+```bash
+uv sync --locked --all-groups --extra dspark
+```
+
+Then run the adapter against that frozen directory. By default it writes to
+the sibling `lfm2.5-2.6b-dspark-100-seed42` directory; pass `--output-dir` to
+choose a different new path. `HF_HOME` may be set to a large local cache path before the command; otherwise `--model-cache` is used.
+SGLang downloads the target and draft revisions on the first actual run.
+
+```bash
+PILOT_REVISION=<commit-containing-the-frozen-pilot-files>
+hf download NoeFlandre/georeset-text-label-benchmark \
+  pilot/runs/e5-small-100-seed42/frozen_sample.json \
+  pilot/runs/e5-small-100-seed42/candidate_labels.csv \
+  --repo-type dataset --revision "$PILOT_REVISION" --local-dir artifacts/source
+RUN_DIR=artifacts/source/pilot/runs/e5-small-100-seed42
+COMMIT_SHA=$(git rev-parse HEAD)
+uv run georeset-pilot run-dspark \
+  --run-dir "$RUN_DIR" \
+  --output-dir artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42 \
+  --model-cache .cache/model-dspark \
+  --computation-commit "$COMMIT_SHA" \
+  --validation-commit "$COMMIT_SHA"
+```
+
+The resulting files belong under the distinct run path
+`pilot/runs/lfm2.5-2.6b-dspark-100-seed42/` if published to the same Hub
+dataset. Verify uploaded file SHA-256 values against `dspark_manifest.json`.
+The model files, generated outputs, and inference costs are not downloaded or
+produced by CI.
+
+### Comparison limits
+
+All 100 rows have polygon-level EUNIS assignments from the EEA probability-map
+v1 (2021) source, with reported overlap percentages from `4.82%` to `100%`
+(mean `86.89%`, median `100%`). They remain context rather than sentence-level
+ground truth. For example, the pilot includes a vegetable-shop sentence whose
+polygon code is Q11 (Raised bog), and a construction-site sentence whose code
+is Q51 (Tall-helophyte bed). The result measures agreement with these existing
+assignments on this positive-overlap sample; it does not establish that the
+sentence itself describes the assigned habitat or predict performance on
+negative examples. The EUNIS scientific validation status remains unconfirmed.

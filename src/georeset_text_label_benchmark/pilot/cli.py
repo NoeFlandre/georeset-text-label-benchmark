@@ -7,6 +7,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+from georeset_text_label_benchmark.pilot.dspark_runner import run_dspark_pilot
 from georeset_text_label_benchmark.pilot.protocol import (
     BATCH_SIZE,
     MAX_LENGTH,
@@ -40,6 +41,14 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--validation-commit", required=True)
     run.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     run.add_argument("--max-length", type=int, default=MAX_LENGTH)
+    dspark = commands.add_parser(
+        "run-dspark", help="predict one EUNIS code per row with pinned LFM2.5 + DSpark"
+    )
+    dspark.add_argument("--run-dir", type=Path, default=Path("artifacts/e5-small-100-seed42"))
+    dspark.add_argument("--output-dir", type=Path)
+    dspark.add_argument("--model-cache", type=Path, default=Path(".cache/model-dspark"))
+    dspark.add_argument("--computation-commit", required=True)
+    dspark.add_argument("--validation-commit", required=True)
     return parser
 
 
@@ -55,7 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             size=args.sample_size,
             seed=args.seed,
         )
-    else:
+    elif args.command == "run":
         result = run_pilot(
             args.run_dir,
             args.model_cache,
@@ -63,6 +72,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             validation_commit=args.validation_commit,
             batch_size=args.batch_size,
             max_length=args.max_length,
+        )
+    else:
+        result = run_dspark_pilot(
+            args.run_dir,
+            output_dir=args.output_dir,
+            model_cache_dir=args.model_cache,
+            computation_commit=args.computation_commit,
+            validation_commit=args.validation_commit,
         )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

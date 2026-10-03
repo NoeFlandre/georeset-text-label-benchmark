@@ -384,6 +384,15 @@ def _candidate_rows(run_dir: Path, sample: Mapping[str, Any]) -> list[dict[str, 
     return candidates
 
 
+def read_frozen_pilot_inputs(
+    run_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, str]]]:
+    """Read and validate the existing frozen sample and candidate vocabulary."""
+    sample, rows = _read_frozen_sample(run_dir)
+    candidates = _candidate_rows(run_dir, sample)
+    return sample, rows, candidates
+
+
 def _candidate_records(taxonomy: Mapping[str, Mapping[str, str]]) -> list[dict[str, str]]:
     candidates = [
         {
@@ -656,9 +665,6 @@ def _build_manifest(
     scoring_seconds: float,
     cpu_inference_seconds: float,
 ) -> dict[str, Any]:
-    releases = sorted({row["classification_release"] for row in candidates})
-    citations = sorted({row["classification_source"] for row in candidates})
-    taxonomy_hashes = sorted({row["source_sha256"] for row in candidates})
     return {
         "format_version": 1,
         "computation_commit": computation_commit,
@@ -666,13 +672,7 @@ def _build_manifest(
         "source": sample["source"],
         "source_coverage": sample["source_coverage"],
         "sample": sample["selection"],
-        "candidate_labels": {
-            **sample["candidate_labels"],
-            "classification_releases": releases,
-            "classification_sources": citations,
-            "taxonomy_archive_sha256": taxonomy_hashes,
-            "license": "CC-BY-4.0, European Environment Agency",
-        },
+        "candidate_labels": _candidate_provenance(sample, candidates),
         "model": {
             "repository": MODEL_REPOSITORY,
             "revision": MODEL_REVISION,
@@ -714,4 +714,20 @@ def _build_manifest(
             "Candidate names and descriptions are English; source sentences span languages.",
             "Results are zero-shot label ranking, not model training or fine-tuning.",
         ],
+    }
+
+
+def _candidate_provenance(
+    sample: Mapping[str, Any], candidates: Sequence[Mapping[str, str]]
+) -> dict[str, Any]:
+    """Share the same pinned EEA attribution in both pilot run manifests."""
+    releases = sorted({row["classification_release"] for row in candidates})
+    citations = sorted({row["classification_source"] for row in candidates})
+    taxonomy_hashes = sorted({row["source_sha256"] for row in candidates})
+    return {
+        **sample["candidate_labels"],
+        "classification_releases": releases,
+        "classification_sources": citations,
+        "taxonomy_archive_sha256": taxonomy_hashes,
+        "license": "CC-BY-4.0, European Environment Agency",
     }
