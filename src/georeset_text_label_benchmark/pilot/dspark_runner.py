@@ -384,7 +384,7 @@ def _require_supported_gpu() -> dict[str, Any]:
 
 
 def _validate_gpu_record(record: str) -> dict[str, Any]:
-    name, memory, capability = (part.strip() for part in record.split(",", maxsplit=2))
+    name, memory, capability = (part.strip() for part in record.rsplit(",", maxsplit=2))
     memory_mib = int(float(memory))
     compute = tuple(int(part) for part in capability.split(".", maxsplit=1))
     if memory_mib < MIN_GPU_MEMORY_MIB or compute < MIN_COMPUTE_CAPABILITY:

@@ -218,6 +218,42 @@ dataset. Verify uploaded file SHA-256 values against `dspark_manifest.json`.
 The model files, generated outputs, and inference costs are not downloaded or
 produced by CI.
 
+### Grid’5000 one-GPU execution
+
+Run `scripts/run-dspark-grid5000.sh` only inside a separately allocated Linux
+job with exactly one visible NVIDIA GPU and a one-hour wall-time limit. The
+script does not submit jobs or contact a scheduler. The verified A100 SXM4
+40-GiB node meets the adapter’s 16-GiB / compute-capability-8.0 admission gate.
+
+Provide absolute paths to the already-published frozen input directory and a
+new output directory on persistent storage. The persistent output parent must
+already exist and be writable. For example, after the authorized owner has
+placed the code and input files on the cluster:
+
+```bash
+scripts/run-dspark-grid5000.sh \
+  /path/to/persistent/pilot/runs/e5-small-100-seed42 \
+  /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42
+```
+
+The preflight requires at least 20 GiB free under job-local `$TMPDIR` (or
+`/tmp`) and at least 1 GiB free in the persistent output filesystem. It places
+the locked Python environment, Hugging Face model cache, SGLang/FlashInfer
+runtime caches, and temporary home under a unique directory in that
+job-local filesystem. It never uses the real home directory for model or
+runtime caches. A monitor stops the run if job-local temporary use exceeds
+20 GiB and deletes only the temporary directory it created. The script spends
+at most 55 minutes on environment installation and inference to leave time
+inside the one-hour allocation for cleanup. The persistent prediction,
+metrics, and manifest directory is checked to remain below 1 GiB.
+
+The script reads the fixed 100-row input directory and writes only the new
+DSpark output directory. It does not alter the E5 run or submit, inspect,
+cancel, or modify any other cluster jobs. A scheduler allocation and
+authorization to use the persistent input/output paths are prerequisites; the
+script intentionally leaves scheduler-specific job submission to the cluster
+owner.
+
 ### Comparison limits
 
 All 100 rows have polygon-level EUNIS assignments from the EEA probability-map
