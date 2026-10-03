@@ -36,6 +36,7 @@ JOB_START=$(date +%s)
 JOB_BUDGET_SECONDS=3600
 CALLER_PID=$$
 CALLER_PGID=$("$REAL_PS" -o pgid= -p "$CALLER_PID" | tr -d '[:space:]')
+export CALLER_PID CALLER_PGID
 SCRIPT_PGID=$CALLER_PGID
 SIGNAL_LOG=$RUNNER_SIGNAL_LOG
 kill() {
@@ -86,7 +87,8 @@ if [[ "$target_pid" != "${CALLER_PID:-}" && -n "$target_pid" ]]; then
     same-group-once-per-pid)
       if [[ "$target_pid" != "$previous" ]]; then
         printf '%s' "$target_pid" > "$PS_STATE"
-        printf ' %s\\n' "$CALLER_PGID"
+        printf ' %s\\n' "$CALLER_PGID" || exit $?
+        printf 'injected\\n' > "$PS_INJECTION_LOG"
         exit 0
       fi
       ;;
@@ -105,6 +107,7 @@ exec "$REAL_PS" "$@"
             "REAL_PS": real_ps,
             "PS_MODE": ps_mode,
             "PS_STATE": str(tmp_path / "ps-state"),
+            "PS_INJECTION_LOG": str(tmp_path / "ps-injection.log"),
             "RUNNER_SIGNAL_LOG": str(tmp_path / "signals.log"),
         }
     )
@@ -200,6 +203,7 @@ def test_runner_waits_for_a_process_group_distinct_from_its_own(tmp_path: Path) 
     result = _run_driver(shell, environment)
 
     assert result.returncode == 0, result.stderr
+    assert Path(environment["PS_INJECTION_LOG"]).read_text(encoding="utf-8") == "injected\n"
     signal_log = Path(environment["RUNNER_SIGNAL_LOG"])
     assert "SHARED" not in (signal_log.read_text() if signal_log.exists() else "")
 
