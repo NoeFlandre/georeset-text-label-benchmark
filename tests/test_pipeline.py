@@ -224,16 +224,32 @@ def test_run_baseline_mismatch_cleans_staging_output(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
+def test_run_rejects_mismatched_label_row_baseline(tmp_path: Path) -> None:
+    with pytest.raises(
+        DataValidationError,
+        match="label_rows: expected 6, observed 5",
+    ):
+        run_pipeline(TinySource(), tmp_path / "label-mismatch", expected_counts={"label_rows": 6})
+
+    assert not (tmp_path / "label-mismatch").exists()
+
+
 def test_run_records_expected_and_observed_baseline_counts(tmp_path: Path) -> None:
     result = run_pipeline(
         TinySource(),
         tmp_path / "baseline",
-        expected_counts={"polygon_rows": 5, "yes": 2, "skipped_unsplit": 1},
+        expected_counts={"polygon_rows": 5, "label_rows": 5, "yes": 2, "skipped_unsplit": 1},
     )
 
     baseline = result["baseline_verification"]
     assert baseline["checked"] is True
-    assert baseline["expected_counts"] == {"polygon_rows": 5, "yes": 2, "skipped_unsplit": 1}
+    assert baseline["expected_counts"] == {
+        "polygon_rows": 5,
+        "label_rows": 5,
+        "yes": 2,
+        "skipped_unsplit": 1,
+    }
+    assert baseline["observed_counts"]["label_rows"] == 5
     assert baseline["observed_counts"]["yes"] == 2
     assert baseline["observed_counts"]["skipped_unsplit"] == 1
 

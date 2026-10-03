@@ -153,13 +153,7 @@ def _verify_expected_counts(
 ) -> None:
     if expected is None:
         return
-    actual = {
-        **stages,
-        "yes": audit.decisions["yes"],
-        "no": audit.decisions["no"],
-        "failed": audit.decisions["failed"],
-        "skipped_unsplit": audit.decisions["skipped_unsplit"],
-    }
+    actual = _observed_counts(stages, audit)
     mismatches = [
         f"{name}: expected {value}, observed {actual.get(name)}"
         for name, value in expected.items()
@@ -169,19 +163,27 @@ def _verify_expected_counts(
         raise DataValidationError("pinned source baseline mismatch: " + "; ".join(mismatches))
 
 
-def _baseline_result(
-    stages: Mapping[str, int], audit: AuditCounts, expected: Mapping[str, int] | None
-) -> dict[str, Any]:
-    if expected is None:
-        return {"checked": False, "expected_counts": None}
-    observed = {
+def _observed_counts(stages: Mapping[str, int], audit: AuditCounts) -> dict[str, int]:
+    return {
         **stages,
+        "label_rows": audit.label_rows,
         "yes": audit.decisions["yes"],
         "no": audit.decisions["no"],
         "failed": audit.decisions["failed"],
         "skipped_unsplit": audit.decisions["skipped_unsplit"],
     }
-    return {"checked": True, "expected_counts": dict(expected), "observed_counts": observed}
+
+
+def _baseline_result(
+    stages: Mapping[str, int], audit: AuditCounts, expected: Mapping[str, int] | None
+) -> dict[str, Any]:
+    if expected is None:
+        return {"checked": False, "expected_counts": None}
+    return {
+        "checked": True,
+        "expected_counts": dict(expected),
+        "observed_counts": _observed_counts(stages, audit),
+    }
 
 
 def _assignment_summary(audit: AuditCounts) -> dict[str, dict[str, int]]:
