@@ -29,7 +29,8 @@ and is not a prediction-evaluation result.
 * `summary.json`: all source stages and negative, failed, unsplit, missing-label,
   and unmatched counts;
 * `manifest.json`: pinned source revisions, join keys, schema, EUNIS manifest
-  digest and version, terms, and output row count.
+  digest and version, computation and validation commits, output checksums,
+  terms, and output row count.
 
 The long-form overlap contains the exact source sentence, its sentence index
 and SHA-256, Description tag and language, OSM polygon key and source extract,

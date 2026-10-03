@@ -41,13 +41,18 @@ only selected Parquet columns in bounded batches.
 
 ```bash
 uv sync --locked --all-groups
-uv run georeset-benchmark run --output artifacts/description-eunis-overlap
+COMMIT_SHA=$(git rev-parse HEAD)
+uv run georeset-benchmark run \
+  --output artifacts/description-eunis-overlap \
+  --computation-commit "$COMMIT_SHA" \
+  --validation-commit "$COMMIT_SHA"
 ```
 
 The output path must be new. The run writes `overlap.parquet`, `summary.json`,
 and `manifest.json` together after source checks and baseline counts pass. See
 the [`docs`](docs/index.md) for source provenance, join rules, output fields,
-quality checks, and data terms.
+quality checks, and data terms. The manifest includes the exact computation and
+validation commits and SHA-256 checksums for the Parquet and summary artifacts.
 
 ## Engineering checks
 
@@ -58,6 +63,7 @@ uv run ty check src tests scripts
 uv run pytest --cov=georeset_text_label_benchmark --cov-report=json:coverage.json
 uv run python scripts/check_crap.py coverage.json
 uv run mutmut run
+uv run python scripts/check_mutations.py
 uv run mkdocs build --strict
 ```
 

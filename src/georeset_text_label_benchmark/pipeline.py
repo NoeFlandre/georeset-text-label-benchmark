@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
+import traceback
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -27,6 +30,9 @@ from georeset_text_label_benchmark.source import (
     POLYGON_COLUMNS,
 )
 
+COMMIT_SHA_PATTERN = re.compile(r"[0-9a-fA-F]{40}")
+HASH_CHUNK_BYTES = 1024 * 1024
+
 
 class OverlapSource(Protocol):
     """Narrow read-only interface used by the pipeline and its local tests."""
@@ -44,27 +50,71 @@ def run_pipeline(
     source: OverlapSource,
     output_dir: str | Path,
     *,
+    computation_commit: str,
+    validation_commit: str,
     expected_counts: Mapping[str, int] | None = EXPECTED_SOURCE_COUNTS,
 ) -> dict[str, Any]:
     """Join aligned shards, write only retained occurrences, and atomically publish artifacts."""
+    _validate_commit("computation_commit", computation_commit)
+    _validate_commit("validation_commit", validation_commit)
     destination = Path(output_dir)
     if destination.exists():
         raise DataValidationError(f"output path already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=destination.parent))
     try:
-        summary = _build_run(source, stage, expected_counts)
+        summary = _build_run(source, stage, expected_counts, computation_commit, validation_commit)
         os.replace(stage, destination)
-    except Exception:
+    except Exception as error:
+        try:
+            _preserve_failure_diagnostic(destination, stage, error)
+        except OSError as diagnostic_error:
+            error.add_note(
+                f"Could not write failure diagnostics ({diagnostic_error}); "
+                f"staging directory retained at {stage}"
+            )
+            raise error.with_traceback(error.__traceback__) from None
         shutil.rmtree(stage, ignore_errors=True)
         raise
     return summary
+
+
+def _validate_commit(field: str, value: str) -> None:
+    if not isinstance(value, str) or COMMIT_SHA_PATTERN.fullmatch(value) is None:
+        raise DataValidationError(f"{field} must be a 40-character hexadecimal Git commit SHA")
+
+
+def _preserve_failure_diagnostic(destination: Path, stage: Path, error: Exception) -> None:
+    record = {
+        "status": "failed",
+        "output_path": str(destination),
+        "error_type": type(error).__name__,
+        "error_message": str(error),
+        "traceback": "".join(traceback.format_exception(error)),
+        "staged_files": _staged_file_inventory(stage),
+    }
+    descriptor, _path = tempfile.mkstemp(
+        prefix=f".{destination.name}-failure-", suffix=".json", dir=destination.parent
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(record, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+
+
+def _staged_file_inventory(stage: Path) -> list[dict[str, Any]]:
+    return [
+        {"path": path.relative_to(stage).as_posix(), "size_bytes": path.stat().st_size}
+        for path in sorted(stage.rglob("*"))
+        if path.is_file()
+    ]
 
 
 def _build_run(
     source: OverlapSource,
     stage: Path,
     expected_counts: Mapping[str, int] | None,
+    computation_commit: str,
+    validation_commit: str,
 ) -> dict[str, Any]:
     partitions = source.partitions()
     if not partitions:
@@ -77,7 +127,11 @@ def _build_run(
     try:
         for partition in partitions:
             result = _process_source_partition(
-                source, partition, keys, source.snapshots.input_revision
+                source,
+                partition,
+                keys,
+                source.snapshots.input_revision,
+                manifest["eunis_reference_version"],
             )
             if result.overlap_rows:
                 writer.write_table(pa.Table.from_pylist(result.overlap_rows, schema=OVERLAP_SCHEMA))
@@ -85,9 +139,34 @@ def _build_run(
     finally:
         writer.close()
     summary = _summary(audit, keys, partitions, manifest, expected_counts)
-    _write_json(stage / "summary.json", summary)
-    _write_json(stage / "manifest.json", _manifest(source.snapshots, manifest, summary))
+    summary_path = stage / "summary.json"
+    _write_json(summary_path, summary)
+    artifact_sha256 = {
+        "overlap.parquet": _sha256_file(output_path),
+        "summary.json": _sha256_file(summary_path),
+    }
+    _write_json(
+        stage / "manifest.json",
+        _manifest(
+            source.snapshots,
+            manifest,
+            summary,
+            artifact_sha256,
+            computation_commit,
+            validation_commit,
+        ),
+    )
     return summary
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        chunk = stream.read(HASH_CHUNK_BYTES)
+        while chunk:
+            digest.update(chunk)
+            chunk = stream.read(HASH_CHUNK_BYTES)
+    return digest.hexdigest()
 
 
 def _process_source_partition(
@@ -95,6 +174,7 @@ def _process_source_partition(
     partition: SourcePartition,
     keys: GlobalKeys,
     input_revision: str,
+    expected_eunis_source_version: str,
 ):
     labels = source.read_rows(partition.labels_path, LABEL_COLUMNS)
     descriptions = source.read_rows(partition.descriptions_path, DESCRIPTION_COLUMNS)
@@ -105,6 +185,7 @@ def _process_source_partition(
         polygons,
         input_revision=input_revision,
         partition_name=partition.name,
+        expected_eunis_source_version=expected_eunis_source_version,
         global_keys=keys,
     )
 
@@ -210,11 +291,16 @@ def _manifest(
     snapshots: DatasetSnapshots,
     eunis_manifest: Mapping[str, Any],
     summary: Mapping[str, Any],
+    artifact_sha256: Mapping[str, str],
+    computation_commit: str,
+    validation_commit: str,
 ) -> dict[str, Any]:
     return {
         "project": "georeset-text-label-benchmark",
         "project_version": "0.1.0",
         "author": "Noé Flandre",
+        "computation_commit": computation_commit,
+        "validation_commit": validation_commit,
         "method": "exact sentence-occurrence join; no geometry recomputation",
         "join_keys": {
             "label_to_description": ["description_identity", "tag_key"],
@@ -235,6 +321,7 @@ def _manifest(
             for field in OVERLAP_SCHEMA
         ],
         "output_row_count": summary["stages"]["retained_overlap_rows"],
+        "artifact_sha256": dict(artifact_sha256),
         "eunis_context_is_polygon_context_not_sentence_ground_truth": True,
         "license_and_attribution": {
             "project_code": "Apache-2.0",

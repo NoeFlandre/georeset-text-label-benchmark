@@ -28,12 +28,15 @@ def process_partition(
     *,
     input_revision: str,
     partition_name: str,
+    expected_eunis_source_version: str,
     global_keys: GlobalKeys | None = None,
 ) -> PartitionResult:
     """Join one bounded source partition and return eligible rows plus audit counts."""
     seen = global_keys if global_keys is not None else GlobalKeys()
     audit = AuditCounts()
-    polygon_index = _index_polygons(polygons, seen, audit, partition_name)
+    polygon_index = _index_polygons(
+        polygons, seen, audit, partition_name, expected_eunis_source_version
+    )
     description_index = _index_descriptions(
         descriptions, polygon_index, seen, audit, partition_name
     )
@@ -71,7 +74,9 @@ def _description_key(row: Mapping[str, Any], context: str) -> DescriptionKey:
     return identity, tag_key
 
 
-def _validate_eunis_assignment(row: Mapping[str, Any], context: str) -> str | None:
+def _validate_eunis_assignment(
+    row: Mapping[str, Any], context: str, expected_eunis_source_version: str
+) -> str | None:
     code = row.get("eunis_code")
     name = row.get("eunis_name")
     overlap = row.get("eunis_overlap_percentage")
@@ -83,6 +88,11 @@ def _validate_eunis_assignment(row: Mapping[str, Any], context: str) -> str | No
             )
         return None
     _validate_assigned_eunis(code, name, overlap, version, context)
+    if version != expected_eunis_source_version:
+        raise ProvenanceError(
+            f"{context}: eunis_source_version {version!r} differs from pinned "
+            f"EUNIS reference version {expected_eunis_source_version!r}"
+        )
     return code
 
 
@@ -124,16 +134,17 @@ def _index_polygons(
     seen: GlobalKeys,
     audit: AuditCounts,
     partition_name: str,
+    expected_eunis_source_version: str,
 ) -> dict[PolygonKey, Mapping[str, Any]]:
     polygons: dict[PolygonKey, Mapping[str, Any]] = {}
     for row in rows:
         context = f"{partition_name} polygon"
-        source_pbf = _required_text(row, "source_pbf", context)
+        _required_text(row, "source_pbf", context)
         key = _polygon_key(row, context)
         if key in polygons or key in seen.polygon_keys:
             raise CardinalityError(f"{context}: duplicate global polygon key {key}")
-        _validate_eunis_assignment(row, context)
-        polygons[key] = {**row, "source_pbf": source_pbf}
+        _validate_eunis_assignment(row, context, expected_eunis_source_version)
+        polygons[key] = row
         seen.polygon_keys.add(key)
         audit.polygon_rows += 1
         if row.get("eunis_code") is not None:

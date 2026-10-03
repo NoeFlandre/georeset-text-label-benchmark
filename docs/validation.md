@@ -24,7 +24,12 @@ Each run checks all of the following before publishing outputs:
 
 Unmatched rows, missing sentence labels, duplicate keys, and unknown decisions
 fail closed. The output path must be new. The run writes to a temporary sibling
-directory and renames it only after all checks pass.
+directory and renames it only after all checks pass. A handled exception writes
+a sibling failure JSON with the exception, traceback, and temporary-file size
+inventory before removing the incomplete staged output. If that diagnostic
+cannot be written, the stage is retained and its path is added to the original
+exception. A process terminated outside Python's exception handling cannot
+write a failure JSON; its temporary stage remains for diagnosis.
 
 ## Test-first evidence
 
@@ -32,17 +37,36 @@ The initial occurrence join test was run against a stub which raised
 `NotImplementedError` and failed. Implementing the first join path made that
 test green; later tests add coverage for missing/unmatched keys, duplicates,
 negative and invalid decisions, exact hashes, language and source provenance,
-EUNIS missingness, shard discovery, and output creation. Tests use tiny local
-fixtures; no model or EUNIS geometry is executed.
+EUNIS missingness, shard discovery, and output creation. The pinned-baseline
+alias regression was reproduced with a `label_rows` expected count and then
+fixed; the fixture now verifies every baseline key end-to-end through the
+summary and manifest. A separate mismatch test confirms the diagnostic is
+saved before staging cleanup. Tests use tiny local fixtures; no model or EUNIS
+geometry is executed.
 
 ## Static, complexity, and mutation checks
 
 The project uses `ruff` for linting, formatting, and a maximum McCabe
 complexity of five, `ty` for types, and branch coverage via pytest-cov. The CI
-CRAP check computes the CRAP score for each production function and rejects
-scores greater than or equal to six. Mutation testing runs over the same
-production package and tests. The root project README lists the reproducible
-commands.
+CRAP check uses conventional McCabe decision points, including loops and
+filters inside comprehensions, and computes the score for every function in
+the production package. The check rejects scores greater than or equal to six
+and fails if any owned source file is absent from the coverage report. The CI
+mutation result gate rejects survivors, timeouts, unknown states, and mutants
+without tests; it does not infer success from `mutmut run` returning zero. The
+production package, including the quality gates themselves, is in the mutation
+scope. The current mutation run killed 1,697 of 1,700 mutants, with no mutant
+missing tests. Three surviving changes are listed by exact ID and evidence in
+the gate and accepted only while they remain `survived`:
+
+| Exact mutant ID | Equivalent change and evidence |
+| --- | --- |
+| `georeset_text_label_benchmark.join.x__validate_text_hash__mutmut_18` | Changes an exception-path `False` to `None`; both are false under the only following condition and raise the same validation error. Invalid hexadecimal hashes are covered. |
+| `georeset_text_label_benchmark.join.x__verify_sentence_hash__mutmut_6` | Changes the codec name from `utf-8` to `UTF-8`; Python resolves both names to the same UTF-8 codec, so sentence bytes and SHA-256 are identical. Exact hash checks are covered. |
+| `georeset_text_label_benchmark.pipeline.x__build_run__mutmut_21` | Changes the PyArrow codec argument from `zstd` to `ZSTD`; both select the same codec and the Parquet metadata test verifies the resulting `ZSTD` compression. |
+
+All other survivor IDs, every timeout, and every mutant without tests fail the
+gate. The root project README lists the reproducible commands.
 
 ## Storage and read behavior
 

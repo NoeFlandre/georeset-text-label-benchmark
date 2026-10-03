@@ -58,7 +58,7 @@ class FileStore(Protocol):
 
     def glob(self, pattern: str) -> list[str]: ...
 
-    def open(self, path: str, mode: str = "rb") -> IO[bytes]: ...
+    def open(self, path: str, mode: str) -> IO[bytes]: ...
 
 
 class HubFileStore:
@@ -94,9 +94,7 @@ class DescriptionSource:
 
     def partitions(self) -> list[SourcePartition]:
         """Return filename-aligned labels, description values, and polygon shards."""
-        roots = self._roots()
-        files = {name: self._files(root, prefix) for name, (root, prefix) in roots.items()}
-        indexes = {name: self._by_filename(name, paths) for name, paths in files.items()}
+        indexes = self._partition_indexes()
         names = set(indexes["labels"])
         if names != set(indexes["descriptions"]) or names != set(indexes["polygons"]):
             raise CardinalityError("source shard filenames do not match across all three snapshots")
@@ -109,6 +107,12 @@ class DescriptionSource:
             )
             for filename in sorted(names)
         ]
+
+    def _partition_indexes(self) -> dict[str, dict[str, str]]:
+        return {
+            name: self._by_filename(name, self._files(root, prefix))
+            for name, (root, prefix) in self._roots().items()
+        }
 
     def read_rows(
         self, path: str, columns: Sequence[str], batch_size: int = 8_192

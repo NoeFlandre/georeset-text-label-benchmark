@@ -40,7 +40,6 @@ addopts = "--strict-markers --strict-config"
 [tool.coverage.run]
 branch = true
 source = ["georeset_text_label_benchmark"]
-omit = ["*/__main__.py"]
 
 [tool.coverage.report]
 show_missing = true
@@ -51,7 +50,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["B", "C4", "E4", "E7", "E9", "F", "I", "PT", "RUF", "SIM", "UP"]
+select = ["B", "C4", "C901", "E4", "E7", "E9", "F", "I", "PT", "RUF", "SIM", "UP"]
 mccabe.max-complexity = 5
 
 [tool.ruff.format]
@@ -64,3 +63,4 @@ python-version = "3.12"
 source_paths = ["src/georeset_text_label_benchmark/"]
 pytest_add_cli_args_test_selection = ["tests"]
 dict_synonyms = ["Dict"]
+on_dependency_change = "rerun"

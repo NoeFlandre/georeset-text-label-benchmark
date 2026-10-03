@@ -21,11 +21,26 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("artifacts/description-eunis-overlap"),
         help="new directory for overlap.parquet, summary.json, and manifest.json",
     )
+    run.add_argument(
+        "--computation-commit",
+        required=True,
+        help="40-character Git commit SHA of the code used to generate the artifacts",
+    )
+    run.add_argument(
+        "--validation-commit",
+        required=True,
+        help="40-character Git commit SHA of the code used to validate the artifacts",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    summary = run_pipeline(DescriptionSource.from_hub(), args.output)
+    summary = run_pipeline(
+        DescriptionSource.from_hub(),
+        args.output,
+        computation_commit=args.computation_commit,
+        validation_commit=args.validation_commit,
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

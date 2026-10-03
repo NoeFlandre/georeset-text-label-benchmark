@@ -38,6 +38,9 @@ publication.
 The manifest records both repository revisions, shared input revision, EUNIS
 manifest hash and reference version, join keys, output schema, output row
 count, licenses and EEA asset factsheet links, and the polygon-context caveat.
+It also records the exact computation and validation Git commits, plus
+SHA-256 checksums for `overlap.parquet` and `summary.json`. The manifest itself
+is not self-hashed.
 The manifest is deterministic for a given summary and source revision (it does
 not inject a wall-clock timestamp).
 
