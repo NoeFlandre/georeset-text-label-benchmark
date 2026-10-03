@@ -7,9 +7,10 @@ import csv
 import hashlib
 import json
 import shutil
+import sys
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+from types import ModuleType, SimpleNamespace
+from typing import Any, cast
 
 import pyarrow.parquet as pq
 import pytest
@@ -87,7 +88,60 @@ def _write_frozen_run(run_dir: Path, size: int = 100) -> list[dict[str, Any]]:
         "selected_rows": selected,
     }
     runner._write_json_exclusive(run_dir / "frozen_sample.json", sample)
+    runner._write_json_exclusive(
+        run_dir / "manifest.json",
+        {
+            "format_version": 1,
+            "source": sample["source"],
+            "sample": sample["selection"],
+            "candidate_labels": sample["candidate_labels"],
+            "model": {
+                "repository": runner.MODEL_REPOSITORY,
+                "revision": runner.MODEL_REVISION,
+            },
+            "outputs_sha256": {
+                "frozen_sample.json": runner.sha256_file(run_dir / "frozen_sample.json"),
+                "candidate_labels.csv": runner.sha256_file(run_dir / "candidate_labels.csv"),
+            },
+        },
+    )
     return selected
+
+
+def _mock_cuda_preflight(_gpu: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "passed", "torch_cuda": "13.0"}
+
+
+def _expected_dspark_class_metrics(
+    candidate_codes: list[str], names: dict[str, str]
+) -> list[dict[str, Any]]:
+    metrics = []
+    for code in candidate_codes:
+        if code == "T11":
+            metrics.append(
+                {
+                    "eunis_code": code,
+                    "support": 100,
+                    "prediction_count": 1,
+                    "top1_correct": 1,
+                    "top1_precision": 1.0,
+                    "top1_recall": pytest.approx(0.01),
+                    "eunis_name": names[code],
+                }
+            )
+        else:
+            metrics.append(
+                {
+                    "eunis_code": code,
+                    "support": 0,
+                    "prediction_count": 0,
+                    "top1_correct": 0,
+                    "top1_precision": None,
+                    "top1_recall": None,
+                    "eunis_name": names[code],
+                }
+            )
+    return metrics
 
 
 class _PromptTokenizer:
@@ -197,6 +251,7 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
     assert dspark.ENGINE_ARGS == {
         "dtype": "bfloat16",
         "random_seed": 0,
+        "context_length": 128_000,
         "speculative_algorithm": "DSPARK",
         "speculative_draft_attention_backend": "flashinfer",
         "disable_radix_cache": True,
@@ -215,6 +270,7 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
         "speculative_draft_model_revision": "458cedab07d0f7b2b05700c77e1aa463d43d6f04",
         "dtype": "bfloat16",
         "random_seed": 0,
+        "context_length": 128_000,
         "speculative_algorithm": "DSPARK",
         "speculative_draft_attention_backend": "flashinfer",
         "disable_radix_cache": True,
@@ -369,14 +425,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
 ) -> None:
     run_dir = tmp_path / "pilot"
     run_dir.mkdir()
-    output_arg = {
-        "default": None,
-        "nested": tmp_path / "missing-parent" / "nested" / "dspark",
-    }[output_mode]
-    output_dir = output_arg or tmp_path / "lfm2.5-2.6b-dspark-100-seed42"
-    assert not output_dir.exists()
-    if output_mode == "nested":
-        assert not output_dir.parent.exists()
+    output_arg, output_dir = _output_arguments(tmp_path, output_mode)
     selected = _write_frozen_run(run_dir)
     frozen_before = (run_dir / "frozen_sample.json").read_bytes()
     (run_dir / "predictions.parquet").write_bytes(b"existing E5 predictions")
@@ -393,9 +442,16 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         cache_arguments.append(path)
         return tmp_path / "cache"
 
+    preflight_gpus: list[dict[str, Any]] = []
+
+    def runtime_preflight(gpu: dict[str, Any]) -> dict[str, Any]:
+        preflight_gpus.append(gpu)
+        return _mock_cuda_preflight(gpu)
+
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
     monkeypatch.setattr(dspark, "SGLangEngine", engine_factory)
     monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", runtime_preflight)
     monkeypatch.setattr(dspark_runner, "_prepare_model_cache", prepare_cache)
     monkeypatch.setattr(dspark, "RUNTIME_CONTEXT_TOKENS", 128_000)
     monkeypatch.setattr(
@@ -479,6 +535,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     assert engine.shutdown_called
     assert engine_construction == [(dspark.engine_kwargs(), dspark.SAMPLING)]
     assert cache_arguments == [Path(".cache/model-dspark")]
+    assert preflight_gpus == [{"name": "mock GPU"}]
     assert len(tokenizer.prompts) == 100
     assert predictions[0] == expected_first_prediction
     assert predictions[1] == {
@@ -520,6 +577,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "engine": {
             "dtype": "bfloat16",
             "random_seed": 0,
+            "context_length": 128_000,
             "speculative_algorithm": "DSPARK",
             "speculative_draft_attention_backend": "flashinfer",
             "disable_radix_cache": True,
@@ -543,18 +601,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "taxonomy_archive_sha256": sorted({row["source_sha256"] for row in candidate_rows}),
         "license": "CC-BY-4.0, European Environment Agency",
     }
-    expected_classes = [
-        {
-            "eunis_code": code,
-            "support": 100 if code == "T11" else 0,
-            "prediction_count": 1 if code == "T11" else 0,
-            "top1_correct": 1 if code == "T11" else 0,
-            "top1_precision": 1.0 if code == "T11" else None,
-            "top1_recall": pytest.approx(0.01) if code == "T11" else None,
-            "eunis_name": names[code],
-        }
-        for code in candidate_codes
-    ]
+    expected_classes = _expected_dspark_class_metrics(candidate_codes, names)
     expected_overall = result["metrics"]
     assert metrics == {
         "overall": expected_overall,
@@ -593,6 +640,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "computation_commit": "a" * 40,
         "validation_commit": "b" * 40,
         "source": sample["source"],
+        "frozen_e5_manifest_sha256": runner.sha256_file(run_dir / "manifest.json"),
         "source_coverage": sample["source_coverage"],
         "sample": sample["selection"],
         "candidate_labels": expected_candidate_labels,
@@ -607,6 +655,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "revision": "458cedab07d0f7b2b05700c77e1aa463d43d6f04",
             "license": "LFM1.0",
             "parameters": 327_700_000,
+            "context_tokens": 128_000,
         },
         "generation_config": expected_generation_config,
         "generation_config_sha256": runner._sha256_json(expected_generation_config),
@@ -614,6 +663,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "python": "3.12.0",
             "engine_version": "0.5.20",
             "gpu": {"name": "mock GPU"},
+            "cuda_preflight": {"status": "passed", "torch_cuda": "13.0"},
             "model_cache": str(tmp_path / "cache"),
         },
         "timings_seconds": {
@@ -643,6 +693,18 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     assert (run_dir / "predictions.parquet").read_bytes() == b"existing E5 predictions"
 
 
+def _output_arguments(tmp_path: Path, mode: str) -> tuple[Path | None, Path]:
+    output_arg = {
+        "default": None,
+        "nested": tmp_path / "missing-parent" / "nested" / "dspark",
+    }[mode]
+    output_dir = output_arg or tmp_path / "lfm2.5-2.6b-dspark-100-seed42"
+    assert not output_dir.exists()
+    if mode == "nested":
+        assert not output_dir.parent.exists()
+    return output_arg, output_dir
+
+
 def test_runner_preserves_output_created_during_inference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -655,6 +717,7 @@ def test_runner_preserves_output_created_during_inference(
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
     monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: engine)
     monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
     monkeypatch.setattr(dspark_runner, "_prepare_model_cache", lambda _path: tmp_path / "cache")
     monkeypatch.setattr(dspark, "RUNTIME_CONTEXT_TOKENS", 128_000)
     monkeypatch.setattr(
@@ -751,6 +814,171 @@ def test_runner_rejects_a_different_sample_before_loading_runtime(
     assert str(error.value) == "frozen sample IDs do not match the published pilot"
 
 
+def test_runner_verifies_full_frozen_inputs_before_gpu_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    selected = _write_frozen_run(run_dir)
+    monkeypatch.setattr(
+        dspark,
+        "EXPECTED_SAMPLE_IDS_SHA256",
+        runner._sha256_json([row["sample_id"] for row in selected]),
+    )
+    sample_path = run_dir / "frozen_sample.json"
+    sample = json.loads(sample_path.read_text(encoding="utf-8"))
+    # Preserve the expected sample ID digest while changing another frozen value.
+    sample["selected_rows"][0]["language_code"] = "tampered"
+    sample_path.write_text(json.dumps(sample), encoding="utf-8")
+    monkeypatch.setattr(
+        dspark_runner,
+        "_require_supported_gpu",
+        lambda: pytest.fail("frozen inputs must be verified before GPU admission"),
+    )
+
+    with pytest.raises(ValueError, match=r"^E5 manifest hash mismatch for frozen_sample\.json$"):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+        )
+
+
+def test_frozen_e5_manifest_binds_the_candidate_csv_bytes(tmp_path: Path) -> None:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    _write_frozen_run(run_dir)
+    sample = json.loads((run_dir / "frozen_sample.json").read_text(encoding="utf-8"))
+    with (run_dir / "candidate_labels.csv").open("a", encoding="utf-8") as stream:
+        stream.write("\n")
+
+    with pytest.raises(
+        ValueError,
+        match=r"^E5 manifest hash mismatch for candidate_labels\.csv$",
+    ):
+        dspark_runner._validate_frozen_e5_manifest(run_dir, sample)
+
+
+def test_runner_requires_published_e5_manifest_before_gpu_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    selected = _write_frozen_run(run_dir)
+    monkeypatch.setattr(
+        dspark,
+        "EXPECTED_SAMPLE_IDS_SHA256",
+        runner._sha256_json([row["sample_id"] for row in selected]),
+    )
+    (run_dir / "manifest.json").unlink()
+    monkeypatch.setattr(
+        dspark_runner,
+        "_require_supported_gpu",
+        lambda: pytest.fail("missing source manifest must be rejected before GPU admission"),
+    )
+
+    with pytest.raises(
+        ValueError, match=r"^frozen E5 manifest\.json is required to verify the published inputs$"
+    ):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+        )
+
+
+@pytest.mark.parametrize(
+    ("manifest_edit", "message"),
+    [
+        (
+            lambda manifest: manifest.update(source={"dataset": "different"}),
+            "frozen E5 manifest source does not match frozen_sample.json",
+        ),
+        (
+            lambda manifest: manifest.update(sample={"seed": 41}),
+            "frozen E5 manifest sample does not match frozen_sample.json",
+        ),
+        (
+            lambda manifest: manifest.update(candidate_labels=None),
+            "frozen E5 manifest candidate provenance is missing",
+        ),
+        (
+            lambda manifest: manifest.update(model={"repository": runner.MODEL_REPOSITORY}),
+            "frozen inputs are not from the pinned E5 model run",
+        ),
+        (
+            lambda manifest: manifest.update(outputs_sha256=None),
+            "frozen E5 manifest has no outputs_sha256 object",
+        ),
+    ],
+)
+def test_frozen_e5_manifest_rejects_provenance_drift(
+    tmp_path: Path,
+    manifest_edit: Any,
+    message: str,
+) -> None:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    _write_frozen_run(run_dir)
+    sample = json.loads((run_dir / "frozen_sample.json").read_text(encoding="utf-8"))
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_edit(manifest)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        dspark_runner._validate_frozen_e5_manifest(run_dir, sample)
+
+
+@pytest.mark.parametrize(
+    ("field", "different_value"),
+    [
+        ("file", "other.csv"),
+        ("sha256", "0" * 64),
+        ("count", 1),
+        ("codes", ["T99"]),
+    ],
+)
+def test_frozen_e5_manifest_rejects_each_candidate_field_drift(
+    tmp_path: Path,
+    field: str,
+    different_value: Any,
+) -> None:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    _write_frozen_run(run_dir)
+    sample = json.loads((run_dir / "frozen_sample.json").read_text(encoding="utf-8"))
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["candidate_labels"][field] = different_value
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"^frozen E5 manifest candidate provenance does not match frozen inputs$",
+    ):
+        dspark_runner._validate_frozen_e5_manifest(run_dir, sample)
+
+
+@pytest.mark.parametrize("contents", ["not JSON", "[]"])
+def test_frozen_e5_manifest_rejects_invalid_json_objects(
+    tmp_path: Path,
+    contents: str,
+) -> None:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(contents, encoding="utf-8")
+
+    expected = (
+        "frozen E5 manifest.json is unreadable"
+        if contents == "not JSON"
+        else "frozen E5 manifest.json must contain a JSON object"
+    )
+    with pytest.raises(ValueError, match=f"^{expected}$"):
+        dspark_runner._read_frozen_e5_manifest(manifest_path)
+
+
 @pytest.mark.parametrize(
     ("selection_key", "selection_value", "candidate_hash", "message"),
     [
@@ -808,6 +1036,7 @@ def test_runner_rejects_context_overflow_before_constructing_engine(
     )
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: _PromptTokenizer())
     monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
     monkeypatch.setattr(dspark_runner, "_prepare_model_cache", lambda _path: tmp_path / "cache")
     monkeypatch.setattr(
         dspark,
@@ -1093,7 +1322,7 @@ def test_gpu_adapter_checks_visibility_before_querying_device(
 
 
 def test_gpu_adapter_records_a_supported_visible_device(monkeypatch: pytest.MonkeyPatch) -> None:
-    completed = SimpleNamespace(stdout="H100, 81920, 9.0\n")
+    completed = SimpleNamespace(stdout="H100, 81920, 9.0, 580.65.06\n")
     calls: dict[str, Any] = {}
 
     def which(command: str) -> str:
@@ -1111,18 +1340,317 @@ def test_gpu_adapter_records_a_supported_visible_device(monkeypatch: pytest.Monk
         "name": "H100",
         "memory_mib": 81920,
         "compute_capability": "9.0",
+        "driver_version": "580.65.06",
     }
     assert calls == {
         "which": "nvidia-smi",
         "run": (
             [
                 "nvidia-smi",
-                "--query-gpu=name,memory.total,compute_cap",
+                "--query-gpu=name,memory.total,compute_cap,driver_version",
                 "--format=csv,noheader,nounits",
             ],
             {"capture_output": True, "check": True, "text": True},
         ),
     }
+
+
+def test_cuda_runtime_preflight_compiles_a_flashinfer_kernel_before_model_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Any] = []
+    torch = cast(Any, ModuleType("torch"))
+    torch.cuda = SimpleNamespace(
+        is_available=lambda: True, synchronize=lambda: calls.append("sync")
+    )
+    torch.version = SimpleNamespace(cuda="13.0")
+    torch.float16 = "fp16"
+    torch.zeros = lambda shape, **kwargs: (
+        calls.append(("zeros", shape, kwargs))
+        or {"shape": shape, "device": kwargs.get("device"), "dtype": kwargs.get("dtype")}
+    )
+    torch.ones = lambda shape, **kwargs: (
+        calls.append(("ones", shape, kwargs))
+        or {"shape": shape, "device": kwargs.get("device"), "dtype": kwargs.get("dtype")}
+    )
+    torch.allclose = lambda output, value: output == value
+    flashinfer = cast(Any, ModuleType("flashinfer"))
+    prefill = cast(Any, ModuleType("flashinfer.prefill"))
+
+    def single_prefill_with_kv_cache(
+        query: dict[str, Any], key: dict[str, Any], value: dict[str, Any], *, causal: bool
+    ) -> dict[str, Any]:
+        assert query["shape"] == key["shape"] == value["shape"] == (1, 1, 64)
+        assert query["device"] == key["device"] == value["device"] == "cuda"
+        assert query["dtype"] == key["dtype"] == value["dtype"] == "fp16"
+        calls.append(("kernel", query, key, value, causal))
+        return value
+
+    prefill.single_prefill_with_kv_cache = single_prefill_with_kv_cache
+    flashinfer.prefill = prefill
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "flashinfer", flashinfer)
+    monkeypatch.setitem(sys.modules, "flashinfer.prefill", prefill)
+    which_calls: list[object] = []
+
+    def find_compiler(command: object) -> str:
+        which_calls.append(command)
+        return "/usr/bin/nvcc"
+
+    monkeypatch.setattr(dspark_runner.shutil, "which", find_compiler)
+    nvcc_calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def run_nvcc(args: list[str], **kwargs: Any) -> SimpleNamespace:
+        nvcc_calls.append((args, kwargs))
+        return SimpleNamespace(stdout="Cuda compilation tools, release 13.0, V13.0.88")
+
+    monkeypatch.setattr(dspark_runner.subprocess, "run", run_nvcc)
+    packages = {
+        "sglang": "0.5.20",
+        "flashinfer-python": "0.6.18",
+        "torch": "2.9.1",
+    }
+    monkeypatch.setattr(dspark_runner, "version", packages.__getitem__)
+
+    result = dspark_runner._runtime_compatibility_preflight({"driver_version": "580.65.06"})
+
+    assert result == {
+        "status": "passed",
+        "driver_version": "580.65.06",
+        "nvcc_release": "13.0",
+        "torch_version": "2.9.1",
+        "torch_cuda": "13.0",
+        "sglang_version": "0.5.20",
+        "flashinfer_python_version": "0.6.18",
+        "flashinfer_jit_smoke": {
+            "kernel": "single_prefill_with_kv_cache",
+            "dtype": "float16",
+            "shape": [1, 1, 64],
+            "result": "passed",
+        },
+    }
+    assert calls == [
+        ("zeros", (1, 1, 64), {"device": "cuda", "dtype": "fp16"}),
+        ("zeros", (1, 1, 64), {"device": "cuda", "dtype": "fp16"}),
+        ("ones", (1, 1, 64), {"device": "cuda", "dtype": "fp16"}),
+        (
+            "kernel",
+            {"shape": (1, 1, 64), "device": "cuda", "dtype": "fp16"},
+            {"shape": (1, 1, 64), "device": "cuda", "dtype": "fp16"},
+            {"shape": (1, 1, 64), "device": "cuda", "dtype": "fp16"},
+            False,
+        ),
+        "sync",
+    ]
+    assert nvcc_calls == [
+        (["/usr/bin/nvcc", "--version"], {"capture_output": True, "check": True, "text": True})
+    ]
+    assert which_calls == ["nvcc"]
+
+
+@pytest.mark.parametrize(
+    ("driver", "toolkit", "torch_cuda", "message"),
+    [
+        ("580.65.05", "13.0", "13.0", "CUDA driver 580.65.05 is below the minimum 580.65.06"),
+        ("580.65.06", "12.9", "13.0", "nvcc CUDA 12.9 does not match PyTorch CUDA 13.0"),
+        ("580.65.06", "13.0", "12.9", "nvcc CUDA 13.0 does not match PyTorch CUDA 12.9"),
+    ],
+)
+def test_cuda_runtime_preflight_rejects_incompatible_driver_or_toolkit(
+    monkeypatch: pytest.MonkeyPatch,
+    driver: str,
+    toolkit: str,
+    torch_cuda: str,
+    message: str,
+) -> None:
+    torch = cast(Any, ModuleType("torch"))
+    torch.cuda = SimpleNamespace(is_available=lambda: True)
+    torch.version = SimpleNamespace(cuda=torch_cuda)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setattr(dspark_runner.shutil, "which", lambda _command: "/usr/bin/nvcc")
+    monkeypatch.setattr(
+        dspark_runner.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=f"release {toolkit}, V13.0.1"),
+    )
+    monkeypatch.setattr(
+        dspark_runner, "version", lambda name: "0.5.20" if name == "sglang" else "0.6.18"
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        dspark_runner._runtime_compatibility_preflight({"driver_version": driver})
+
+
+@pytest.mark.parametrize(
+    ("value", "label", "message"),
+    [
+        ("13", "toolkit", "toolkit is malformed: 13"),
+        ("580.x.06", "driver", "driver is malformed: 580.x.06"),
+    ],
+)
+def test_version_tuple_rejects_malformed_versions(value: str, label: str, message: str) -> None:
+    with pytest.raises(RuntimeError, match=f"^{message}$"):
+        dspark_runner._version_tuple(value, label)
+
+
+def test_version_tuple_accepts_two_part_cuda_release() -> None:
+    assert dspark_runner._version_tuple("13.0", "CUDA toolkit") == (13, 0)
+
+
+@pytest.mark.parametrize(
+    ("release", "available", "message"),
+    [
+        ("13.1", True, "DSpark runtime requires CUDA 13.0; found CUDA 13.1"),
+        ("13.0", False, "PyTorch cannot access the visible CUDA GPU"),
+    ],
+)
+def test_cuda_runtime_rejects_unsupported_release_or_missing_device(
+    release: str, available: bool, message: str
+) -> None:
+    with pytest.raises(RuntimeError, match=f"^{message}$"):
+        dspark_runner._verify_cuda_runtime(release, release, available)
+
+
+@pytest.mark.parametrize(
+    ("packages", "message"),
+    [
+        (
+            {"sglang": "0.5.19", "flashinfer-python": "0.6.18", "torch": "2.9.1"},
+            "SGLang 0.5.19 does not match pinned 0.5.20",
+        ),
+        (
+            {"sglang": "0.5.20", "flashinfer-python": "0.6.17", "torch": "2.9.1"},
+            "FlashInfer 0.6.17 does not match pinned 0.6.18",
+        ),
+    ],
+)
+def test_runtime_package_gate_rejects_unpinned_distributions(
+    monkeypatch: pytest.MonkeyPatch,
+    packages: dict[str, str],
+    message: str,
+) -> None:
+    monkeypatch.setattr(dspark_runner, "version", packages.__getitem__)
+
+    with pytest.raises(RuntimeError, match=f"^{message}$"):
+        dspark_runner._verify_runtime_package_versions()
+
+
+@pytest.mark.parametrize(
+    ("kernel_fails", "wrong_result", "cause"),
+    [
+        (False, True, "FlashInfer smoke kernel returned an unexpected result"),
+        (True, False, "JIT compilation failed"),
+    ],
+)
+def test_flashinfer_smoke_rejects_jit_or_result_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    kernel_fails: bool,
+    wrong_result: bool,
+    cause: str,
+) -> None:
+    torch = cast(Any, ModuleType("torch"))
+    torch.cuda = SimpleNamespace(synchronize=lambda: None)
+    torch.float16 = "fp16"
+    torch.zeros = lambda shape, **kwargs: (shape, kwargs)
+    torch.ones = lambda shape, **kwargs: (shape, kwargs)
+    torch.allclose = lambda result, value: result == value
+    prefill = cast(Any, ModuleType("flashinfer.prefill"))
+
+    def kernel(*_args: Any, **_kwargs: Any) -> Any:
+        if kernel_fails:
+            raise RuntimeError("JIT compilation failed")
+        return "not-the-value" if wrong_result else _args[2]
+
+    prefill.single_prefill_with_kv_cache = kernel
+    monkeypatch.setitem(sys.modules, "flashinfer", cast(Any, ModuleType("flashinfer")))
+    monkeypatch.setitem(sys.modules, "flashinfer.prefill", prefill)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^FlashInfer CUDA JIT smoke test failed before model loading$",
+    ) as error:
+        dspark_runner._run_flashinfer_smoke(torch)
+    assert str(error.value.__cause__) == cause
+
+
+def test_frozen_e5_manifest_read_uses_explicit_utf8(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    original_read_text = Path.read_text
+    encodings: list[str | None] = []
+
+    def read_text(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        if path == manifest_path:
+            encodings.append(encoding)
+        return original_read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    dspark_runner._read_frozen_e5_manifest(manifest_path)
+
+    assert len(encodings) == 1
+    assert isinstance(encodings[0], str)
+    assert encodings[0].lower() == "utf-8"
+
+
+def test_nvcc_release_reader_requires_the_compiler_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dspark_runner.shutil, "which", lambda _command: None)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^CUDA 13\.0 nvcc is required for the FlashInfer runtime$",
+    ):
+        dspark_runner._read_nvcc_release()
+
+
+def test_nvcc_release_reader_rejects_unparseable_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dspark_runner.shutil, "which", lambda _command: "/usr/bin/nvcc")
+    monkeypatch.setattr(
+        dspark_runner.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout="CUDA version unknown"),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^could not parse the CUDA release from nvcc --version$",
+    ):
+        dspark_runner._read_nvcc_release()
+
+
+def test_cuda_runtime_preflight_rejects_missing_driver_before_toolkit_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dspark_runner.shutil,
+        "which",
+        lambda _command: pytest.fail("driver metadata must be validated before nvcc"),
+    )
+
+    with pytest.raises(RuntimeError, match=r"^CUDA driver version is malformed: $"):
+        dspark_runner._runtime_compatibility_preflight({})
+
+
+def test_cuda_runtime_preflight_rejects_missing_torch_cuda_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch = cast(Any, ModuleType("torch"))
+    torch.cuda = SimpleNamespace(is_available=lambda: True)
+    torch.version = SimpleNamespace(cuda=None)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setattr(dspark_runner, "_read_nvcc_release", lambda: "13.0")
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^nvcc CUDA 13\.0 does not match PyTorch CUDA $",
+    ):
+        dspark_runner._runtime_compatibility_preflight({"driver_version": "580.65.06"})
 
 
 def test_model_cache_defaults_to_selected_path_and_requires_eight_gib_free(
@@ -1349,42 +1877,49 @@ def test_dspark_cli_requires_both_provenance_commits(
 def test_gpu_gate_rejects_insufficient_memory_or_compute_capability() -> None:
     for record, expected in [
         (
-            "small-memory gpu, 16383, 8.0",
+            "small-memory gpu, 16383, 8.0, 580.65.06",
             "DSpark GPU gate requires >= 16384 MiB and compute capability >= 8.0; "
             "found 16383 MiB, capability 8.0",
         ),
         (
-            "old gpu, 16384, 7.9",
+            "old gpu, 16384, 7.9, 580.65.06",
             "DSpark GPU gate requires >= 16384 MiB and compute capability >= 8.0; "
             "found 16384 MiB, capability 7.9",
+        ),
+        (
+            "old driver gpu, 16384, 8.0, 580.65.05",
+            "CUDA driver 580.65.05 is below the minimum 580.65.06",
         ),
     ]:
         with pytest.raises(RuntimeError) as error:
             dspark_runner._validate_gpu_record(record)
         assert str(error.value) == expected
 
-    assert dspark_runner._validate_gpu_record("threshold gpu, 16384, 8.0") == {
+    assert dspark_runner._validate_gpu_record("threshold gpu, 16384, 8.0, 580.65.06") == {
         "name": "threshold gpu",
         "memory_mib": 16384,
         "compute_capability": "8.0",
+        "driver_version": "580.65.06",
     }
 
-    assert dspark_runner._validate_gpu_record("H100, 81920, 9.0") == {
+    assert dspark_runner._validate_gpu_record("H100, 81920, 9.0, 580.65.06") == {
         "name": "H100",
         "memory_mib": 81920,
         "compute_capability": "9.0",
+        "driver_version": "580.65.06",
     }
-    assert dspark_runner._validate_gpu_record("Vendor, Accelerator, 40960, 8.0") == {
+    assert dspark_runner._validate_gpu_record("Vendor, Accelerator, 40960, 8.0, 580.65.06") == {
         "name": "Vendor, Accelerator",
         "memory_mib": 40960,
         "compute_capability": "8.0",
+        "driver_version": "580.65.06",
     }
 
     with pytest.raises(
         ValueError,
         match=r"^invalid literal for int\(\) with base 10: '0\.1'$",
     ) as error:
-        dspark_runner._validate_gpu_record("H100, 81920, 8.0.1")
+        dspark_runner._validate_gpu_record("H100, 81920, 8.0.1, 580.65.06")
     assert str(error.value) == "invalid literal for int() with base 10: '0.1'"
 
 
@@ -1398,6 +1933,9 @@ def test_grid5000_runner_loads_the_cuda_toolkit_before_installing_sglang() -> No
     assert script is not None
     content = script.read_text(encoding="utf-8")
 
-    assert 'module load "${DS_CUDA_MODULE:-cuda-toolkit/12.9.1}"' in content
-    assert "if ! command -v nvcc" in content
+    assert 'module load "${DS_CUDA_MODULE:-cuda-toolkit/13.0.2}"' in content
+    assert 'module load "${DS_DRIVER_MODULE:-nvidia-driver-libs/580}"' in content
+    assert 'module load "${DS_UV_MODULE:-uv/0.10.12}"' in content
+    assert "command -v nvcc" in content
+    assert "release 13.0" in content
     assert content.index("export CUDA_HOME=") < content.index("run_bounded uv sync")

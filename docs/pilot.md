@@ -150,10 +150,11 @@ DSpark is speculative decoding with a paired draft checkpoint; it is not a
 hardware device. Under greedy decoding the target verifies draft tokens, so
 DSpark accelerates the target model without changing its output.
 
-LiquidAI documents a `131,072`-token model context. The SGLang path used by this
-project has a `128,000`-token effective context; the adapter checks each rendered
-prompt plus the full `4096`-token generation cap before it loads the serving
-engine. The adapter uses the pinned tokenizer's chat template with
+LiquidAI documents a `131,072`-token target context. SGLang v0.5.20 passes the
+target context length to its DSpark draft worker, while this draft checkpoint
+supports `128,000` tokens. The adapter therefore pins the engine's
+`context_length` to `128,000`, and checks each rendered prompt plus the full
+`4096`-token generation cap before it loads the serving engine. The adapter uses the pinned tokenizer's chat template with
 `enable_thinking=False`; that template still opens a `<think>` region. Parsing
 uses only text after the final `</think>` and accepts an exact code from the
 candidate set. Truncated answers, unclosed reasoning, unknown codes, and other
@@ -172,17 +173,26 @@ macro-F1 with the E5 output.
 
 ### Run requirements
 
-Use Linux with an NVIDIA CUDA GPU visible through `nvidia-smi`. The existing
-validated serving gate admits GPUs with compute capability `8.0` or newer and
-at least `16,384 MiB` of VRAM; this is an admission floor, not a guarantee that
-every runtime allocation fits. LiquidAI's published SGLang throughput test used
-one BF16 H100 with 80 GB. The DSpark extra resolves the CUDA 13 runtime and
-FlashInfer pins, and the command checks that the Hub cache has at least 8 GiB
-free before loading the tokenizer or weights. Do not run this adapter on the
+Use Linux with an NVIDIA CUDA GPU visible through `nvidia-smi`, a CUDA 13.0
+toolkit, and an NVIDIA driver at least `580.65.06` (the CUDA 13.0 minimum in
+[NVIDIA's release notes](https://docs.nvidia.com/cuda/archive/13.0.0/cuda-toolkit-release-notes/index.html)).
+SGLang v0.5.20's [official container pin](https://github.com/sgl-project/sglang/blob/v0.5.20/docker/Dockerfile)
+uses CUDA 13.0.3 and FlashInfer 0.6.18. The serving gate admits GPUs with
+compute capability `8.0` or newer and at least `16,384 MiB` of VRAM; this is an
+admission floor, not a guarantee that every runtime allocation fits. LiquidAI's
+published SGLang throughput test used one BF16 H100 with 80 GB.
+
+Before loading any model weights, the adapter checks pinned SGLang and
+FlashInfer package versions, compares `nvcc` with PyTorch's CUDA runtime, then
+compiles and executes a tiny FlashInfer prefill kernel. Its result is recorded
+in `runtime.cuda_preflight` in the output manifest. This tests the allocated
+node's CUDA driver, toolkit, and JIT path without downloading target or draft
+weights. The command also checks that the Hub cache has at least 8 GiB free
+before loading the tokenizer or weights. Do not run this adapter on the
 CPU-only workspace used for unit tests.
 
-First obtain `frozen_sample.json` and `candidate_labels.csv` from the authorized,
-versioned run at
+First obtain `frozen_sample.json`, `candidate_labels.csv`, and the E5
+`manifest.json` from the authorized, versioned run at
 `pilot/runs/e5-small-100-seed42/`. The run must come from the published dataset
 revision whose exact file hashes match the manifest. Install the runtime in a
 dedicated environment:
@@ -201,6 +211,7 @@ PILOT_REVISION=<commit-containing-the-frozen-pilot-files>
 hf download NoeFlandre/georeset-text-label-benchmark \
   pilot/runs/e5-small-100-seed42/frozen_sample.json \
   pilot/runs/e5-small-100-seed42/candidate_labels.csv \
+  pilot/runs/e5-small-100-seed42/manifest.json \
   --repo-type dataset --revision "$PILOT_REVISION" --local-dir artifacts/source
 RUN_DIR=artifacts/source/pilot/runs/e5-small-100-seed42
 COMMIT_SHA=$(git rev-parse HEAD)
@@ -212,6 +223,10 @@ uv run georeset-pilot run-dspark \
   --validation-commit "$COMMIT_SHA"
 ```
 
+Before GPU or CUDA preflight, the adapter verifies the SHA-256 values of the
+complete frozen sample and candidate CSV against that E5 manifest, and checks
+that its source, sample, candidates, and E5 model revision agree with the
+frozen files. It records the E5 manifest digest in the DSpark output manifest.
 The resulting files belong under the distinct run path
 `pilot/runs/lfm2.5-2.6b-dspark-100-seed42/` if published to the same Hub
 dataset. Verify uploaded file SHA-256 values against `dspark_manifest.json`.
@@ -247,11 +262,15 @@ at most 55 minutes on environment installation and inference to leave time
 inside the one-hour allocation for cleanup. The persistent prediction,
 metrics, and manifest directory is checked to remain below 1 GiB.
 
-Before installing SGLang, the wrapper loads the Grid'5000 Lmod setup and
-`cuda-toolkit/12.9.1` (falling back to the site default `cuda-toolkit`), checks
-for `nvcc`, and exports `CUDA_HOME` and the toolkit library path. Set
-`DS_CUDA_MODULE` if the allocated site exposes the toolkit under another module
-name. The FlashInfer workspace cache also stays under the job-local limit.
+Before installing SGLang, the wrapper loads the Grid'5000 Lmod setup and the
+Rennes modules `nvidia-driver-libs/580`, `cuda-toolkit/13.0.2`, and
+`uv/0.10.12`. It checks the visible GPU's driver, compiles the CUDA version
+gate, and exports `CUDA_HOME` and the toolkit library path. Set
+`DS_DRIVER_MODULE`, `DS_CUDA_MODULE`, or `DS_UV_MODULE` if an allocated site
+exposes one of these under another module name. The FlashInfer workspace cache
+also stays under the job-local limit. During startup, before target and draft
+weight loading, the Python adapter JIT-compiles a small FlashInfer operation;
+the run stops if that smoke test fails.
 
 The script reads the fixed 100-row input directory and writes only the new
 DSpark output directory. It does not alter the E5 run or submit, inspect,

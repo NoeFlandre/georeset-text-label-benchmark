@@ -35,6 +35,9 @@ SAMPLING: dict[str, float | int] = {"temperature": 0.0, "max_new_tokens": MAX_NE
 ENGINE_ARGS: dict[str, Any] = {
     "dtype": "bfloat16",
     "random_seed": 0,
+    # SGLang v0.5.20's DSpark draft worker otherwise inherits the target's
+    # 131,072-token context and rejects the 128,000-token draft checkpoint.
+    "context_length": RUNTIME_CONTEXT_TOKENS,
     "speculative_algorithm": "DSPARK",
     "speculative_draft_attention_backend": "flashinfer",
     "disable_radix_cache": True,

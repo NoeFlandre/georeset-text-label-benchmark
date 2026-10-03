@@ -185,6 +185,21 @@ EQUIVALENT_MUTANTS = {
         "Python resolves utf-8 and UTF-8 to the same codec, so per-prompt SHA-256 values are "
         "unchanged."
     ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": (
+        "Python resolves utf-8 and UTF-8 to the same codec when reading the manifest JSON."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_77": (
+        "Path.mkdir treats exist_ok=None as false, matching the explicit exist_ok=False; the "
+        "output race regression confirms an existing destination is rejected."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_79": (
+        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
+        "same exclusive output-directory behavior."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_96": (
+        "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
+        "checks the emitted metadata reports ZSTD."
+    ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_89": (
         "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
         "checks the emitted Parquet metadata reports ZSTD."

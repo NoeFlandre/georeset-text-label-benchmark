@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -27,6 +29,8 @@ from georeset_text_label_benchmark.pilot.metrics import (
 )
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
+    MODEL_REPOSITORY,
+    MODEL_REVISION,
     SAMPLE_SEED,
     SAMPLE_SIZE,
 )
@@ -41,6 +45,8 @@ from georeset_text_label_benchmark.pilot.runner import (
 
 MIN_GPU_MEMORY_MIB = 16 * 1024
 MIN_COMPUTE_CAPABILITY = (8, 0)
+MIN_DRIVER_VERSION = (580, 65, 6)
+MIN_DRIVER_VERSION_TEXT = "580.65.06"
 MIN_CACHE_FREE_BYTES = 8 * 1024**3
 PREDICTIONS_NAME = "dspark_predictions.parquet"
 METRICS_NAME = "dspark_metrics.json"
@@ -61,7 +67,9 @@ def run_dspark_pilot(
     _validate_run_inputs(run_dir, destination, computation_commit, validation_commit)
     sample, rows, candidates = read_frozen_pilot_inputs(run_dir)
     _validate_published_sample(sample, rows)
+    frozen_e5_manifest_sha256 = _validate_frozen_e5_manifest(run_dir, sample)
     gpu = _require_supported_gpu()
+    cuda_preflight = _runtime_compatibility_preflight(gpu)
     cache_dir = _prepare_model_cache(model_cache_dir)
     tokenizer_start = _clock()
     tokenizer = dspark.load_tokenizer()
@@ -100,6 +108,8 @@ def run_dspark_pilot(
         engine_seconds,
         generation_seconds,
         engine.version,
+        frozen_e5_manifest_sha256,
+        cuda_preflight,
     )
     _write_json_exclusive(manifest_path, manifest)
     return {
@@ -261,6 +271,8 @@ def _build_manifest(
     engine_seconds: float,
     generation_seconds: float,
     engine_version: str,
+    frozen_e5_manifest_sha256: str,
+    cuda_preflight: Mapping[str, Any],
 ) -> dict[str, Any]:
     generation_config = _generation_config(template_hash, sample)
     return {
@@ -268,6 +280,7 @@ def _build_manifest(
         "computation_commit": computation_commit,
         "validation_commit": validation_commit,
         "source": sample["source"],
+        "frozen_e5_manifest_sha256": frozen_e5_manifest_sha256,
         "source_coverage": sample["source_coverage"],
         "sample": sample["selection"],
         "candidate_labels": _candidate_provenance(sample, candidates),
@@ -282,6 +295,7 @@ def _build_manifest(
             "revision": dspark.DRAFT_REVISION,
             "license": "LFM1.0",
             "parameters": 327_700_000,
+            "context_tokens": dspark.RUNTIME_CONTEXT_TOKENS,
         },
         "generation_config": generation_config,
         "generation_config_sha256": _sha256_json(generation_config),
@@ -289,6 +303,7 @@ def _build_manifest(
             **_runtime_metadata(),
             "engine_version": engine_version,
             "gpu": dict(gpu),
+            "cuda_preflight": dict(cuda_preflight),
             "model_cache": str(cache_dir),
         },
         "timings_seconds": {
@@ -350,6 +365,72 @@ def _validate_published_sample(
     _validate_sample_digests(sample)
 
 
+def _validate_frozen_e5_manifest(run_dir: Path, sample: Mapping[str, Any]) -> str:
+    """Bind all frozen rows and candidates to the published E5 output manifest."""
+    manifest_path = run_dir / "manifest.json"
+    manifest = _read_frozen_e5_manifest(manifest_path)
+    _verify_frozen_input_hashes(run_dir, manifest)
+    _verify_frozen_e5_provenance(manifest, sample)
+    _verify_frozen_e5_model(manifest)
+    return sha256_file(manifest_path)
+
+
+def _read_frozen_e5_manifest(manifest_path: Path) -> Mapping[str, Any]:
+    if not manifest_path.is_file():
+        raise ValueError("frozen E5 manifest.json is required to verify the published inputs")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("frozen E5 manifest.json is unreadable") from error
+    if not isinstance(manifest, Mapping):
+        raise ValueError("frozen E5 manifest.json must contain a JSON object")
+    return manifest
+
+
+def _verify_frozen_input_hashes(run_dir: Path, manifest: Mapping[str, Any]) -> None:
+    outputs = manifest.get("outputs_sha256")
+    if not isinstance(outputs, Mapping):
+        raise ValueError("frozen E5 manifest has no outputs_sha256 object")
+    for filename in ("frozen_sample.json", "candidate_labels.csv"):
+        actual = sha256_file(run_dir / filename)
+        if outputs.get(filename) != actual:
+            raise ValueError(f"E5 manifest hash mismatch for {filename}")
+
+
+def _verify_frozen_e5_provenance(manifest: Mapping[str, Any], sample: Mapping[str, Any]) -> None:
+    if manifest.get("source") != sample.get("source"):
+        raise ValueError("frozen E5 manifest source does not match frozen_sample.json")
+    if manifest.get("sample") != sample.get("selection"):
+        raise ValueError("frozen E5 manifest sample does not match frozen_sample.json")
+    _verify_frozen_candidate_provenance(manifest, sample)
+
+
+def _verify_frozen_candidate_provenance(
+    manifest: Mapping[str, Any], sample: Mapping[str, Any]
+) -> None:
+    source_candidates = manifest.get("candidate_labels")
+    sample_candidates = sample.get("candidate_labels")
+    if not isinstance(source_candidates, Mapping) or not isinstance(sample_candidates, Mapping):
+        raise ValueError("frozen E5 manifest candidate provenance is missing")
+    _verify_frozen_candidate_fields(source_candidates, sample_candidates)
+
+
+def _verify_frozen_candidate_fields(
+    source_candidates: Mapping[str, Any], sample_candidates: Mapping[str, Any]
+) -> None:
+    for key in ("file", "sha256", "count", "codes"):
+        if source_candidates.get(key) != sample_candidates.get(key):
+            raise ValueError("frozen E5 manifest candidate provenance does not match frozen inputs")
+
+
+def _verify_frozen_e5_model(manifest: Mapping[str, Any]) -> None:
+    model = manifest.get("model")
+    if not isinstance(model, Mapping) or (
+        model.get("repository") != MODEL_REPOSITORY or model.get("revision") != MODEL_REVISION
+    ):
+        raise ValueError("frozen inputs are not from the pinned E5 model run")
+
+
 def _validate_sample_selection(
     selection: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]
 ) -> None:
@@ -373,7 +454,7 @@ def _require_supported_gpu() -> dict[str, Any]:
     record = subprocess.run(
         [
             "nvidia-smi",
-            "--query-gpu=name,memory.total,compute_cap",
+            "--query-gpu=name,memory.total,compute_cap,driver_version",
             "--format=csv,noheader,nounits",
         ],
         capture_output=True,
@@ -384,15 +465,131 @@ def _require_supported_gpu() -> dict[str, Any]:
 
 
 def _validate_gpu_record(record: str) -> dict[str, Any]:
-    name, memory, capability = (part.strip() for part in record.rsplit(",", maxsplit=2))
+    name, memory_mib, capability, driver_version = _parse_gpu_record(record)
+    _validate_gpu_capacity(memory_mib, capability)
+    _verify_minimum_cuda_driver(driver_version)
+    return {
+        "name": name,
+        "memory_mib": memory_mib,
+        "compute_capability": capability,
+        "driver_version": driver_version,
+    }
+
+
+def _parse_gpu_record(record: str) -> tuple[str, int, str, str]:
+    name, memory, capability, driver_version = (
+        part.strip() for part in record.rsplit(",", maxsplit=3)
+    )
     memory_mib = int(float(memory))
+    return name, memory_mib, capability, driver_version
+
+
+def _validate_gpu_capacity(memory_mib: int, capability: str) -> None:
     compute = tuple(int(part) for part in capability.split(".", maxsplit=1))
     if memory_mib < MIN_GPU_MEMORY_MIB or compute < MIN_COMPUTE_CAPABILITY:
         raise RuntimeError(
             f"DSpark GPU gate requires >= {MIN_GPU_MEMORY_MIB} MiB and compute capability "
             f">= 8.0; found {memory_mib} MiB, capability {capability}"
         )
-    return {"name": name, "memory_mib": memory_mib, "compute_capability": capability}
+
+
+def _version_tuple(value: str, label: str) -> tuple[int, ...]:
+    try:
+        parts = tuple(int(part) for part in value.split("."))
+    except ValueError as error:
+        raise RuntimeError(f"{label} is malformed: {value}") from error
+    if len(parts) < 2:
+        raise RuntimeError(f"{label} is malformed: {value}")
+    return parts
+
+
+def _runtime_compatibility_preflight(gpu: Mapping[str, Any]) -> dict[str, Any]:
+    """Check pinned CUDA runtime and compile a tiny FlashInfer kernel before weights load."""
+    driver_version = str(gpu.get("driver_version", ""))
+    _verify_minimum_cuda_driver(driver_version)
+    nvcc_release = _read_nvcc_release()
+
+    import torch
+
+    torch_cuda = str(torch.version.cuda or "")
+    _verify_cuda_runtime(nvcc_release, torch_cuda, torch.cuda.is_available())
+    sglang_version, flashinfer_version, torch_version = _verify_runtime_package_versions()
+    smoke = _run_flashinfer_smoke(torch)
+
+    return {
+        "status": "passed",
+        "driver_version": driver_version,
+        "nvcc_release": nvcc_release,
+        "torch_version": torch_version,
+        "torch_cuda": torch_cuda,
+        "sglang_version": sglang_version,
+        "flashinfer_python_version": flashinfer_version,
+        "flashinfer_jit_smoke": smoke,
+    }
+
+
+def _verify_minimum_cuda_driver(driver_version: str) -> None:
+    driver = _version_tuple(driver_version, "CUDA driver version")
+    if driver < MIN_DRIVER_VERSION:
+        raise RuntimeError(
+            f"CUDA driver {driver_version} is below the minimum {MIN_DRIVER_VERSION_TEXT}"
+        )
+
+
+def _read_nvcc_release() -> str:
+    nvcc = shutil.which("nvcc")
+    if nvcc is None:
+        raise RuntimeError("CUDA 13.0 nvcc is required for the FlashInfer runtime")
+    nvcc_output = subprocess.run(
+        [nvcc, "--version"], capture_output=True, check=True, text=True
+    ).stdout
+    release_match = re.search(r"release\s+(\d+\.\d+)", nvcc_output)
+    if release_match is None:
+        raise RuntimeError("could not parse the CUDA release from nvcc --version")
+    return release_match.group(1)
+
+
+def _verify_cuda_runtime(nvcc_release: str, torch_cuda: str, is_available: bool) -> None:
+    if nvcc_release != torch_cuda:
+        raise RuntimeError(f"nvcc CUDA {nvcc_release} does not match PyTorch CUDA {torch_cuda}")
+    if nvcc_release != "13.0":
+        raise RuntimeError(f"DSpark runtime requires CUDA 13.0; found CUDA {nvcc_release}")
+    if not is_available:
+        raise RuntimeError("PyTorch cannot access the visible CUDA GPU")
+
+
+def _verify_runtime_package_versions() -> tuple[str, str, str]:
+    sglang_version = version("sglang")
+    flashinfer_version = version("flashinfer-python")
+    torch_version = version("torch")
+    if sglang_version != dspark.SGLANG_VERSION:
+        raise RuntimeError(f"SGLang {sglang_version} does not match pinned {dspark.SGLANG_VERSION}")
+    if flashinfer_version != dspark.FLASHINFER_VERSION:
+        raise RuntimeError(
+            f"FlashInfer {flashinfer_version} does not match pinned {dspark.FLASHINFER_VERSION}"
+        )
+    return sglang_version, flashinfer_version, torch_version
+
+
+def _run_flashinfer_smoke(torch: Any) -> dict[str, Any]:
+    from flashinfer.prefill import single_prefill_with_kv_cache  # ty: ignore[unresolved-import]
+
+    query = torch.zeros((1, 1, 64), device="cuda", dtype=torch.float16)
+    key = torch.zeros((1, 1, 64), device="cuda", dtype=torch.float16)
+    value = torch.ones((1, 1, 64), device="cuda", dtype=torch.float16)
+    try:
+        result = single_prefill_with_kv_cache(query, key, value, causal=False)
+        torch.cuda.synchronize()
+        if not torch.allclose(result, value):
+            raise RuntimeError("FlashInfer smoke kernel returned an unexpected result")
+    except Exception as error:
+        raise RuntimeError("FlashInfer CUDA JIT smoke test failed before model loading") from error
+    return {
+        "kernel": "single_prefill_with_kv_cache",
+        "dtype": "float16",
+        "shape": [1, 1, 64],
+        "result": "passed",
+    }
 
 
 def _prepare_model_cache(model_cache_dir: Path) -> Path:

@@ -16,8 +16,8 @@ if [[ "$RUN_DIR" != /* || "$OUTPUT_DIR" != /* ]]; then
   echo "RUN_DIR and OUTPUT_DIR must be absolute paths." >&2
   exit 2
 fi
-if [[ ! -f "$RUN_DIR/frozen_sample.json" || ! -f "$RUN_DIR/candidate_labels.csv" ]]; then
-  echo "RUN_DIR must contain frozen_sample.json and candidate_labels.csv." >&2
+if [[ ! -f "$RUN_DIR/frozen_sample.json" || ! -f "$RUN_DIR/candidate_labels.csv" || ! -f "$RUN_DIR/manifest.json" ]]; then
+  echo "RUN_DIR must contain frozen_sample.json, candidate_labels.csv, and manifest.json." >&2
   exit 2
 fi
 if [[ -e "$OUTPUT_DIR" ]]; then
@@ -77,39 +77,65 @@ for label, path, required in (
         )
 PY
 
-if ! command -v nvidia-smi >/dev/null || ! command -v setsid >/dev/null; then
-  echo "nvidia-smi and setsid are required on the allocated Linux GPU node." >&2
+source /etc/profile.d/lmod.sh 2>/dev/null || true
+if ! type module >/dev/null 2>&1; then
+  echo "The Grid'5000 Lmod module command is required on the allocated node." >&2
   exit 2
 fi
-GPU_RECORD=$(nvidia-smi --query-gpu=name,memory.total,compute_cap --format=csv,noheader,nounits)
+if ! module load "${DS_DRIVER_MODULE:-nvidia-driver-libs/580}"; then
+  echo "Could not load the CUDA 13 compatible NVIDIA driver libraries." >&2
+  exit 2
+fi
+if ! module load "${DS_CUDA_MODULE:-cuda-toolkit/13.0.2}"; then
+  echo "Could not load the pinned CUDA 13.0 toolkit." >&2
+  exit 2
+fi
+if ! module load "${DS_UV_MODULE:-uv/0.10.12}"; then
+  echo "Could not load uv from the Grid'5000 module environment." >&2
+  exit 2
+fi
+if ! command -v nvidia-smi >/dev/null || ! command -v setsid >/dev/null \
+  || ! command -v nvcc >/dev/null || ! command -v uv >/dev/null; then
+  echo "nvidia-smi, setsid, CUDA nvcc, and uv are required on the allocated node." >&2
+  exit 2
+fi
+NVCC_OUTPUT=$(nvcc --version)
+if [[ "$NVCC_OUTPUT" != *"release 13.0"* ]]; then
+  echo "The loaded CUDA toolkit must report release 13.0; refusing to install the runtime." >&2
+  exit 2
+fi
+GPU_RECORD=$(nvidia-smi --query-gpu=name,memory.total,compute_cap,driver_version --format=csv,noheader,nounits)
 python3 - "$GPU_RECORD" <<'PY'
+import re
 import sys
 
 rows = [line.strip() for line in sys.argv[1].splitlines() if line.strip()]
 if len(rows) != 1:
     raise SystemExit(f"Expected exactly one visible GPU; found {len(rows)}")
-name, memory, capability = (item.strip() for item in rows[0].rsplit(",", maxsplit=2))
+name, memory, capability, driver_version = (
+    item.strip() for item in rows[0].rsplit(",", maxsplit=3)
+)
 memory_mib = int(float(memory))
 compute = tuple(int(part) for part in capability.split(".", maxsplit=1))
+driver_match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", driver_version)
+if driver_match is None:
+    raise SystemExit(f"Could not parse the CUDA driver version: {driver_version}")
+driver = tuple(int(part) for part in driver_match.groups())
 if memory_mib < 16_384 or compute < (8, 0):
     raise SystemExit(
         f"GPU gate requires >= 16384 MiB and compute capability >= 8.0; "
         f"found {memory_mib} MiB, capability {capability} ({name})"
     )
-print(f"GPU preflight passed: {name}, {memory_mib} MiB, capability {capability}")
+if driver < (580, 65, 6):
+    raise SystemExit(
+        f"CUDA driver {driver_version} is below the minimum 580.65.06 required for CUDA 13"
+    )
+print(
+    f"GPU preflight passed: {name}, {memory_mib} MiB, capability {capability}, "
+    f"driver {driver_version}"
+)
 PY
 
-# SGLang/FlashInfer JIT paths need the node's CUDA toolkit at import time.
-source /etc/profile.d/lmod.sh 2>/dev/null || true
-if command -v module >/dev/null 2>&1; then
-  module load "${DS_CUDA_MODULE:-cuda-toolkit/12.9.1}" 2>/dev/null \
-    || module load cuda-toolkit 2>/dev/null \
-    || true
-fi
-if ! command -v nvcc >/dev/null; then
-  echo "A CUDA toolkit with nvcc is required on the allocated GPU node." >&2
-  exit 2
-fi
 CUDA_ROOT=$(dirname -- "$(dirname -- "$(command -v nvcc)")")
 export CUDA_HOME="$CUDA_ROOT"
 export LD_LIBRARY_PATH="$CUDA_ROOT/lib64:$CUDA_ROOT/lib:${LD_LIBRARY_PATH:-}"
@@ -121,22 +147,11 @@ case "$JOB_TMP_ROOT" in
 esac
 chmod 700 "$JOB_TMP_ROOT"
 RUNNER_PID=
-cleanup() {
-  if [[ -n "${RUNNER_PID:-}" ]]; then
-    RUNNER_PGID=$(ps -o pgid= -p "$RUNNER_PID" | tr -d '[:space:]' || true)
-    SCRIPT_PGID=$(ps -o pgid= -p "$$" | tr -d '[:space:]' || true)
-    if [[ -n "$RUNNER_PGID" && "$RUNNER_PGID" != "$SCRIPT_PGID" ]]; then
-      kill -TERM -- "-$RUNNER_PGID" 2>/dev/null || true
-    else
-      kill -TERM "$RUNNER_PID" 2>/dev/null || true
-    fi
-    wait "$RUNNER_PID" 2>/dev/null || true
-  fi
-  rm -rf -- "$JOB_TMP_ROOT"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+RUNNER_PGID=
+RUNNER_WAIT_STATUS=
+source "$PROJECT_ROOT/scripts/run-bounded.sh"
+runner_install_traps
+runner_initialize
 
 mkdir -p "$JOB_TMP_ROOT/home" "$JOB_TMP_ROOT/hf" "$JOB_TMP_ROOT/xdg" \
   "$JOB_TMP_ROOT/uv-cache" "$JOB_TMP_ROOT/tmp"
@@ -152,73 +167,6 @@ export UV_PROJECT_ENVIRONMENT="$JOB_TMP_ROOT/venv"
 
 JOB_START=$(date +%s)
 JOB_BUDGET_SECONDS=$((55 * 60))
-run_bounded() {
-  setsid --wait "$@" &
-  RUNNER_PID=$!
-  local runner_pgid=
-  for _ in {1..50}; do
-    runner_pgid=$(ps -o pgid= -p "$RUNNER_PID" | tr -d '[:space:]')
-    [[ -n "$runner_pgid" ]] && break
-    if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
-      if wait "$RUNNER_PID"; then
-        RUNNER_PID=
-        return 0
-      else
-        local completed_status=$?
-        RUNNER_PID=
-        return "$completed_status"
-      fi
-    fi
-    sleep 0.1
-  done
-  SCRIPT_PGID=$(ps -o pgid= -p "$$" | tr -d '[:space:]')
-  if [[ -z "$runner_pgid" || "$runner_pgid" == "$SCRIPT_PGID" ]]; then
-    echo "Could not isolate a process group for the cache and time limits." >&2
-    kill -TERM "$RUNNER_PID" 2>/dev/null || true
-    wait "$RUNNER_PID" 2>/dev/null || true
-    RUNNER_PID=
-    return 2
-  fi
-
-  local run_status=0 wait_status
-  while kill -0 "$RUNNER_PID" 2>/dev/null; do
-    local cache_bytes elapsed_seconds
-    cache_bytes=$(du -sb "$JOB_TMP_ROOT" | awk '{print $1}')
-    elapsed_seconds=$(( $(date +%s) - JOB_START ))
-    if (( cache_bytes > MAX_CACHE_BYTES )); then
-      echo "Job-local model/runtime cache exceeded 20 GiB; stopping." >&2
-      run_status=1
-      break
-    fi
-    if (( elapsed_seconds >= JOB_BUDGET_SECONDS )); then
-      echo "Run reached its 55-minute budget; stopping before the one-hour allocation ends." >&2
-      run_status=124
-      break
-    fi
-    sleep 2
-  done
-  if (( run_status != 0 )); then
-    kill -TERM -- "-$runner_pgid" 2>/dev/null || true
-    sleep 5
-    kill -KILL -- "-$runner_pgid" 2>/dev/null || true
-  fi
-  if wait "$RUNNER_PID"; then
-    wait_status=0
-  else
-    wait_status=$?
-  fi
-  if (( run_status == 0 )); then
-    run_status=$wait_status
-  fi
-  local final_cache_bytes
-  final_cache_bytes=$(du -sb "$JOB_TMP_ROOT" | awk '{print $1}')
-  if (( run_status == 0 && final_cache_bytes > MAX_CACHE_BYTES )); then
-    echo "Job-local model/runtime cache exceeded 20 GiB; stopping." >&2
-    run_status=1
-  fi
-  RUNNER_PID=
-  return "$run_status"
-}
 
 cd "$PROJECT_ROOT"
 echo "Installing the locked DSpark runtime in job-local temporary storage."
