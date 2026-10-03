@@ -19,9 +19,10 @@ pretty_name: GeoReset text-label benchmark (Description/EUNIS overlap data)
 
 This project is a benchmark for evaluating prediction of geographic labels
 from text across data sources and reference datasets. The current implementation
-is deliberately limited to producing one reproducible Description sentence /
-EUNIS polygon overlap dataset. It does not run a model, evaluate predictions,
-infer missing labels, or recompute EUNIS geometry.
+produces one reproducible Description sentence / EUNIS polygon overlap dataset
+and a separate 100-sentence, zero-shot multilingual E5 ranking pilot. It does
+not train or fine-tune a model, infer missing overlap labels, or recompute EUNIS
+geometry.
 
 The retained dataset contains one row per exact `yes` sentence occurrence
 whose OpenStreetMap feature already has an EUNIS assignment.
@@ -53,6 +54,37 @@ and `manifest.json` together after source checks and baseline counts pass. See
 the [`docs`](docs/index.md) for source provenance, join rules, output fields,
 quality checks, and data terms. The manifest includes the exact computation and
 validation commits and SHA-256 checksums for the Parquet and summary artifacts.
+
+## Zero-shot pilot
+
+The pilot ranks all 158 pinned EUNIS English name-and-description candidates
+for a deterministic sample of 100 distinct positive overlap sentences. It uses
+`intfloat/multilingual-e5-small` at the immutable revision documented in
+[`docs/pilot.md`](docs/pilot.md). The candidate sentence list is frozen before
+model loading or inference.
+
+```bash
+uv sync --locked --all-groups --extra pilot
+hf download NoeFlandre/georeset-text-label-benchmark overlap.parquet \
+  --repo-type dataset \
+  --revision 2f7e2436e583e9c3b3c0cd0dca23b1d190e8fbf9 \
+  --local-dir source
+COMMIT_SHA=$(git rev-parse HEAD)
+uv run georeset-pilot freeze \
+  --source-parquet source/overlap.parquet \
+  --output-dir artifacts/e5-small-100-seed42
+uv run georeset-pilot run \
+  --run-dir artifacts/e5-small-100-seed42 \
+  --model-cache .cache/model-e5-small \
+  --computation-commit "$COMMIT_SHA" \
+  --validation-commit "$COMMIT_SHA"
+```
+
+The inference outputs are a frozen sample, predictions Parquet, metrics JSON,
+and a provenance manifest with pinned revisions, model-file and output hashes,
+runtime, and timings. The model weights are fetched from the public Hub on first
+run (about 471 MB). The pilot reports agreement with existing polygon-level
+EUNIS labels; scientific validation of those labels is unconfirmed.
 
 ## Engineering checks
 
@@ -87,5 +119,5 @@ final EUNIS scientific validation status is unconfirmed.
 ## Scope
 
 Only the Description label source is implemented. Website and Wikidata
-adapters, model runs, and prediction evaluation remain future work. A small
-read-only source interface allows other sources to be added later.
+adapters remain future work. The small read-only source interface allows other
+sources to be added later.

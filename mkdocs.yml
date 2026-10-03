@@ -13,6 +13,7 @@ nav:
   - Provenance and attribution: provenance.md
   - Outputs: outputs.md
   - Validation: validation.md
+  - Pilot ranking: pilot.md
 markdown_extensions:
   - admonition
   - tables

@@ -14,7 +14,7 @@ jobs:
           enable-cache: true
           python-version: "3.12"
       - name: Install locked dependencies
-        run: uv sync --locked --all-groups
+        run: uv sync --locked --all-groups --extra pilot
       - name: Lint and format
         run: |
           uv run ruff check src tests scripts

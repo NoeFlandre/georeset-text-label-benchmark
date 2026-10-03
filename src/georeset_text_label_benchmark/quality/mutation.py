@@ -20,6 +20,132 @@ EQUIVALENT_MUTANTS = {
         "In _build_run, PyArrow accepts zstd and ZSTD as the same compression codec; "
         "the produced Parquet metadata is verified to report ZSTD."
     ),
+    "georeset_text_label_benchmark.pilot.metrics.x__validate_predictions__mutmut_27": (
+        "_validate_predictions checks all three sequence lengths before this zip; replacing "
+        "strict=True with strict=None cannot change iteration or validation."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x__validate_predictions__mutmut_30": (
+        "_validate_predictions checks all three sequence lengths before this zip; omitting "
+        "strict therefore iterates the same aligned values."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x__validate_predictions__mutmut_31": (
+        "_validate_predictions checks all three sequence lengths before this zip; strict=False "
+        "therefore iterates the same aligned values."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x_class_breakdown__mutmut_20": (
+        "class_breakdown calls _validate_predictions, which enforces equal lengths before this "
+        "zip; strict=None has identical results."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x_class_breakdown__mutmut_23": (
+        "class_breakdown calls _validate_predictions, which enforces equal lengths before this "
+        "zip; omitting strict has identical results."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x_class_breakdown__mutmut_24": (
+        "class_breakdown calls _validate_predictions, which enforces equal lengths before this "
+        "zip; strict=False has identical results."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_sha256_file__mutmut_9": (
+        "hashlib accepts sha256 and SHA256 as case-insensitive algorithm names; the digest is "
+        "identical for the same file bytes."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__sha256_json__mutmut_3": (
+        "json.dumps treats ensure_ascii=None as false, so it emits the same text as "
+        "ensure_ascii=False for every JSON value."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__sha256_json__mutmut_17": (
+        "Python resolves utf-8 and UTF-8 to the same codec, so encoding the canonical JSON "
+        "payload produces identical bytes and hashes."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__write_json_exclusive__mutmut_14": (
+        "json.dump treats ensure_ascii=None as false, so its UTF-8 JSON bytes match the "
+        "ensure_ascii=False output."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_32": (
+        "Path.mkdir tests exist_ok by truth value; None and False both reject an existing "
+        "directory. A race regression verifies that True is rejected."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_34": (
+        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
+        "same exclusive directory creation behavior."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__read_frozen_sample__mutmut_7": (
+        "Python resolves UTF-8 and utf-8 to the same codec; the reader still decodes the same "
+        "bytes. Tests require an explicit UTF-8 codec and exact filename."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_10": (
+        "importlib.metadata normalizes distribution names case-insensitively; version('TORCH') "
+        "returns the same installed version as version('torch')."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_15": (
+        "importlib.metadata normalizes distribution names case-insensitively; "
+        "version('TRANSFORMERS') returns the same installed version as version('transformers')."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_20": (
+        "importlib.metadata normalizes distribution names case-insensitively; "
+        "version('PYARROW') returns the same installed version as version('pyarrow')."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__write_outputs__mutmut_14": (
+        "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; a metadata "
+        "assertion checks the resulting compression."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_80": (
+        "rank_candidates defaults top_k to 5; omitting the explicit top_k=5 argument preserves "
+        "the same ranking size."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": (
+        "Tensor.unsqueeze accepts +1 and 1 as the same dimension index."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_46": (
+        "For torch.nn.functional.normalize with dim=1, p=None and p=2 select the same vector "
+        "norm; a non-unit [3, 4] vector is checked against [0.6, 0.8]."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_49": (
+        "torch.nn.functional.normalize defaults p to 2, so omitting p preserves the explicit "
+        "p=2 result."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_50": (
+        "torch.nn.functional.normalize defaults dim to 1, so omitting dim preserves the explicit "
+        "dim=1 result."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_56": (
+        "torch.cat defaults dim to 0, so omitting dim preserves concatenation along the batch axis."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_21": (
+        "_validate_embedding_shapes requires the candidate row count to equal the code count, "
+        "so score rows and codes always have equal lengths before this zip."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_24": (
+        "_validate_embedding_shapes requires the candidate row count to equal the code count, "
+        "so omitting strict cannot change this zip's aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_25": (
+        "_validate_embedding_shapes requires the candidate row count to equal the code count, "
+        "so strict=False cannot change this zip's aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_36": (
+        "json.dumps treats ensure_ascii=None as false, so it emits the same text as "
+        "ensure_ascii=False for CLI results."
+    ),
+    "georeset_text_label_benchmark.pilot.sampling.x__validate_sentence_hash__mutmut_5": (
+        "Python resolves utf-8 and UTF-8 to the same codec, so the sentence bytes and SHA-256 "
+        "are unchanged."
+    ),
+    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_4": (
+        "json.dumps treats ensure_ascii=None as false, so the stable identity JSON bytes match "
+        "ensure_ascii=False."
+    ),
+    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_11": (
+        "The sample identity payload is always a JSON list, which has no key/value separator; "
+        "changing the unused colon separator cannot change its serialized bytes."
+    ),
+    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_15": (
+        "Python resolves utf-8 and UTF-8 to the same codec, so stable sample identity hashes "
+        "are unchanged."
+    ),
+    "georeset_text_label_benchmark.pilot.sampling.x__rank_rows__mutmut_5": (
+        "Python resolves ascii and ASCII to the same codec; the deterministic ranking digest "
+        "is unchanged."
+    ),
 }
 
 

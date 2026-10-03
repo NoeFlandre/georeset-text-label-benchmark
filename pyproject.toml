@@ -16,8 +16,15 @@ dependencies = [
     "pyarrow>=20.0.0",
 ]
 
+[project.optional-dependencies]
+pilot = [
+    "torch>=2.7,<3.0",
+    "transformers>=5.0,<6.0",
+]
+
 [project.scripts]
 georeset-benchmark = "georeset_text_label_benchmark.cli:main"
+georeset-pilot = "georeset_text_label_benchmark.pilot.cli:main"
 
 [dependency-groups]
 dev = [

@@ -4,8 +4,9 @@ The long-term goal is a benchmark for evaluating prediction of geographic
 labels from text across sources and reference datasets. This initial
 implementation produces a reproducible, occurrence-level join between pinned
 Description sentence labels and existing EUNIS habitat labels on OSM polygons.
-It is a data integration and coverage report. It does not train or evaluate a
-predictive model, fill missing values, or recompute geometry.
+It is a data integration and coverage report. It does not train a model, fill
+missing values, or recompute geometry. A separate 100-sentence zero-shot
+embedding pilot is documented in [Pilot ranking](pilot.md).
 
 The local runner reads the public Hub snapshots by immutable revision and
 streams only projected Parquet columns. It checks all three collections for

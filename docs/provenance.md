@@ -1,9 +1,10 @@
 # Provenance and attribution
 
 This project aims to compare text-to-geographic-label prediction across
-sources and references. The current implementation contains only the pinned
-Description/EUNIS overlap pipeline documented here; it is not a model benchmark
-run and does not evaluate predictions.
+sources and references. The data pipeline computes only the pinned
+Description/EUNIS overlap documented here. A separate small pilot ranks frozen
+sentences against EUNIS text candidates; it does not change overlap data or
+recompute geometries. See [pilot provenance and method](pilot.md).
 
 ## Pinned source snapshots
 
@@ -59,6 +60,20 @@ contributors, available under the Open Database License (ODbL). EUNIS habitat
 probability-map context: European Environment Agency, EUNIS version 1 (2021),
 CC-BY 4.0.” Check the ODbL and collection notices against the intended mode of
 distribution before release.
+
+## Pilot classification text
+
+The pilot candidate inventory uses EUNIS English names and descriptions from
+EEA terrestrial EUNIS 2021 (updated 2023; DOI
+[`10.2909/bfe4c237-e378-4a83-ab21-b3807f96c2e2`](https://sdi.eea.europa.eu/catalogue/datahub/api/records/bfe4c237-e378-4a83-ab21-b3807f96c2e2/formatters/xsl-view?approved=true&language=eng&output=pdf))
+and marine EUNIS 2022 (DOI
+[`10.2909/8a5eccda-e6ea-4018-a373-5c76a8eeec78`](https://sdi.eea.europa.eu/catalogue/datahub/api/records/8a5eccda-e6ea-4018-a373-5c76a8eeec78/formatters/xsl-view?approved=true&language=eng&output=pdf)).
+Both factsheets state CC-BY 4.0. Their archive SHA-256 values and release
+metadata are recorded row-by-row in `pilot_data/eunis_candidate_labels.csv`
+and copied to the run. All 158 codes present in the pinned overlap have a
+non-empty candidate description, and the EEA names match the overlap names
+exactly. Candidate descriptions are English; input sentences retain their
+original language.
 
 ## Scientific scope
 
