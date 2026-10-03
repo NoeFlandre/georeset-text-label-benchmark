@@ -194,6 +194,33 @@ def _polygon(osm_id: int, code: str | None) -> dict[str, Any]:
     }
 
 
+def test_pipeline_stage_prefix_identifies_the_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "published-run"
+    original_mkdtemp = pipeline_module.tempfile.mkdtemp
+    prefixes: list[str | None] = []
+
+    def record_mkdtemp(*, prefix: str | None = None, dir: str | Path | None = None) -> str:
+        prefixes.append(prefix)
+        return original_mkdtemp(prefix=prefix, dir=dir)
+
+    def stop_after_stage(*_args: Any) -> dict[str, Any]:
+        raise RuntimeError("stop after staging directory allocation")
+
+    def fail_diagnostic(*_args: Any) -> None:
+        raise OSError("leave stage for the test")
+
+    monkeypatch.setattr(pipeline_module.tempfile, "mkdtemp", record_mkdtemp)
+    monkeypatch.setattr(pipeline_module, "_build_run", stop_after_stage)
+    monkeypatch.setattr(pipeline_module, "_preserve_failure_diagnostic", fail_diagnostic)
+
+    with pytest.raises(RuntimeError, match="stop after staging directory allocation"):
+        _run_pipeline(TinySource(), output, expected_counts=None)
+
+    assert prefixes == [f".{output.name}-"]
+
+
 def test_run_writes_projected_occurrences_and_stage_report(tmp_path: Path) -> None:
     output = tmp_path / "run"
 

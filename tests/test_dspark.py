@@ -139,6 +139,51 @@ class _FakeEngine:
         self.shutdown_called = True
 
 
+def test_encode_frozen_prompts_passes_the_rendered_candidate_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokenizer = object()
+    rows = [{"sentence": "One short test sentence."}]
+    candidates = [{"eunis_code": "T11", "candidate_text": "Temperate forest"}]
+    seen: list[str] = []
+
+    def encode_prompt(actual_tokenizer: Any, prompt: str) -> list[int]:
+        assert actual_tokenizer is tokenizer
+        assert isinstance(prompt, str)
+        seen.append(prompt)
+        return [11, 12]
+
+    monkeypatch.setattr(dspark, "encode_prompt", encode_prompt)
+
+    encoded, prompt_hashes = dspark_runner._encode_frozen_prompts(tokenizer, rows, candidates)
+
+    expected_prompt = dspark.build_prompt(rows[0]["sentence"], candidates)
+    assert encoded == [([11, 12], 2)]
+    assert seen == [expected_prompt]
+    assert prompt_hashes == [hashlib.sha256(expected_prompt.encode("utf-8")).hexdigest()]
+
+
+def test_generate_rows_passes_each_encoded_token_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Engine:
+        def __init__(self) -> None:
+            self.calls: list[list[int]] = []
+
+        async def generate(self, input_ids: list[int]) -> dict[str, str]:
+            assert input_ids == [11, 12]
+            self.calls.append(input_ids)
+            return {"text": "generated"}
+
+    engine = Engine()
+    monkeypatch.setattr(dspark_runner, "_clock", iter([10.0, 10.25]).__next__)
+
+    generated = asyncio.run(dspark_runner._generate_rows(engine, [([11, 12], 2)]))
+
+    assert engine.calls == [[11, 12]]
+    assert generated == [({"text": "generated"}, 0.25)]
+
+
 def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
     assert dspark.TARGET_MODEL == "LiquidAI/LFM2.5-2.6B"
     assert dspark.TARGET_REVISION == "654f9463ce32b05d0429d76fe1f580b27d4c1ac0"
