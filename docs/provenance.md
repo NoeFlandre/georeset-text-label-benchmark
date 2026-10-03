@@ -21,7 +21,7 @@ sentence text files, geometries, or unrelated repository generations.
 
 The upstream EUNIS manifest is read as a provenance record. Its EUNIS
 reference is the EEA EUNIS habitat probability maps, version 1 (2021), with
-seven assets. The run stores the manifest SHA-256 and asset count. The existing
+139 raster assets across seven EEA collections. The run stores the manifest SHA-256 and asset count. The existing
 polygon assignment fields (`eunis_code`, name, overlap percentage, and source
 version) are carried through as-is.
 
