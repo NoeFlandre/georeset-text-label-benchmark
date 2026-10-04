@@ -461,6 +461,8 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     )
     monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
+    expected_prompts = [f"prompt:{row['sentence']}" for row in selected]
+    monkeypatch.setattr(dspark, "build_prompt", lambda sentence, _candidates: f"prompt:{sentence}")
 
     def run_pilot() -> dict[str, Any]:
         return dspark_runner.run_dspark_pilot(
@@ -479,13 +481,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         candidate_rows = list(csv.DictReader(stream))
     candidate_codes = [row["eunis_code"] for row in candidate_rows]
     names = {row["eunis_code"]: row["eunis_name"] for row in candidate_rows}
-    prompt = dspark.build_prompt(
-        selected[0]["sentence"],
-        [
-            {"eunis_code": row["eunis_code"], "candidate_text": row["candidate_text"]}
-            for row in candidate_rows
-        ],
-    )
+    prompt = expected_prompts[0]
     prompt_tokens = len(f"rendered:{prompt}".split()) + 1
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     expected_first_prediction = {
@@ -537,6 +533,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     assert cache_arguments == [Path(".cache/model-dspark")]
     assert preflight_gpus == [{"name": "mock GPU"}]
     assert len(tokenizer.prompts) == 100
+    assert tokenizer.prompts == expected_prompts
     assert predictions[0] == expected_first_prediction
     assert predictions[1] == {
         **selected[1],
@@ -548,15 +545,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "parse_status": "invalid",
         "parse_error": "unknown_code",
         "raw_output": "reasoning </think>NOT_A_CODE",
-        "prompt_sha256": hashlib.sha256(
-            dspark.build_prompt(
-                selected[1]["sentence"],
-                [
-                    {"eunis_code": row["eunis_code"], "candidate_text": row["candidate_text"]}
-                    for row in candidate_rows
-                ],
-            ).encode("utf-8")
-        ).hexdigest(),
+        "prompt_sha256": hashlib.sha256(expected_prompts[1].encode("utf-8")).hexdigest(),
         "prompt_tokens": prompt_tokens,
         "generated_tokens": 17,
         "finish_reason": "stop",
