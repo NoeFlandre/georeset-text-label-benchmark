@@ -308,17 +308,21 @@ def test_mutation_gate_reads_fingerprint_for_surviving_reviewed_patch(
         "REVIEWED_EXEMPTIONS",
         {name: mutation.MutationExemption(fingerprint, "fixture reviewed as equivalent")},
     )
-    calls: list[list[str]] = []
+    calls: list[tuple[list[str], dict[str, Any]]] = []
 
-    def fake_run(args: list[str], **_kwargs: Any) -> SimpleNamespace:
-        calls.append(args)
+    def fake_run(args: list[str], **kwargs: Any) -> SimpleNamespace:
+        calls.append((args, kwargs))
         output = f"{name}: survived\n" if args[1] == "results" else diff
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
 
     monkeypatch.setattr(mutation.subprocess, "run", fake_run)
 
     assert check_mutations() == 0
-    assert calls == [["mutmut", "results", "--all=true"], ["mutmut", "show", name]]
+    subprocess_kwargs = {"capture_output": True, "text": True, "check": False}
+    assert calls == [
+        (["mutmut", "results", "--all=true"], subprocess_kwargs),
+        (["mutmut", "show", name], subprocess_kwargs),
+    ]
     assert capsys.readouterr().out.endswith(f"(diff sha256: {fingerprint})\n")
 
 
@@ -331,12 +335,47 @@ def test_mutation_fingerprint_binds_the_reviewed_patch_and_hunk_location() -> No
     shifted = reviewed.replace("@@ -14,3 +14,3 @@", "@@ -114,3 +114,3 @@")
     changed = reviewed.replace("+    return bool(value)", "+    return value")
 
+    assert mutation._mutation_fingerprint(reviewed, name) == (
+        "3433e77824bf453d1c51a26790c539ace180f67c49c378a546d73c12305183fc"
+    )
     assert mutation._mutation_fingerprint(reviewed, name) != mutation._mutation_fingerprint(
         shifted, name
     )
     assert mutation._mutation_fingerprint(reviewed, name) != mutation._mutation_fingerprint(
         changed, name
     )
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("--- src/example.py", True),
+        ("+++ src/example.py", True),
+        ("@@ -1 +1 @@", True),
+        ("-removed", True),
+        ("+added", True),
+        (" context", True),
+        ("---src/example.py", False),
+        ("+++src/example.py", False),
+        ("\\ No newline at end of file", False),
+    ],
+)
+def test_valid_mutation_diff_line_checks_headers_and_patch_lines(line: str, expected: bool) -> None:
+    assert mutation._valid_mutation_diff_line(line) is expected
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        (["+added"], True),
+        (["-removed"], True),
+        (["--- old", "+++ new"], False),
+        ([" context"], False),
+        ([], False),
+    ],
+)
+def test_mutation_diff_requires_added_or_removed_code(lines: list[str], expected: bool) -> None:
+    assert mutation._has_changed_diff_content(lines) is expected
 
 
 def test_mutation_fingerprint_rejects_invalid_or_incomplete_diffs() -> None:

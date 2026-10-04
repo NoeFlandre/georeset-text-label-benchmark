@@ -223,6 +223,10 @@ EQUIVALENT_RATIONALES = {
         "json.dumps treats ensure_ascii=None as false, so CLI results have identical Unicode "
         "serialization to ensure_ascii=False."
     ),
+    "georeset_text_label_benchmark.quality.mutation.x__mutation_fingerprint__mutmut_20": (
+        "Python resolves UTF-8 and utf-8 to the same codec, so encoding the canonical patch "
+        "text produces the same fingerprint bytes."
+    ),
 }
 
 
@@ -288,6 +292,7 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_4": "036e478e6eda1562c04e91c457bba2d6ad3450857b201f044061ef52761f64be",
     "georeset_text_label_benchmark.pilot.sampling.x__validate_sentence_hash__mutmut_5": "93966eb39dc54e4d89032ccbf73e97f7181a1fcd05085e63a2b85e6a5c170a39",
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_21": "232cbfe1f08997724580af277de72347433894da72c82a47008ca4c24537d435",
+    "georeset_text_label_benchmark.quality.mutation.x__mutation_fingerprint__mutmut_20": "db9169a83216ba1277b993ce9540f311abe9026c6756032073b3c82ecf8a743c",
 }
 
 REVIEWED_EXEMPTIONS = {
@@ -333,7 +338,9 @@ def _validate_mutation_header(lines: list[str], mutant_name: str) -> None:
 
 
 def _valid_mutation_diff_line(line: str) -> bool:
-    return line.startswith(("@@", "--- ", "+++ ", "+", "-", " "))
+    if line.startswith(("---", "+++")):
+        return line.startswith(("--- ", "+++ "))
+    return line.startswith(("@@", "+", "-", " "))
 
 
 def _has_complete_mutation_diff(lines: list[str]) -> bool:
