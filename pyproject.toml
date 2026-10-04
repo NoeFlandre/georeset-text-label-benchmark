@@ -81,3 +81,5 @@ dict_synonyms = ["Dict"]
 on_dependency_change = "rerun"
 # PyTorch is imported by the test suite; forkserver avoids inheriting fork-unsafe runtime state.
 process_isolation = "forkserver"
+# Allow for forkserver and pytest startup variance on shared CI runners.
+timeout_constant = 2.0
