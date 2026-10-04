@@ -78,6 +78,39 @@ The run writes:
 * `manifest.json`: source/model revisions, model-file hashes, run settings,
   code commits, runtime, timings, output SHA-256 values, and limitations.
 
+Both adapters stage their outputs beside the destination. Before E5 downloads
+weights, and before DSpark checks the GPU or loads weights, each adapter probes
+the actual output filesystem for exclusive directory creation and hard links
+that preserve inode identity and fail with `EEXIST` when the target already
+exists. Publication uses those operations instead of Linux `renameat2` flags.
+Linux alone does not establish that a network filesystem supports a particular
+rename flag.
+
+The adapters publish `manifest.json` or `dspark_manifest.json` last. Consumers
+must treat that manifest as the complete-run marker. If a mount error interrupts
+publication, the final directory may contain some output files without a
+manifest, and the complete staged files remain beside it. A retry verifies the
+frozen-input and staged-output hashes, then resumes only when every file
+already in the destination is the same inode as its staged source. It never
+removes or replaces an existing destination file. If the stage is incomplete,
+ambiguous, or does not match the frozen run and commits, the command stops and
+reports the stage path for inspection.
+
+The preflight checks the filesystem at the path supplied for that run. It does
+not guarantee availability after the probe, so a later storage error can still
+interrupt publication. On Grid'5000, the documented `/home` and Group Storage
+paths use NFS ([Grid'5000 storage documentation](https://www.grid5000.fr/w/Storage)).
+This checkout has not tested the Grid'5000 mount itself. Test the exact
+persistent output parent before inference:
+
+```bash
+uv run python -c 'from pathlib import Path; from georeset_text_label_benchmark.pilot.publication import ensure_publication_supported; ensure_publication_supported(Path("/path/to/persistent/output-parent"))'
+```
+
+The probe creates and removes only a private temporary directory under the
+selected parent. It downloads no model and does not start inference. The
+adapter repeats the check on every run.
+
 Overall top-1 and top-5 accuracy are the fraction of rows whose existing
 polygon-level EUNIS code appears at rank one or among the first five. Macro-F1
 is the unweighted mean over all 158 candidates; a class with no pilot support
@@ -282,6 +315,13 @@ that completed output retains `<|im_end|>`, and that `</think>` is followed by
 one allowed code. The smoke is a runtime check only; keep its outputs outside
 the benchmark run path. The checked-in `run-dspark` command evaluates the
 complete frozen sample and does not resample or offer a smaller benchmark run.
+
+Grid'5000 documents `/home` and Group Storage as NFS mounts. The adapter checks
+the chosen persistent output parent with the no-clobber probe before GPU
+admission. This checkout has not run that probe on a Grid'5000 node. Run the
+standalone command in the publication section against the actual output parent
+before allocating GPU time. The job wrapper's local `$TMPDIR` checks do not
+verify persistent storage behavior.
 
 The preflight requires at least 20 GiB free under job-local `$TMPDIR` (or
 `/tmp`) and at least 1 GiB free in the persistent output filesystem. It places
