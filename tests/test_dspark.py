@@ -356,6 +356,80 @@ def test_chat_encoder_matches_pinned_template_kwargs_and_no_auto_special_tokens(
     assert tokenizer.messages == [[{"role": "user", "content": "Choose one."}]]
 
 
+def test_actual_pinned_template_still_opens_thinking_and_ignores_false_flag() -> None:
+    from transformers import PreTrainedTokenizerBase
+
+    fixture_dir = Path(__file__).parent / "fixtures/lfm25-2.6b-pinned"
+
+    class _PinnedTemplateTokenizer:
+        chat_template = (fixture_dir / "chat_template.jinja").read_text(encoding="utf-8")
+        special_tokens_map = {
+            "bos_token": "<|startoftext|>",
+            "eos_token": "<|im_end|>",
+            "pad_token": "<|pad|>",
+        }
+
+        def __init__(self) -> None:
+            self.rendered: str | None = None
+            self.template_kwargs: dict[str, Any] = {}
+
+        def get_chat_template(self, chat_template: str | None = None, tools: Any = None) -> str:
+            return chat_template or self.chat_template
+
+        def apply_chat_template(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
+            self.template_kwargs = kwargs
+            rendered = PreTrainedTokenizerBase.apply_chat_template(
+                self, messages, **kwargs
+            )
+            assert isinstance(rendered, str)
+            return rendered
+
+        def __call__(self, rendered: str, **kwargs: Any) -> dict[str, list[int]]:
+            assert kwargs == {"add_special_tokens": False}
+            self.rendered = rendered
+            return {"input_ids": list(range(len(rendered.split())))}
+
+    tokenizer = _PinnedTemplateTokenizer()
+    dspark.encode_prompt(tokenizer, "Choose one.")
+
+    assert tokenizer.rendered == (
+        "<|startoftext|><|im_start|>user\nChoose one.<|im_end|>\n"
+        "<|im_start|>assistant\n<think>"
+    )
+    assert tokenizer.rendered.endswith("<|im_start|>assistant\n<think>")
+    assert tokenizer.template_kwargs == {
+        "tokenize": False,
+        "add_generation_prompt": True,
+    }
+
+
+def test_generation_settings_match_pinned_model_and_sglang_contract() -> None:
+    fixture_dir = Path(__file__).parent / "fixtures/lfm25-2.6b-pinned"
+    model_config = json.loads((fixture_dir / "config.json").read_text(encoding="utf-8"))
+    tokenizer_config = json.loads(
+        (fixture_dir / "tokenizer_config.json").read_text(encoding="utf-8")
+    )
+    generation_config = json.loads(
+        (fixture_dir / "generation_config.json").read_text(encoding="utf-8")
+    )
+
+    assert tokenizer_config["eos_token"] == "<|im_end|>"
+    assert model_config["eos_token_id"] == 124900
+    assert generation_config["eos_token_id"] == [model_config["eos_token_id"]]
+    assert dspark.TARGET_EOS_TOKEN == tokenizer_config["eos_token"]
+    assert dspark.TARGET_EOS_TOKEN_ID == model_config["eos_token_id"]
+    assert dspark.MAX_NEW_TOKENS == 512
+    assert dspark.CHAT_TEMPLATE_KWARGS == {}
+    assert dspark.SAMPLING == {
+        "temperature": generation_config["temperature"],
+        "top_k": generation_config["top_k"],
+        "repetition_penalty": generation_config["repetition_penalty"],
+        "max_new_tokens": 512,
+        "sampling_seed": 42,
+        "stop_token_ids": [model_config["eos_token_id"]],
+    }
+
+
 def test_context_guard_counts_generation_tokens_against_sglang_limit() -> None:
     dspark.validate_context_length(1, max_new_tokens=1)
     dspark.validate_context_length(128_000 - 4096, max_new_tokens=4096)
@@ -404,6 +478,18 @@ def test_parser_preserves_strict_allowed_label_validation(
     assert parsed.code == expected_code
     assert parsed.status == status
     assert parsed.error == error
+
+
+def test_parser_strips_only_the_pinned_target_eos_token() -> None:
+    parsed = dspark.parse_label(
+        "</think>T11<|im_end|>", finish_reason="stop", candidate_codes=["T11"]
+    )
+    assert parsed == dspark.ParsedLabel("T11", "valid")
+
+    wrong_eos = dspark.parse_label(
+        "</think>T11<|endoftext|>", finish_reason="stop", candidate_codes=["T11"]
+    )
+    assert wrong_eos == dspark.ParsedLabel(None, "invalid", "invalid_format")
 
 
 def test_sglang_engine_uses_explicit_unknown_version_fallback(
