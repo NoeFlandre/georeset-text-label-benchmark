@@ -19,9 +19,84 @@ EQUIVALENT_RATIONALES = {
         "In _verify_sentence_hash, Python's codec registry resolves utf-8 and UTF-8 to the "
         "same codec and identical bytes; exact sentence SHA-256 validation is tested."
     ),
-    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_21": (
-        "In _build_run, PyArrow accepts zstd and ZSTD as the same compression codec; "
-        "the produced Parquet metadata is verified to report ZSTD."
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": (
+        "json.dumps treats ensure_ascii=None as false, so CLI results have identical "
+        "Unicode serialization to ensure_ascii=False."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_22": (
+        "build_prompt constructs codes by iterating the same candidate sequence immediately "
+        "before this zip, so both iterables always have equal lengths; strict=None cannot "
+        "alter the rendered candidate list."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_25": (
+        "build_prompt constructs codes by iterating the same candidate sequence immediately "
+        "before this zip, so both iterables always have equal lengths; omitting strict "
+        "cannot alter the rendered candidate list."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_26": (
+        "build_prompt constructs codes by iterating the same candidate sequence immediately "
+        "before this zip, so both iterables always have equal lengths; strict=False cannot "
+        "alter the rendered candidate list."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_29": (
+        "json.dumps treats ensure_ascii=None as false, so Unicode candidate text is "
+        "serialized identically to ensure_ascii=False; the prompt contract includes "
+        "non-ASCII text."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_encode_prompt__mutmut_8": (
+        "CHAT_TEMPLATE_KWARGS is the pinned empty mapping, so omitting its keyword "
+        "expansion passes the same arguments to apply_chat_template. The template test "
+        "asserts those arguments and the rendered prompt."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_template_sha256__mutmut_5": (
+        "Python resolves utf-8 and UTF-8 to the same codec, producing the same pinned chat "
+        "template SHA-256."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__encode_frozen_prompts__mutmut_21": (
+        "Python resolves utf-8 and UTF-8 to the same codec, so per-prompt SHA-256 values "
+        "are unchanged."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": (
+        "parse_label returns either None or a non-empty allowed code, and candidate_names "
+        "has string keys only. candidate_names.get(None) is None, matching the conditional "
+        "branch."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": (
+        "Python resolves utf-8 and UTF-8 to the same codec when reading the manifest JSON."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": (
+        "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
+        "test checks that the emitted metadata reports ZSTD."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": (
+        "Tensor.unsqueeze accepts +1 and 1 as the same dimension index."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_46": (
+        "For torch.nn.functional.normalize with dim=1, p=None and p=2 select the same "
+        "vector norm; a non-unit [3, 4] vector is checked against [0.6, 0.8]."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_49": (
+        "torch.nn.functional.normalize defaults p to 2, so omitting p preserves the "
+        "explicit p=2 result."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_50": (
+        "torch.nn.functional.normalize defaults dim to 1, so omitting dim preserves the "
+        "explicit dim=1 result."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_56": (
+        "torch.cat defaults dim to 0, so omitting dim preserves concatenation along the batch axis."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_21": (
+        "_validate_embedding_shapes requires the candidate row count to equal the code "
+        "count, so score rows and codes always have equal lengths before this zip."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_24": (
+        "_validate_embedding_shapes requires the candidate row count to equal the code "
+        "count, so omitting strict cannot change this zip's aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_25": (
+        "_validate_embedding_shapes requires the candidate row count to equal the code "
+        "count, so strict=False cannot change this zip's aligned iteration."
     ),
     "georeset_text_label_benchmark.pilot.metrics.x__validate_predictions__mutmut_27": (
         "_validate_predictions checks all three sequence lengths before this zip; replacing "
@@ -32,196 +107,175 @@ EQUIVALENT_RATIONALES = {
         "strict therefore iterates the same aligned values."
     ),
     "georeset_text_label_benchmark.pilot.metrics.x__validate_predictions__mutmut_31": (
-        "_validate_predictions checks all three sequence lengths before this zip; strict=False "
-        "therefore iterates the same aligned values."
+        "_validate_predictions checks all three sequence lengths before this zip; "
+        "strict=False therefore iterates the same aligned values."
     ),
     "georeset_text_label_benchmark.pilot.metrics.x_class_breakdown__mutmut_20": (
-        "class_breakdown calls _validate_predictions, which enforces equal lengths before this "
-        "zip; strict=None has identical results."
+        "class_breakdown calls _validate_predictions, which enforces equal lengths before "
+        "this zip; strict=None has identical results."
     ),
     "georeset_text_label_benchmark.pilot.metrics.x_class_breakdown__mutmut_23": (
-        "class_breakdown calls _validate_predictions, which enforces equal lengths before this "
-        "zip; omitting strict has identical results."
+        "class_breakdown calls _validate_predictions, which enforces equal lengths before "
+        "this zip; omitting strict has identical results."
     ),
     "georeset_text_label_benchmark.pilot.metrics.x_class_breakdown__mutmut_24": (
-        "class_breakdown calls _validate_predictions, which enforces equal lengths before this "
-        "zip; strict=False has identical results."
+        "class_breakdown calls _validate_predictions, which enforces equal lengths before "
+        "this zip; strict=False has identical results."
     ),
-    "georeset_text_label_benchmark.pilot.runner.x_sha256_file__mutmut_9": (
-        "hashlib accepts sha256 and SHA256 as case-insensitive algorithm names; the digest is "
-        "identical for the same file bytes."
+    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_15": (
+        "single_label_report validates equal non-empty gold and prediction lengths before "
+        "this zip, so strict=None has the same aligned iteration."
     ),
-    "georeset_text_label_benchmark.pilot.runner.x__sha256_json__mutmut_3": (
-        "json.dumps treats ensure_ascii=None as false, so it emits the same text as "
-        "ensure_ascii=False for every JSON value."
+    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_18": (
+        "single_label_report validates equal non-empty gold and prediction lengths before "
+        "this zip, so omitting strict has the same aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_19": (
+        "single_label_report validates equal non-empty gold and prediction lengths before "
+        "this zip, so strict=False has the same aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_15": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_16": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_18": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_19": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_14": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_15": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_18": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_19": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_21": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_22": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_4": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_6": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_8": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_9": (
+        "This mutation changes only the private capability probe name or payload. The probe "
+        "still runs under the destination parent, verifies an exclusive hard link and inode "
+        "identity, and removes its temporary files."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__read_frozen_sample__mutmut_7": (
+        "Python resolves UTF-8 and utf-8 to the same codec; the reader still decodes the "
+        "same bytes. Tests require an explicit UTF-8 codec and exact filename."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_10": (
+        "importlib.metadata normalizes distribution names case-insensitively; "
+        "version('TORCH') returns the same installed version as version('torch')."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_15": (
+        "importlib.metadata normalizes distribution names case-insensitively; "
+        "version('TRANSFORMERS') returns the same installed version as "
+        "version('transformers')."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_20": (
+        "importlib.metadata normalizes distribution names case-insensitively; "
+        "version('PYARROW') returns the same installed version as version('pyarrow')."
     ),
     "georeset_text_label_benchmark.pilot.runner.x__sha256_json__mutmut_17": (
         "Python resolves utf-8 and UTF-8 to the same codec, so encoding the canonical JSON "
         "payload produces identical bytes and hashes."
     ),
+    "georeset_text_label_benchmark.pilot.runner.x__sha256_json__mutmut_3": (
+        "json.dumps treats ensure_ascii=None as false, so it emits the same text as "
+        "ensure_ascii=False for every JSON value."
+    ),
     "georeset_text_label_benchmark.pilot.runner.x__write_json_exclusive__mutmut_14": (
         "json.dump treats ensure_ascii=None as false, so its UTF-8 JSON bytes match the "
         "ensure_ascii=False output."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__write_outputs__mutmut_14": (
+        "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; a metadata "
+        "assertion checks the resulting compression."
     ),
     "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_32": (
         "Path.mkdir tests exist_ok by truth value; None and False both reject an existing "
         "directory. A race regression verifies that True is rejected."
     ),
     "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_34": (
-        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
-        "same exclusive directory creation behavior."
+        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves "
+        "the same exclusive directory creation behavior."
     ),
-    "georeset_text_label_benchmark.pilot.runner.x__read_frozen_sample__mutmut_7": (
-        "Python resolves UTF-8 and utf-8 to the same codec; the reader still decodes the same "
-        "bytes. Tests require an explicit UTF-8 codec and exact filename."
+    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_98": (
+        "rank_candidates defaults top_k to 5; omitting the explicit top_k=5 argument "
+        "preserves the same ranking size, and output rows are verified."
     ),
-    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_10": (
-        "importlib.metadata normalizes distribution names case-insensitively; version('TORCH') "
-        "returns the same installed version as version('torch')."
-    ),
-    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_15": (
-        "importlib.metadata normalizes distribution names case-insensitively; "
-        "version('TRANSFORMERS') returns the same installed version as version('transformers')."
-    ),
-    "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_20": (
-        "importlib.metadata normalizes distribution names case-insensitively; "
-        "version('PYARROW') returns the same installed version as version('pyarrow')."
-    ),
-    "georeset_text_label_benchmark.pilot.runner.x__write_outputs__mutmut_14": (
-        "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; a metadata "
-        "assertion checks the resulting compression."
-    ),
-    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_80": (
-        "rank_candidates defaults top_k to 5; omitting the explicit top_k=5 argument preserves "
-        "the same ranking size."
-    ),
-    "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": (
-        "Tensor.unsqueeze accepts +1 and 1 as the same dimension index."
-    ),
-    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_46": (
-        "For torch.nn.functional.normalize with dim=1, p=None and p=2 select the same vector "
-        "norm; a non-unit [3, 4] vector is checked against [0.6, 0.8]."
-    ),
-    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_49": (
-        "torch.nn.functional.normalize defaults p to 2, so omitting p preserves the explicit "
-        "p=2 result."
-    ),
-    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_50": (
-        "torch.nn.functional.normalize defaults dim to 1, so omitting dim preserves the explicit "
-        "dim=1 result."
-    ),
-    "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_56": (
-        "torch.cat defaults dim to 0, so omitting dim preserves concatenation along the batch axis."
-    ),
-    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_21": (
-        "_validate_embedding_shapes requires the candidate row count to equal the code count, "
-        "so score rows and codes always have equal lengths before this zip."
-    ),
-    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_24": (
-        "_validate_embedding_shapes requires the candidate row count to equal the code count, "
-        "so omitting strict cannot change this zip's aligned iteration."
-    ),
-    "georeset_text_label_benchmark.pilot.embeddings.x_rank_candidates__mutmut_25": (
-        "_validate_embedding_shapes requires the candidate row count to equal the code count, "
-        "so strict=False cannot change this zip's aligned iteration."
-    ),
-    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_36": (
-        "json.dumps treats ensure_ascii=None as false, so it emits the same text as "
-        "ensure_ascii=False for CLI results."
-    ),
-    "georeset_text_label_benchmark.pilot.sampling.x__validate_sentence_hash__mutmut_5": (
-        "Python resolves utf-8 and UTF-8 to the same codec, so the sentence bytes and SHA-256 "
-        "are unchanged."
-    ),
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_4": (
-        "json.dumps treats ensure_ascii=None as false, so the stable identity JSON bytes match "
-        "ensure_ascii=False."
-    ),
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_11": (
-        "The sample identity payload is always a JSON list, which has no key/value separator; "
-        "changing the unused colon separator cannot change its serialized bytes."
-    ),
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_15": (
-        "Python resolves utf-8 and UTF-8 to the same codec, so stable sample identity hashes "
-        "are unchanged."
+    "georeset_text_label_benchmark.pilot.runner.x_sha256_file__mutmut_9": (
+        "hashlib accepts sha256 and SHA256 as case-insensitive algorithm names; the digest "
+        "is identical for the same file bytes."
     ),
     "georeset_text_label_benchmark.pilot.sampling.x__rank_rows__mutmut_5": (
-        "Python resolves ascii and ASCII to the same codec; the deterministic ranking digest "
-        "is unchanged."
+        "Python resolves ascii and ASCII to the same codec; the deterministic ranking "
+        "digest is unchanged."
     ),
-    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_22": (
-        "build_prompt constructs codes by iterating the same candidate sequence immediately "
-        "before this zip, so both iterables always have equal lengths; strict=None cannot alter "
-        "the rendered candidate list."
+    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_11": (
+        "The sample identity payload is always a JSON list, which has no key/value "
+        "separator; changing the unused colon separator cannot change its serialized bytes."
     ),
-    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_25": (
-        "build_prompt constructs codes by iterating the same candidate sequence immediately "
-        "before this zip, so both iterables always have equal lengths; omitting strict cannot "
-        "alter the rendered candidate list."
+    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_15": (
+        "Python resolves utf-8 and UTF-8 to the same codec, so stable sample identity "
+        "hashes are unchanged."
     ),
-    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_26": (
-        "build_prompt constructs codes by iterating the same candidate sequence immediately "
-        "before this zip, so both iterables always have equal lengths; strict=False cannot "
-        "alter the rendered candidate list."
+    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_4": (
+        "json.dumps treats ensure_ascii=None as false, so the stable identity JSON bytes "
+        "match ensure_ascii=False."
     ),
-    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_29": (
-        "json.dumps treats ensure_ascii=None as false, so Unicode candidate text is serialized "
-        "identically to ensure_ascii=False; the prompt contract includes non-ASCII text."
+    "georeset_text_label_benchmark.pilot.sampling.x__validate_sentence_hash__mutmut_5": (
+        "Python resolves utf-8 and UTF-8 to the same codec, so the sentence bytes and "
+        "SHA-256 are unchanged."
     ),
-    "georeset_text_label_benchmark.pilot.dspark.x_template_sha256__mutmut_5": (
-        "Python resolves utf-8 and UTF-8 to the same codec, producing the same pinned chat "
-        "template SHA-256."
-    ),
-    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_15": (
-        "single_label_report validates equal non-empty gold and prediction lengths before this "
-        "zip, so strict=None has the same aligned iteration."
-    ),
-    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_18": (
-        "single_label_report validates equal non-empty gold and prediction lengths before this "
-        "zip, so omitting strict has the same aligned iteration."
-    ),
-    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_19": (
-        "single_label_report validates equal non-empty gold and prediction lengths before this "
-        "zip, so strict=False has the same aligned iteration."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x__encode_frozen_prompts__mutmut_21": (
-        "Python resolves utf-8 and UTF-8 to the same codec, so per-prompt SHA-256 values are "
-        "unchanged."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": (
-        "Python resolves utf-8 and UTF-8 to the same codec when reading the manifest JSON."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_77": (
-        "Path.mkdir treats exist_ok=None as false, matching the explicit exist_ok=False; the "
-        "output race regression confirms an existing destination is rejected."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_79": (
-        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
-        "same exclusive output-directory behavior."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_96": (
-        "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
-        "checks the emitted metadata reports ZSTD."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_89": (
-        "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
-        "checks the emitted Parquet metadata reports ZSTD."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_70": (
-        "Path.mkdir treats exist_ok=None as false, matching the explicit exist_ok=False; a race "
-        "regression verifies that a destination created after preflight is rejected."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_72": (
-        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
-        "same exclusive output-directory creation behavior."
-    ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": (
-        "parse_label returns either None or a non-empty allowed code, and candidate_names has "
-        "string keys only. candidate_names.get(None) is None, matching the conditional branch."
-    ),
-    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": (
-        "json.dumps treats ensure_ascii=None as false, so CLI results have identical Unicode "
-        "serialization to ensure_ascii=False."
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_21": (
+        "In _build_run, PyArrow accepts zstd and ZSTD as the same compression codec; the "
+        "produced Parquet metadata is verified to report ZSTD."
     ),
     "georeset_text_label_benchmark.quality.mutation.x__mutation_fingerprint__mutmut_20": (
         "Python resolves UTF-8 and utf-8 to the same codec, so encoding the canonical patch "
@@ -241,22 +295,17 @@ class MutationExemption:
 EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.join.x__validate_text_hash__mutmut_18": "c3b9b40fd4e77b6cd037e55b3e755087df8532ce6d1909c311c01dba11913cf5",
     "georeset_text_label_benchmark.join.x__verify_sentence_hash__mutmut_6": "897e9d2066e18847fa513aba786d30d3400d297aa6e0bfd89ae586daeff87be4",
-    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_36": "9881a9b021daefad940058dfcdcaa446fbf364aecafbc59e1fc358859b910132",
     "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": "e317e803cb4a0b9adac8aa69a4db7090b923ebd5e75956ec4f7bf73e013419f4",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_22": "66e4967360377605713309559bad5ba7744f86f6543608975a63392e55aabee5",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_25": "63f0450d9da1af7695b5194c67202188a4a6056fdeba50bbf62728ff0e4f2ec9",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_26": "70760f50df9058bf4d75191b5da89c349db7d913da18cb8f90105be5370ec6ed",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_29": "1e7e3b34a51a53dd00e355287bf8e6da7842a8aac46e2361f43d69d3a3b27cdd",
+    "georeset_text_label_benchmark.pilot.dspark.x_encode_prompt__mutmut_8": "e20685cb5e6d61ee03d6af90bb9deddb91012c9823f7d042c39ff8043d18bc50",
     "georeset_text_label_benchmark.pilot.dspark.x_template_sha256__mutmut_5": "ca029cc80aaa0f720c127835532cf1666b1ea025cc3882ab3a8b1dfc057542d2",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__encode_frozen_prompts__mutmut_21": "ac9d8036932a65cafca518c618417eda57e1a87b9e26c6ba91c35698124848cc",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": "f567c307849498199c56c0b5b5fd47aa914f613e516c8618e0451837e9194c56",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": "5ad66d9af22bf0a6d8490a046db51195f17c4466a78e7b5968f6818cc2db273f",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_70": "f1eb073a36a6f071bcba2f99cd56af0ce16feecee9fe67181b18f00b2b8bd78b",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_72": "cdb53ff602042d2f03ac710a48b11e99c0f530cf2bdd26dcab20f84e2f1df44e",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_77": "80075f7d055354796fa78c704afda0bc92ec456aa6365f1756d08b87709f8643",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_79": "0f5f2eb9021186a516f673e49d805815a7f4a482f4c79d7bfd2c4d81ad572e51",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_89": "b534ce2722c8764c47f83973bc63fb0114d1e529ee3410536e7c97425ea9225e",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_96": "8e004ea5819318b984830ac31368a0122e993b2c850dfb3f1c1422f30cf1db3b",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": "e045243688cc4d3e63a821de04a801070bb4f6649ff06a58de31dbcd927cc354",
     "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": "6df3a896f6cea2f72dd0eab8273ac2447f1f8ad7219bc656d651e728ec548f6a",
     "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_46": "762fcd4391bf4f011b03d439abcd817c23b83fdbc386a50c5b090ce5363bf529",
     "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_49": "52e595bb1289043f8ddb669f2998e8ad247382744d3a255ce445a728f3a32d84",
@@ -274,6 +323,20 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_15": "e23a83cfe83838be7ad8ad2ef2125ea305504e8808f709294d240003180999f6",
     "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_18": "22083d814d4a8b41f72a21a7d1f7a4679a990335b5b36a86100222e5c0084f84",
     "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_19": "e654d8b6d1e7369f736b5dbfac4d2bb12cae203dfd7016fa2558dad0d28fd8be",
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_15": "3daacc58a796a1ba62bfad571483a41842dc8c70f98f84c4209e5de45fd7f5eb",
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_16": "7839001b3df29a1f19bdca975cbfbf3aa20916aa3bfa49bc4201e92a5a7c627d",
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_18": "7b578c33dd84612079f8f3ccfb82834d780d0cc8e472b555bf9ffdaba5e7e30f",
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_19": "f096eebee00b03f00f4505557510d6525b850739b9e76591755538b7468d437c",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_14": "363c78a6a00872d3a6ebe3405741286bbb63551da5dcb7b45b828d61010d1b71",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_15": "3e361f1804d81a434dc3b63be842dce8a73f730cd11b053b7a84654d86ddb1b3",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_18": "b09ffd1ff19b25363415a9a83ab1dcb9badf20efe9db252b3ce7c2c95f3fc11f",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_19": "35d3016d27ce2b4357c57d695ec301a4fde55f223730d1d2b3702c66fe02ef4d",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_21": "affb4ef23b4bb5bc65a08c5349e9c7c518d18346ea56b85cf9d747edb37cca77",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_22": "42b5aa3f02008be8a5606d42fb4e21542ae86357483e4147492839b768c9fff0",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_4": "e72d89b0dc76228ab868747e7a0f78b9c709fba56f31f6c7a08804af6181215a",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_6": "0bcff19cb8814b766822b1a203e47b0ef0bd9fbe93f15b2e7626565ca97b2555",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_8": "7cce0b20e593e3e1d93c71ba9f8ce7952aeddfd8f1a4e3463188e9e482bafe5f",
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_9": "15be2406b3fad0c742afc5504395358c0f75d185c269912c52f13872fb50ca9c",
     "georeset_text_label_benchmark.pilot.runner.x__read_frozen_sample__mutmut_7": "f1b4b555f5be6ce35f591c3723b437c6063c7abbd13b253c2a93f18810691de7",
     "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_10": "66c043a5008b2baab6131e970b88f4650ea652d440f554f7048776d461232e7d",
     "georeset_text_label_benchmark.pilot.runner.x__runtime_metadata__mutmut_15": "6d3c11b3caff7245cacd86adb3669bbd0787cc5d3ced5281eb07fe38eae1e125",
@@ -284,7 +347,7 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.runner.x__write_outputs__mutmut_14": "a99992fd7823bf9e66b06c7603abc43cc49594b740724c72bc1451e34c881adf",
     "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_32": "31eb00746606888d651f6e19a560c04f439404473045ab02d1c23803f811a8fb",
     "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_34": "f592f802595ace7e53bd468682dc98ba83a06d70700bd6932106884570f36dcf",
-    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_80": "af196399ff9fae8ea52c34f18374cfb97d8721c98eaa99fac832669f84ff7e98",
+    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_98": "bdbe1bd04e8b0974f0d4e3dbd60cda07e15d3e72104d1d48193373cf424350fa",
     "georeset_text_label_benchmark.pilot.runner.x_sha256_file__mutmut_9": "3678fd7c4955e8b29dba31c6185d2bb948418be50482141a9019fedf93c407de",
     "georeset_text_label_benchmark.pilot.sampling.x__rank_rows__mutmut_5": "a0d87273a7f12e7e5b9e47105fd97be3413da5d8c7c5467c37cd9db17d00bb03",
     "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_11": "15828e13b1733bacc4e8aa688123d4e388339035c82008162bcd41b4dd7d993f",

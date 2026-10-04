@@ -741,6 +741,7 @@ def test_encoder_keeps_distinct_text_vectors_in_order_across_batches() -> None:
         torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [2**-0.5, 2**-0.5, 0.0]]),
     )
 
+
 def test_encoder_uses_default_batch_size_and_euclidean_normalization() -> None:
     tokenizer = _RecordingTokenizer()
 
@@ -2208,6 +2209,7 @@ def _write_model_stubs(tmp_path: Path) -> Path:
     for name in MODEL_FILES:
         (model_dir / name).write_bytes(name.encode("utf-8"))
     return model_dir
+
 
 def test_runner_preflight_rejects_bad_commits_settings_and_existing_outputs(
     tmp_path: Path,
