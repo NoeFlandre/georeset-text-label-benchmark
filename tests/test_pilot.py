@@ -391,8 +391,11 @@ def test_sampling_validation_errors_are_exact() -> None:
         lambda: sampling._candidate_record("T11", "Name", candidate_details),
         "source_sha256 must be a lowercase SHA-256 for T11",
     )
-    assert bad_language["language_code"] == 7
-    assert bad_hash["text_sha256"] == "0" * 64
+    _assert_value_error(
+        lambda: sampling._validate_row(bad_language),
+        "language_code must be a non-empty string or null",
+    )
+    _assert_value_error(lambda: sampling._validate_row(bad_hash), "sentence hash mismatch")
 
 
 def test_candidate_record_retains_all_provenance_fields() -> None:
@@ -697,6 +700,46 @@ def test_encoder_applies_prefix_batches_and_l2_normalization() -> None:
     assert model.eval_called
     assert result.shape == (3, 2)
     assert torch.allclose(result, torch.tensor([[1.0, 0.0]]).repeat(3, 1))
+
+
+def test_encoder_keeps_distinct_text_vectors_in_order_across_batches() -> None:
+    texts = ["maple forest", "wet meadow", "lava field", "salt marsh"]
+    prefixed = [f"query: {text}" for text in texts]
+    identities = {text: index for index, text in enumerate(prefixed, start=1)}
+
+    class DistinctTokenizer:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def __call__(self, batch_texts: list[str], **_kwargs: Any) -> dict[str, torch.Tensor]:
+            self.calls.append(batch_texts)
+            input_ids = torch.tensor([[identities[text]] for text in batch_texts])
+            return {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones_like(input_ids),
+            }
+
+    class DistinctModel:
+        def eval(self) -> DistinctModel:
+            return self
+
+        def __call__(self, **batch: torch.Tensor) -> SimpleNamespace:
+            basis = torch.tensor(
+                [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0], [1.0, 1.0, 0.0]]
+            )
+            hidden = basis[batch["input_ids"][:, 0] - 1].unsqueeze(1)
+            return SimpleNamespace(last_hidden_state=hidden)
+
+    tokenizer = DistinctTokenizer()
+    result = encode_texts(
+        texts, tokenizer, DistinctModel(), prefix="query", batch_size=3, max_length=77
+    )
+
+    assert tokenizer.calls == [prefixed[:3], prefixed[3:]]
+    assert torch.allclose(
+        result,
+        torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [2**-0.5, 2**-0.5, 0.0]]),
+    )
 
 
 def test_encoder_uses_default_batch_size_and_euclidean_normalization() -> None:
@@ -1262,10 +1305,7 @@ def test_runner_executes_frozen_pilot_and_writes_metrics_and_hash_manifest(
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     selected = _frozen_sample(run_dir, candidates)
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
-    for name in MODEL_FILES:
-        (model_dir / name).write_bytes(name.encode("utf-8"))
+    model_dir = _write_model_stubs(tmp_path)
     model_cache = tmp_path / "model-cache"
     tokenizer = _RecordingTokenizer()
     model = _RecordingModel()
@@ -2075,6 +2115,100 @@ def test_runner_preserves_a_file_created_after_output_preflight(
             max_length=64,
         )
     assert (run_dir / "metrics.json").read_bytes() == b"competing writer"
+
+
+def test_runner_keeps_distinct_query_vectors_attached_to_frozen_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidates = _candidate_file()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    selected = _frozen_sample(run_dir, candidates)
+    with candidates.open(encoding="utf-8", newline="") as stream:
+        candidate_rows = list(csv.DictReader(stream))
+
+    expected_codes, token_ids, vectors_by_id = _identity_embedding_vectors(selected, candidate_rows)
+
+    class IdentityTokenizer:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def __call__(self, texts: list[str], **_kwargs: Any) -> dict[str, torch.Tensor]:
+            self.calls.append(texts)
+            input_ids = torch.tensor([[token_ids[text]] for text in texts])
+            return {"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)}
+
+    class IdentityModel:
+        def eval(self) -> IdentityModel:
+            return self
+
+        def __call__(self, **batch: torch.Tensor) -> SimpleNamespace:
+            vectors = torch.stack([vectors_by_id[int(index)] for index in batch["input_ids"][:, 0]])
+            return SimpleNamespace(last_hidden_state=vectors.unsqueeze(1))
+
+    model_dir = _write_model_stubs(tmp_path)
+    tokenizer = IdentityTokenizer()
+    monkeypatch.setattr(runner, "_download_model", lambda _cache: model_dir)
+    monkeypatch.setattr(runner, "_load_model", lambda _path: (tokenizer, IdentityModel()))
+    monkeypatch.setattr(runner, "perf_counter", iter(range(100)).__next__)
+
+    runner.run_pilot(
+        run_dir,
+        tmp_path / "model-cache",
+        computation_commit="a" * 40,
+        validation_commit="b" * 40,
+        batch_size=2,
+        max_length=64,
+    )
+
+    observed = pq.read_table(run_dir / "predictions.parquet").to_pylist()
+    assert [call for call in tokenizer.calls if call[0].startswith("query:")] == [
+        [f"query: {row['sentence']}" for row in selected[:2]],
+        [f"query: {row['sentence']}" for row in selected[2:]],
+    ]
+    assert [
+        (row["sample_id"], row["sentence"], row["top1_eunis_code"], row["top1_cosine"])
+        for row in observed
+    ] == _identity_expected_predictions(selected, expected_codes)
+
+
+def _identity_embedding_vectors(
+    selected: list[dict[str, Any]], candidate_rows: list[dict[str, str]]
+) -> tuple[list[str], dict[str, int], dict[int, torch.Tensor]]:
+    expected_codes = sorted(row["eunis_code"] for row in candidate_rows)[: len(selected)]
+    basis = torch.eye(len(selected))
+    vectors_by_text: dict[str, torch.Tensor] = {
+        f"query: {row['sentence']}": basis[index] for index, row in enumerate(selected)
+    }
+    candidate_vectors = {code: basis[index] for index, code in enumerate(expected_codes)}
+    vectors_by_text.update(
+        {
+            f"passage: {row['candidate_text']}": candidate_vectors.get(
+                row["eunis_code"], torch.ones(len(selected))
+            )
+            for row in candidate_rows
+        }
+    )
+    token_ids = {text: index for index, text in enumerate(vectors_by_text, start=1)}
+    vectors_by_id = {token_ids[text]: vector for text, vector in vectors_by_text.items()}
+    return expected_codes, token_ids, vectors_by_id
+
+
+def _identity_expected_predictions(
+    selected: list[dict[str, Any]], expected_codes: list[str]
+) -> list[tuple[str, str, str, float]]:
+    return [
+        (row["sample_id"], row["sentence"], expected_codes[index], 1.0)
+        for index, row in enumerate(selected)
+    ]
+
+
+def _write_model_stubs(tmp_path: Path) -> Path:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    for name in MODEL_FILES:
+        (model_dir / name).write_bytes(name.encode("utf-8"))
+    return model_dir
 
 
 def test_runner_preflight_rejects_bad_commits_settings_and_existing_outputs(
