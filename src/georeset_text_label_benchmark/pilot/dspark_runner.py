@@ -34,10 +34,17 @@ from georeset_text_label_benchmark.pilot.protocol import (
     SAMPLE_SEED,
     SAMPLE_SIZE,
 )
+from georeset_text_label_benchmark.pilot.publication import (
+    ensure_publication_supported,
+    find_staged_directory,
+    publish_directory,
+    staged_directory,
+)
 from georeset_text_label_benchmark.pilot.runner import (
     _candidate_provenance,
     _sha256_json,
     _validate_commit,
+    _validate_staged_hashes,
     _write_json_exclusive,
     read_frozen_pilot_inputs,
     sha256_file,
@@ -64,10 +71,23 @@ def run_dspark_pilot(
 ) -> dict[str, Any]:
     """Run only the published frozen sample and write non-overwriting DSpark sidecars."""
     destination = output_dir or run_dir.parent / "lfm2.5-2.6b-dspark-100-seed42"
-    _validate_run_inputs(run_dir, destination, computation_commit, validation_commit)
+    _validate_run_options(run_dir, destination, computation_commit, validation_commit)
+    staging = _find_staged_dspark_run(destination)
     sample, rows, candidates = read_frozen_pilot_inputs(run_dir)
     _validate_published_sample(sample, rows)
     frozen_e5_manifest_sha256 = _validate_frozen_e5_manifest(run_dir, sample)
+    if staging is not None:
+        return _resume_staged_dspark_run(
+            run_dir,
+            destination,
+            staging,
+            sample,
+            candidates,
+            computation_commit,
+            validation_commit,
+            frozen_e5_manifest_sha256,
+        )
+    ensure_publication_supported(destination.parent)
     gpu = _require_supported_gpu()
     cuda_preflight = _runtime_compatibility_preflight(gpu)
     cache_dir = _prepare_model_cache(model_cache_dir)
@@ -87,31 +107,38 @@ def run_dspark_pilot(
     generation_seconds = _clock() - generation_start
     prediction_rows = _prediction_rows(rows, candidates, encoded, prompt_hashes, generated)
     metrics = _metrics_payload(prediction_rows, candidates)
-    destination.mkdir(parents=True, exist_ok=False)
+    with staged_directory(
+        destination.parent,
+        prefix=f".{destination.name}.staging-",
+        preserve_on_error=True,
+    ) as staging:
+        staged_prediction = staging / PREDICTIONS_NAME
+        staged_metrics = staging / METRICS_NAME
+        staged_manifest = staging / MANIFEST_NAME
+        pq.write_table(pa.Table.from_pylist(prediction_rows), staged_prediction, compression="zstd")
+        _write_json_exclusive(staged_metrics, metrics)
+        manifest = _build_manifest(
+            run_dir,
+            sample,
+            candidates,
+            staged_prediction,
+            staged_metrics,
+            computation_commit,
+            validation_commit,
+            gpu,
+            cache_dir,
+            template_hash,
+            tokenizer_seconds,
+            engine_seconds,
+            generation_seconds,
+            engine.version,
+            frozen_e5_manifest_sha256,
+            cuda_preflight,
+        )
+        _write_json_exclusive(staged_manifest, manifest)
+        publish_directory(staging, destination)
     prediction_path = destination / PREDICTIONS_NAME
-    metrics_path = destination / METRICS_NAME
     manifest_path = destination / MANIFEST_NAME
-    pq.write_table(pa.Table.from_pylist(prediction_rows), prediction_path, compression="zstd")
-    _write_json_exclusive(metrics_path, metrics)
-    manifest = _build_manifest(
-        run_dir,
-        sample,
-        candidates,
-        prediction_path,
-        metrics_path,
-        computation_commit,
-        validation_commit,
-        gpu,
-        cache_dir,
-        template_hash,
-        tokenizer_seconds,
-        engine_seconds,
-        generation_seconds,
-        engine.version,
-        frozen_e5_manifest_sha256,
-        cuda_preflight,
-    )
-    _write_json_exclusive(manifest_path, manifest)
     return {
         "run_dir": str(destination),
         "frozen_input_dir": str(run_dir),
@@ -350,12 +377,126 @@ def _generation_config(template_hash: str, sample: Mapping[str, Any]) -> dict[st
 def _validate_run_inputs(
     run_dir: Path, output_dir: Path, computation_commit: str, validation_commit: str
 ) -> None:
+    _validate_run_options(run_dir, output_dir, computation_commit, validation_commit)
+    _validate_output_is_available(output_dir)
+
+
+def _validate_run_options(
+    run_dir: Path, output_dir: Path, computation_commit: str, validation_commit: str
+) -> None:
     _validate_commit(computation_commit, "computation_commit")
     _validate_commit(validation_commit, "validation_commit")
     if output_dir.resolve() == run_dir.resolve():
         raise ValueError("DSpark output directory must be separate from frozen E5 inputs")
+
+
+def _validate_output_is_available(output_dir: Path) -> None:
     if output_dir.exists():
         raise FileExistsError("DSpark output directory already exists; choose a fresh path")
+
+
+def _find_staged_dspark_run(destination: Path) -> Path | None:
+    staging = find_staged_directory(destination.parent, prefix=f".{destination.name}.staging-")
+    if staging is None or (destination / MANIFEST_NAME).exists():
+        _validate_output_is_available(destination)
+    return staging
+
+
+def _resume_staged_dspark_run(
+    run_dir: Path,
+    destination: Path,
+    staging: Path,
+    sample: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+    computation_commit: str,
+    validation_commit: str,
+    frozen_e5_manifest_sha256: str,
+) -> dict[str, Any]:
+    manifest = _read_staged_dspark_manifest(staging)
+    _validate_staged_dspark_protocol(
+        staging,
+        manifest,
+        sample,
+        candidates,
+        computation_commit,
+        validation_commit,
+        frozen_e5_manifest_sha256,
+    )
+    _validate_staged_dspark_hashes(run_dir, staging, manifest)
+    ensure_publication_supported(destination.parent)
+    publish_directory(staging, destination)
+    return _staged_dspark_summary(destination, run_dir, staging, sample, candidates, manifest)
+
+
+def _read_staged_dspark_manifest(staging: Path) -> Mapping[str, Any]:
+    try:
+        manifest = json.loads((staging / MANIFEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"retained DSpark staging directory is incomplete or unreadable: {staging}"
+        ) from error
+    if not isinstance(manifest, Mapping):
+        raise ValueError(f"retained DSpark staging manifest must be a JSON object: {staging}")
+    return manifest
+
+
+def _validate_staged_dspark_protocol(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    sample: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+    computation_commit: str,
+    validation_commit: str,
+    frozen_e5_manifest_sha256: str,
+) -> None:
+    expected = {
+        "computation_commit": computation_commit,
+        "validation_commit": validation_commit,
+        "source": sample["source"],
+        "sample": sample["selection"],
+        "candidate_labels": _candidate_provenance(sample, candidates),
+        "frozen_e5_manifest_sha256": frozen_e5_manifest_sha256,
+    }
+    if {key: manifest.get(key) for key in expected} != expected:
+        raise ValueError(
+            f"retained DSpark staging manifest does not match this frozen run: {staging}"
+        )
+
+
+def _validate_staged_dspark_hashes(
+    run_dir: Path, staging: Path, manifest: Mapping[str, Any]
+) -> None:
+    _validate_staged_hashes(
+        staging,
+        manifest,
+        {name: run_dir / name for name in ("frozen_sample.json", "candidate_labels.csv")},
+        {name: staging / name for name in (PREDICTIONS_NAME, METRICS_NAME)},
+        "DSpark",
+    )
+
+
+def _staged_dspark_summary(
+    destination: Path,
+    run_dir: Path,
+    staging: Path,
+    sample: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    metrics = json.loads((staging / METRICS_NAME).read_text(encoding="utf-8"))
+    timings = manifest["timings_seconds"]
+    return {
+        "run_dir": str(destination),
+        "frozen_input_dir": str(run_dir),
+        "sample_count": sample["selection"]["sample_size"],
+        "candidate_count": len(candidates),
+        "metrics": metrics["overall"],
+        "generation_seconds": timings["generation_total"],
+        "model_load_seconds": timings["tokenizer_download_and_load"]
+        + timings["sglang_target_and_draft_load"],
+        "predictions_sha256": sha256_file(destination / PREDICTIONS_NAME),
+        "manifest_sha256": sha256_file(destination / MANIFEST_NAME),
+    }
 
 
 def _validate_published_sample(
