@@ -92,6 +92,18 @@ EQUIVALENT_MUTANTS = {
         "rank_candidates defaults top_k to 5; omitting the explicit top_k=5 argument preserves "
         "the same ranking size."
     ),
+    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_101": (
+        "The staged-directory prefix only names a private temporary directory; it does not alter "
+        "the staged output files or the final run directory."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_104": (
+        "The staged-directory prefix only names a private temporary directory; changing its "
+        "text does not alter publication or any final output."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_105": (
+        "The staged-directory prefix only names a private temporary directory; changing its "
+        "case does not alter publication or any final output."
+    ),
     "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": (
         "Tensor.unsqueeze accepts +1 and 1 as the same dimension index."
     ),
@@ -201,6 +213,10 @@ EQUIVALENT_MUTANTS = {
         "checks the emitted metadata reports ZSTD."
     ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_89": (
+        "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
+        "checks the emitted Parquet metadata reports ZSTD."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_94": (
         "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
         "checks the emitted Parquet metadata reports ZSTD."
     ),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -75,20 +76,69 @@ def test_macos_directory_publication_uses_exclusive_rename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[bytes, bytes, int]] = []
+    library_loads: list[tuple[tuple[object, ...], dict[str, object]]] = []
     library = SimpleNamespace(
         renamex_np=lambda source, target, flags: calls.append((source, target, flags)) or 0
     )
 
+    def load_library(*args: object, **kwargs: object) -> SimpleNamespace:
+        library_loads.append((args, kwargs))
+        return library
+
     with monkeypatch.context() as scoped:
         scoped.setattr(publication.sys, "platform", "darwin")
-        scoped.setattr(publication.ctypes, "CDLL", lambda *_args, **_kwargs: library)
+        scoped.setattr(publication.ctypes, "CDLL", load_library)
         publication.publish_directory(tmp_path / "stage", tmp_path / "run")
 
+    assert library_loads == [((None,), {"use_errno": True})]
     assert len(calls) == 1
     source, target, flags = calls[0]
     assert source.endswith(b"stage")
     assert target.endswith(b"run")
     assert flags == 0x00000004
+
+
+def test_linux_directory_publication_uses_renameat2_noreplace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[object, ...]] = []
+    library_loads: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    library = SimpleNamespace(renameat2=lambda *args: calls.append(args) or 0)
+
+    def load_library(*args: object, **kwargs: object) -> SimpleNamespace:
+        library_loads.append((args, kwargs))
+        return library
+
+    staging = tmp_path / "stage"
+    destination = tmp_path / "run"
+    with monkeypatch.context() as scoped:
+        scoped.setattr(publication.os, "name", "posix")
+        scoped.setattr(publication.sys, "platform", "linux")
+        scoped.setattr(publication.ctypes, "CDLL", load_library)
+        publication.publish_directory(staging, destination)
+
+    assert library_loads == [((None,), {"use_errno": True})]
+    assert calls == [(-100, os.fsencode(staging), -100, os.fsencode(destination), 0x00000001)]
+
+
+def test_directory_publication_preserves_rename_errno_message_and_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = SimpleNamespace(renameat2=lambda *_args: -1)
+    destination = tmp_path / "run"
+    expected_errno = errno.EEXIST
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(publication.os, "name", "posix")
+        scoped.setattr(publication.sys, "platform", "linux")
+        scoped.setattr(publication.ctypes, "CDLL", lambda *_args, **_kwargs: library)
+        scoped.setattr(publication.ctypes, "get_errno", lambda: expected_errno)
+        with pytest.raises(OSError, match=rf"^\[Errno {expected_errno}\] ") as error:
+            publication.publish_directory(tmp_path / "stage", destination)
+
+    assert error.value.errno == expected_errno
+    assert error.value.strerror == os.strerror(expected_errno)
+    assert error.value.filename == os.fspath(destination)
 
 
 @pytest.mark.parametrize("platform", ["linux", "darwin", "freebsd"])
@@ -102,6 +152,7 @@ def test_directory_publication_fails_closed_without_exclusive_rename(
             publication.publish_directory(tmp_path / "stage", tmp_path / "run")
 
     assert error.value.errno == errno.ENOTSUP
+    assert error.value.strerror == "exclusive directory rename is unavailable"
 
 
 def test_file_publication_does_not_remove_a_replacement_created_after_link(

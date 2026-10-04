@@ -473,6 +473,8 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
 
     result = run_pilot()
 
+    metadata = pq.read_metadata(output_dir / "dspark_predictions.parquet")
+    assert metadata.row_group(0).column(0).compression == "ZSTD"
     predictions = pq.read_table(output_dir / "dspark_predictions.parquet").to_pylist()
     metrics = json.loads((output_dir / "dspark_metrics.json").read_text(encoding="utf-8"))
     manifest = json.loads((output_dir / "dspark_manifest.json").read_text(encoding="utf-8"))
