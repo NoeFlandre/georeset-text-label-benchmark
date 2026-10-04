@@ -170,17 +170,29 @@ as EOS. The [pinned generation config](https://huggingface.co/LiquidAI/LFM2.5-2.
 and [model-card example](https://huggingface.co/LiquidAI/LFM2.5-2.6B/blob/654f9463ce32b05d0429d76fe1f580b27d4c1ac0/README.md)
 document temperature `0.1`, top-k `50`, and repetition penalty `1.1`; the
 example caps generation at `512` tokens. The adapter passes those sampler
-settings, uses SGLang's `stop_token_ids=[124900]`, and sets the per-request
-sampling seed to `42`, the frozen pilot seed. It records the source of every
-generation and engine setting in `generation_config.setting_provenance` and
-hashes that complete config in the run manifest.
+settings, uses SGLang's `stop_token_ids=[124900]`, and requests
+`skip_special_tokens=False` plus `no_stop_trim=True` so the matched EOS remains
+visible in the recorded raw output. SGLang v0.5.20 supports these fields in its
+[sampling parameters](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/sampling/sampling_params.py)
+and treats a matching token ID as a stop condition in its
+[request scheduler](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/managers/schedule_batch.py).
+
+The adapter fixes SGLang's engine `random_seed` to `42`, the frozen pilot seed.
+SGLang v0.5.20 seeds Python, NumPy, Torch, and CUDA RNGs from that engine value;
+the DSpark verifier draws its acceptance coins with `torch.rand`. Its
+per-request `SamplingParams.sampling_seed` is not consumed by that DSpark
+acceptance path, so the runner keeps requests sequential on one GPU. The
+manifest records the effective engine seed and the source of every generation
+and engine setting in `generation_config.setting_provenance`, then hashes that
+complete config.
 
 The shorter cap is a diagnostic stop condition, not a way to accept partial
 reasoning: outputs that finish by length, lack `</think>`, or fail exact
 candidate-code parsing remain invalid. The parser accepts only the final text
-after the last `</think>` and strips the pinned `<|im_end|>` EOS marker. A
-small smoke run must first produce at least six complete final codes among
-eight rows and have no length-truncated rows before the 100-row retry is
+after the last `</think>` and strips the pinned `<|im_end|>` EOS marker for
+parsing, while preserving that marker in the raw output. The eight-row smoke
+gate requires at least six valid final codes that ended with the explicit EOS
+stop, as well as zero length-truncated rows, before the 100-row retry can be
 started.
 
 LiquidAI documents a `131,072`-token target context. SGLang v0.5.20 passes the
@@ -242,7 +254,7 @@ SGLang downloads target and draft revisions only when the allocated GPU run
 starts.
 
 ```bash
-PILOT_REVISION=<commit-containing-the-frozen-pilot-files>
+PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926
 hf download NoeFlandre/georeset-text-label-benchmark \
   pilot/runs/e5-small-100-seed42/frozen_sample.json \
   pilot/runs/e5-small-100-seed42/candidate_labels.csv \
@@ -301,9 +313,10 @@ scripts/run-dspark-grid5000.sh \
 
 The wrapper runs only eight requests in smoke mode. Inspect the resulting
 `dspark_metrics.json` and `dspark_manifest.json`; start a separate full run
-only when the manifest's smoke gate passes (at least six valid final answers,
-no truncated rows). Use another path containing `100-seed42-retry-$COMMIT_SHA`
-for that run. The wrapper refuses to reuse either output directory. For
+only when the smoke gate passes (at least six valid final answers ending with
+the explicit EOS stop, no truncated rows). Use another path containing
+`100-seed42-retry-$COMMIT_SHA` for that run. The wrapper refuses to reuse
+either output directory. For
 example, check the recorded gate and then launch a separate full-pilot job:
 
 ```bash

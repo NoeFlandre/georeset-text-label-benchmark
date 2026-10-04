@@ -257,12 +257,13 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
         "top_k": 50,
         "repetition_penalty": 1.1,
         "max_new_tokens": 512,
-        "sampling_seed": 42,
         "stop_token_ids": [124900],
+        "skip_special_tokens": False,
+        "no_stop_trim": True,
     }
     assert dspark.ENGINE_ARGS == {
         "dtype": "bfloat16",
-        "random_seed": 0,
+        "random_seed": 42,
         "context_length": 128_000,
         "speculative_algorithm": "DSPARK",
         "speculative_draft_attention_backend": "flashinfer",
@@ -281,7 +282,7 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
         "speculative_draft_model_path": "LiquidAI/LFM2.5-2.6B-DSpark",
         "speculative_draft_model_revision": "458cedab07d0f7b2b05700c77e1aa463d43d6f04",
         "dtype": "bfloat16",
-        "random_seed": 0,
+        "random_seed": 42,
         "context_length": 128_000,
         "speculative_algorithm": "DSPARK",
         "speculative_draft_attention_backend": "flashinfer",
@@ -464,10 +465,12 @@ def test_generation_settings_match_pinned_model_and_sglang_contract() -> None:
         "top_k": generation_config["top_k"],
         "repetition_penalty": generation_config["repetition_penalty"],
         "max_new_tokens": 512,
-        "sampling_seed": 42,
         "stop_token_ids": [model_config["eos_token_id"]],
+        "skip_special_tokens": False,
+        "no_stop_trim": True,
     }
     assert expected_sampling == dspark.SAMPLING
+    assert dspark.ENGINE_ARGS["random_seed"] == 42
 
 
 def test_context_guard_counts_generation_tokens_against_sglang_limit() -> None:
@@ -535,15 +538,49 @@ def test_default_dspark_output_names_separate_smoke_and_full_runs() -> None:
     assert dspark_runner._output_destination(frozen_run, explicit, True) == explicit
 
 
-def test_smoke_gate_requires_six_valid_final_codes_and_no_truncations() -> None:
-    good = [{"parse_status": "valid"} for _ in range(6)] + [
+def test_smoke_gate_requires_six_valid_eos_answers_and_no_truncations() -> None:
+    valid_eos = {
+        "parse_status": "valid",
+        "finish_reason": "stop",
+        "raw_output": "</think>T11<|im_end|>",
+    }
+    good = [valid_eos.copy() for _ in range(6)] + [
         {"parse_status": "invalid"},
         {"parse_status": "invalid"},
     ]
-    truncated = [{"parse_status": "valid"} for _ in range(6)] + [
+    truncated = [valid_eos.copy() for _ in range(6)] + [
         {"parse_status": "truncated"},
         {"parse_status": "invalid"},
     ]
+    no_eos = [valid_eos.copy() for _ in range(5)] + [
+        {
+            "parse_status": "valid",
+            "finish_reason": "stop",
+            "raw_output": "</think>T11",
+        },
+        {"parse_status": "invalid"},
+        {"parse_status": "invalid"},
+    ]
+    no_stop = [valid_eos.copy() for _ in range(5)] + [
+        {
+            "parse_status": "valid",
+            "finish_reason": "unknown",
+            "raw_output": "</think>T11<|im_end|>",
+        },
+        {"parse_status": "invalid"},
+        {"parse_status": "invalid"},
+    ]
+    eos_followed_by_space = {
+        "parse_status": "valid",
+        "finish_reason": "stop",
+        "raw_output": "</think>T11<|im_end|> ",
+    }
+    missing_raw_output = {"parse_status": "valid", "finish_reason": "stop"}
+    non_text_raw_output = {
+        "parse_status": "valid",
+        "finish_reason": "stop",
+        "raw_output": None,
+    }
 
     assert dspark_runner._smoke_gate(good) == {
         "passed": True,
@@ -551,9 +588,16 @@ def test_smoke_gate_requires_six_valid_final_codes_and_no_truncations() -> None:
         "valid_final_answer_count": 6,
         "minimum_valid_final_answers": 6,
         "truncated_count": 0,
+        "valid_eos_stopped_answer_count": 6,
+        "minimum_eos_stopped_answers": 6,
     }
     assert dspark_runner._smoke_gate(good[:7])["passed"] is False
     assert dspark_runner._smoke_gate(truncated)["passed"] is False
+    assert dspark_runner._smoke_gate(no_eos)["passed"] is False
+    assert dspark_runner._smoke_gate(no_stop)["passed"] is False
+    assert dspark_runner._is_valid_eos_stopped_answer(eos_followed_by_space) is False
+    assert dspark_runner._is_valid_eos_stopped_answer(missing_raw_output) is False
+    assert dspark_runner._is_valid_eos_stopped_answer(non_text_raw_output) is False
 
 
 def test_smoke_runner_generates_only_eight_rows_and_keeps_inputs_untouched(
@@ -576,7 +620,7 @@ def test_smoke_runner_generates_only_eight_rows_and_keeps_inputs_untouched(
         async def generate(self, input_ids: list[int]) -> dict[str, Any]:
             self.calls.append(input_ids)
             return {
-                "text": "</think>T11",
+                "text": "</think>T11<|im_end|>",
                 "meta_info": {
                     "completion_tokens": 12,
                     "finish_reason": {"type": "stop"},
@@ -874,7 +918,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "sampling": dspark.SAMPLING,
         "engine": {
             "dtype": "bfloat16",
-            "random_seed": 0,
+            "random_seed": 42,
             "context_length": 128_000,
             "speculative_algorithm": "DSPARK",
             "speculative_draft_attention_backend": "flashinfer",
@@ -1401,6 +1445,11 @@ def test_runner_validates_run_paths_and_both_commit_identifiers(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="output directory must be separate") as error:
         dspark_runner._validate_run_inputs(run_dir, run_dir, "a" * 40, "b" * 40)
+    assert str(error.value) == "DSpark output directory must be separate from frozen E5 inputs"
+
+    nested_output_dir = run_dir / "dspark-output"
+    with pytest.raises(ValueError, match="output directory must be separate") as error:
+        dspark_runner._validate_run_inputs(run_dir, nested_output_dir, "a" * 40, "b" * 40)
     assert str(error.value) == "DSpark output directory must be separate from frozen E5 inputs"
 
     output_dir.mkdir()

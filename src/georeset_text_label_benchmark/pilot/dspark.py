@@ -44,12 +44,13 @@ SAMPLING: dict[str, Any] = {
     "top_k": 50,
     "repetition_penalty": 1.1,
     "max_new_tokens": MAX_NEW_TOKENS,
-    "sampling_seed": SAMPLE_SEED,
     "stop_token_ids": [TARGET_EOS_TOKEN_ID],
+    "skip_special_tokens": False,
+    "no_stop_trim": True,
 }
 ENGINE_ARGS: dict[str, Any] = {
     "dtype": "bfloat16",
-    "random_seed": 0,
+    "random_seed": SAMPLE_SEED,
     # SGLang v0.5.20's DSpark draft worker otherwise inherits the target's
     # 131,072-token context and rejects the 128,000-token draft checkpoint.
     "context_length": RUNTIME_CONTEXT_TOKENS,
@@ -83,15 +84,22 @@ GENERATION_SETTING_PROVENANCE = {
         "The pinned model card's Quick start example sets max_new_tokens=512; length-finished "
         "outputs remain truncated and invalid."
     ),
-    "sampling.sampling_seed": (
-        "SGLang v0.5.20 SamplingParams.sampling_seed is set to the frozen pilot seed 42."
-    ),
     "sampling.stop_token_ids": (
         "The pinned target config sets eos_token_id=124900 and tokenizer_config.json names it "
         "<|im_end|>; SGLang v0.5.20 SamplingParams accepts stop_token_ids."
     ),
+    "sampling.skip_special_tokens": (
+        "Retain the special EOS token in the generated text for the audit record."
+    ),
+    "sampling.no_stop_trim": (
+        "SGLang v0.5.20 otherwise trims the matched stop token from returned text."
+    ),
     "engine.dtype": "The pinned target and DSpark checkpoints use BF16.",
-    "engine.random_seed": "SGLang Engine random_seed is fixed at 0; per-request sampling uses seed 42.",
+    "engine.random_seed": (
+        "Use the frozen pilot seed 42 for SGLang's Python, NumPy, Torch, and CUDA RNGs. "
+        "The SGLang v0.5.20 DSpark acceptance path uses torch.rand; SamplingParams.sampling_seed "
+        "is not consumed by that path, so requests run sequentially under the engine seed."
+    ),
     "engine.context_length": (
         "Use the smaller pinned context limit: target 131072 tokens, draft 128000 tokens."
     ),

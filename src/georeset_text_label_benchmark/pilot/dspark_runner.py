@@ -411,18 +411,47 @@ def _fill_smoke_rows(
 
 
 def _smoke_gate(predictions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Require several complete final codes and reject every length-truncated row."""
-    valid = sum(row["parse_status"] == "valid" for row in predictions)
-    truncated = sum(row["parse_status"] == "truncated" for row in predictions)
+    """Require several EOS-finished final codes and reject every truncated row."""
+    valid = _count_parse_status(predictions, "valid")
+    truncated = _count_parse_status(predictions, "truncated")
+    valid_eos_stopped = _count_valid_eos_stopped_answers(predictions)
     minimum_valid = min(dspark.MIN_SMOKE_VALID_OUTPUTS, len(predictions))
-    passed = len(predictions) == dspark.MAX_SMOKE_ROWS and valid >= minimum_valid and truncated == 0
+    passed = (
+        len(predictions) == dspark.MAX_SMOKE_ROWS
+        and valid >= minimum_valid
+        and valid_eos_stopped >= minimum_valid
+        and truncated == 0
+    )
     return {
         "passed": passed,
         "row_count": len(predictions),
         "valid_final_answer_count": valid,
         "minimum_valid_final_answers": minimum_valid,
         "truncated_count": truncated,
+        "valid_eos_stopped_answer_count": valid_eos_stopped,
+        "minimum_eos_stopped_answers": minimum_valid,
     }
+
+
+def _count_parse_status(predictions: Sequence[Mapping[str, Any]], status: str) -> int:
+    """Count rows with one exact parse status."""
+    return sum(row["parse_status"] == status for row in predictions)
+
+
+def _count_valid_eos_stopped_answers(predictions: Sequence[Mapping[str, Any]]) -> int:
+    """Count valid parser results whose raw text retains the matched EOS token."""
+    return sum(_is_valid_eos_stopped_answer(row) for row in predictions)
+
+
+def _is_valid_eos_stopped_answer(row: Mapping[str, Any]) -> bool:
+    """Check that one parsed final code was visibly stopped by the pinned EOS."""
+    raw_output = row.get("raw_output")
+    return (
+        row.get("parse_status") == "valid"
+        and row.get("finish_reason") == "stop"
+        and isinstance(raw_output, str)
+        and raw_output.endswith(dspark.TARGET_EOS_TOKEN)
+    )
 
 
 def _run_scope(
@@ -453,7 +482,9 @@ def _validate_run_inputs(
 ) -> None:
     _validate_commit(computation_commit, "computation_commit")
     _validate_commit(validation_commit, "validation_commit")
-    if output_dir.resolve() == run_dir.resolve():
+    resolved_run_dir = run_dir.resolve()
+    resolved_output_dir = output_dir.resolve()
+    if resolved_output_dir == resolved_run_dir or resolved_run_dir in resolved_output_dir.parents:
         raise ValueError("DSpark output directory must be separate from frozen E5 inputs")
     if output_dir.exists():
         raise FileExistsError("DSpark output directory already exists; choose a fresh path")
