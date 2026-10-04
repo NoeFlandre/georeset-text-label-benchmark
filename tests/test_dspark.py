@@ -10,7 +10,7 @@ import shutil
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pyarrow.parquet as pq
 import pytest
@@ -247,7 +247,19 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
     assert dspark.DRAFT_MODEL == "LiquidAI/LFM2.5-2.6B-DSpark"
     assert dspark.DRAFT_REVISION == "458cedab07d0f7b2b05700c77e1aa463d43d6f04"
     assert dspark.SGLANG_VERSION == "0.5.20"
-    assert dspark.SAMPLING == {"temperature": 0.0, "max_new_tokens": 4096}
+    assert dspark.TARGET_EOS_TOKEN == "<|im_end|>"
+    assert dspark.TARGET_EOS_TOKEN_ID == 124900
+    assert dspark.TARGET_CHAT_TEMPLATE_SHA256 == (
+        "ea663864491de7ade391839479860ca95541f892f72665c73251fbd4643b1bef"
+    )
+    assert dspark.SAMPLING == {
+        "temperature": 0.1,
+        "top_k": 50,
+        "repetition_penalty": 1.1,
+        "max_new_tokens": 512,
+        "sampling_seed": 42,
+        "stop_token_ids": [124900],
+    }
     assert dspark.ENGINE_ARGS == {
         "dtype": "bfloat16",
         "random_seed": 0,
@@ -350,9 +362,7 @@ def test_chat_encoder_matches_pinned_template_kwargs_and_no_auto_special_tokens(
     input_ids = dspark.encode_prompt(tokenizer, "Choose one.")
 
     assert input_ids == [0, 1, 2]
-    assert tokenizer.template_kwargs == [
-        {"tokenize": False, "add_generation_prompt": True, "enable_thinking": False}
-    ]
+    assert tokenizer.template_kwargs == [{"tokenize": False, "add_generation_prompt": True}]
     assert tokenizer.messages == [[{"role": "user", "content": "Choose one."}]]
 
 
@@ -363,7 +373,7 @@ def test_actual_pinned_template_still_opens_thinking_and_ignores_false_flag() ->
 
     class _PinnedTemplateTokenizer:
         chat_template = (fixture_dir / "chat_template.jinja").read_text(encoding="utf-8")
-        special_tokens_map = {
+        special_tokens_map: ClassVar[dict[str, str]] = {
             "bos_token": "<|startoftext|>",
             "eos_token": "<|im_end|>",
             "pad_token": "<|pad|>",
@@ -373,13 +383,16 @@ def test_actual_pinned_template_still_opens_thinking_and_ignores_false_flag() ->
             self.rendered: str | None = None
             self.template_kwargs: dict[str, Any] = {}
 
+        eos_token = "<|im_end|>"
+        eos_token_id = 124900
+
         def get_chat_template(self, chat_template: str | None = None, tools: Any = None) -> str:
             return chat_template or self.chat_template
 
         def apply_chat_template(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
             self.template_kwargs = kwargs
             rendered = PreTrainedTokenizerBase.apply_chat_template(
-                self, messages, **kwargs
+                cast(PreTrainedTokenizerBase, self), messages, **kwargs
             )
             assert isinstance(rendered, str)
             return rendered
@@ -393,14 +406,40 @@ def test_actual_pinned_template_still_opens_thinking_and_ignores_false_flag() ->
     dspark.encode_prompt(tokenizer, "Choose one.")
 
     assert tokenizer.rendered == (
-        "<|startoftext|><|im_start|>user\nChoose one.<|im_end|>\n"
-        "<|im_start|>assistant\n<think>"
+        "<|startoftext|><|im_start|>user\nChoose one.<|im_end|>\n<|im_start|>assistant\n<think>"
     )
     assert tokenizer.rendered.endswith("<|im_start|>assistant\n<think>")
+    assert hashlib.sha256(tokenizer.chat_template.encode("utf-8")).hexdigest() == (
+        dspark.TARGET_CHAT_TEMPLATE_SHA256
+    )
+    dspark.validate_pinned_tokenizer(tokenizer)
     assert tokenizer.template_kwargs == {
         "tokenize": False,
         "add_generation_prompt": True,
     }
+
+
+def test_pinned_tokenizer_rejects_eos_or_template_drift() -> None:
+    tokenizer = SimpleNamespace(
+        eos_token="<|endoftext|>",
+        eos_token_id=124900,
+        chat_template="different template",
+    )
+
+    with pytest.raises(RuntimeError) as eos_error:
+        dspark.validate_pinned_tokenizer(tokenizer)
+    assert (
+        str(eos_error.value) == "pinned LFM tokenizer EOS does not match the target configuration"
+    )
+
+    tokenizer.eos_token = dspark.TARGET_EOS_TOKEN
+    tokenizer.eos_token_id = dspark.TARGET_EOS_TOKEN_ID
+    with pytest.raises(RuntimeError) as template_error:
+        dspark.validate_pinned_tokenizer(tokenizer)
+    assert (
+        str(template_error.value)
+        == "pinned LFM chat template does not match the target configuration"
+    )
 
 
 def test_generation_settings_match_pinned_model_and_sglang_contract() -> None:
@@ -416,11 +455,11 @@ def test_generation_settings_match_pinned_model_and_sglang_contract() -> None:
     assert tokenizer_config["eos_token"] == "<|im_end|>"
     assert model_config["eos_token_id"] == 124900
     assert generation_config["eos_token_id"] == [model_config["eos_token_id"]]
-    assert dspark.TARGET_EOS_TOKEN == tokenizer_config["eos_token"]
-    assert dspark.TARGET_EOS_TOKEN_ID == model_config["eos_token_id"]
+    assert tokenizer_config["eos_token"] == dspark.TARGET_EOS_TOKEN
+    assert model_config["eos_token_id"] == dspark.TARGET_EOS_TOKEN_ID
     assert dspark.MAX_NEW_TOKENS == 512
     assert dspark.CHAT_TEMPLATE_KWARGS == {}
-    assert dspark.SAMPLING == {
+    expected_sampling = {
         "temperature": generation_config["temperature"],
         "top_k": generation_config["top_k"],
         "repetition_penalty": generation_config["repetition_penalty"],
@@ -428,16 +467,23 @@ def test_generation_settings_match_pinned_model_and_sglang_contract() -> None:
         "sampling_seed": 42,
         "stop_token_ids": [model_config["eos_token_id"]],
     }
+    assert expected_sampling == dspark.SAMPLING
 
 
 def test_context_guard_counts_generation_tokens_against_sglang_limit() -> None:
     dspark.validate_context_length(1, max_new_tokens=1)
-    dspark.validate_context_length(128_000 - 4096, max_new_tokens=4096)
+    dspark.validate_context_length(
+        128_000 - dspark.MAX_NEW_TOKENS,
+        max_new_tokens=dspark.MAX_NEW_TOKENS,
+    )
 
     with pytest.raises(
         ValueError, match="prompt plus generation cap exceeds SGLang context"
     ) as error:
-        dspark.validate_context_length(128_000 - 4095, max_new_tokens=4096)
+        dspark.validate_context_length(
+            128_000 - dspark.MAX_NEW_TOKENS + 1,
+            max_new_tokens=dspark.MAX_NEW_TOKENS,
+        )
     assert str(error.value) == "prompt plus generation cap exceeds SGLang context"
 
     with pytest.raises(
@@ -445,6 +491,163 @@ def test_context_guard_counts_generation_tokens_against_sglang_limit() -> None:
     ) as error:
         dspark.validate_context_length(0)
     assert str(error.value) == "prompt and generation token counts must be positive"
+
+
+def test_smoke_row_selection_prefers_language_diversity_then_frozen_order() -> None:
+    rows = [
+        {"sample_id": str(index), "language_code": language}
+        for index, language in enumerate(
+            ["eng", "eng", "fra", "deu", "fra", "deu", "ita", "spa", "por", "nld"]
+        )
+    ]
+
+    selected = dspark_runner._select_smoke_rows(rows)
+
+    assert [row["sample_id"] for row in selected] == ["0", "2", "3", "6", "7", "8", "9", "1"]
+
+
+def test_smoke_row_selection_caps_eight_unique_languages_and_groups_missing_values() -> None:
+    diverse_rows = [{"sample_id": str(index), "language_code": f"l{index}"} for index in range(10)]
+    assert len(dspark_runner._select_smoke_rows(diverse_rows)) == dspark.MAX_SMOKE_ROWS
+
+    missing_rows = [
+        {"sample_id": "missing-first", "language_code": None},
+        {"sample_id": "missing-again", "language_code": None},
+        {"sample_id": "english-first", "language_code": "eng"},
+        {"sample_id": "english-again", "language_code": "eng"},
+        *[{"sample_id": str(index), "language_code": f"x{index}"} for index in range(4, 10)],
+    ]
+    selected = dspark_runner._select_smoke_rows(missing_rows)
+    assert [row["sample_id"] for row in selected[:2]] == ["missing-first", "english-first"]
+    assert len(selected) == dspark.MAX_SMOKE_ROWS
+
+
+def test_default_dspark_output_names_separate_smoke_and_full_runs() -> None:
+    frozen_run = Path("/persistent/pilot/e5-small-100-seed42")
+
+    assert dspark_runner._output_destination(frozen_run, None, False) == Path(
+        "/persistent/pilot/lfm2.5-2.6b-dspark-100-seed42"
+    )
+    assert dspark_runner._output_destination(frozen_run, None, True) == Path(
+        "/persistent/pilot/lfm2.5-2.6b-dspark-smoke-8-seed42"
+    )
+    explicit = Path("/persistent/pilot/smoke-unique-commit")
+    assert dspark_runner._output_destination(frozen_run, explicit, True) == explicit
+
+
+def test_smoke_gate_requires_six_valid_final_codes_and_no_truncations() -> None:
+    good = [{"parse_status": "valid"} for _ in range(6)] + [
+        {"parse_status": "invalid"},
+        {"parse_status": "invalid"},
+    ]
+    truncated = [{"parse_status": "valid"} for _ in range(6)] + [
+        {"parse_status": "truncated"},
+        {"parse_status": "invalid"},
+    ]
+
+    assert dspark_runner._smoke_gate(good) == {
+        "passed": True,
+        "row_count": 8,
+        "valid_final_answer_count": 6,
+        "minimum_valid_final_answers": 6,
+        "truncated_count": 0,
+    }
+    assert dspark_runner._smoke_gate(good[:7])["passed"] is False
+    assert dspark_runner._smoke_gate(truncated)["passed"] is False
+
+
+def test_smoke_runner_generates_only_eight_rows_and_keeps_inputs_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    selected = _write_frozen_run(run_dir)
+    frozen_before = (run_dir / "frozen_sample.json").read_bytes()
+    e5_predictions = run_dir / "predictions.parquet"
+    e5_predictions.write_bytes(b"preserve the E5 output")
+    output_dir = tmp_path / "dspark-smoke"
+
+    class _AllValidEngine:
+        version = "0.5.20"
+
+        def __init__(self) -> None:
+            self.calls: list[list[int]] = []
+
+        async def generate(self, input_ids: list[int]) -> dict[str, Any]:
+            self.calls.append(input_ids)
+            return {
+                "text": "</think>T11",
+                "meta_info": {
+                    "completion_tokens": 12,
+                    "finish_reason": {"type": "stop"},
+                    "spec_num_correct_drafts": 4,
+                    "spec_num_proposed_drafts": 8,
+                },
+            }
+
+        def shutdown(self) -> None:
+            pass
+
+    engine = _AllValidEngine()
+    tokenizer = _PromptTokenizer()
+    monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
+    monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: engine)
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
+    monkeypatch.setattr(
+        dspark_runner,
+        "_prepare_model_cache",
+        lambda _path: tmp_path / "cache",
+    )
+    monkeypatch.setattr(
+        dspark,
+        "EXPECTED_SAMPLE_IDS_SHA256",
+        runner._sha256_json([row["sample_id"] for row in selected]),
+    )
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_clock", iter(range(1_000)).__next__)
+
+    result = dspark_runner.run_dspark_pilot(
+        run_dir,
+        computation_commit="a" * 40,
+        validation_commit="b" * 40,
+        output_dir=output_dir,
+        smoke=True,
+    )
+
+    predictions = pq.read_table(output_dir / dspark_runner.PREDICTIONS_NAME).to_pylist()
+    manifest = json.loads((output_dir / dspark_runner.MANIFEST_NAME).read_text(encoding="utf-8"))
+    metrics = json.loads((output_dir / dspark_runner.METRICS_NAME).read_text(encoding="utf-8"))
+    assert len(engine.calls) == dspark.MAX_SMOKE_ROWS
+    assert len(tokenizer.prompts) == dspark.MAX_SMOKE_ROWS
+    assert len(predictions) == dspark.MAX_SMOKE_ROWS
+    assert result["sample_count"] == dspark.MAX_SMOKE_ROWS
+    assert result["smoke_gate"]["passed"] is True
+    assert metrics["smoke_gate"] == result["smoke_gate"]
+    assert manifest["sample"]["sample_size"] == 100
+    assert manifest["run_scope"]["kind"] == "bounded-smoke"
+    assert manifest["run_scope"]["processed_row_count"] == dspark.MAX_SMOKE_ROWS
+    assert manifest["run_scope"] == {
+        "kind": "bounded-smoke",
+        "frozen_sample_size": 100,
+        "processed_row_count": dspark.MAX_SMOKE_ROWS,
+        "processed_sample_ids_sha256": runner._sha256_json(
+            [row["sample_id"] for row in selected[: dspark.MAX_SMOKE_ROWS]]
+        ),
+        "selection_method": (
+            "Take the first sample-order row for each distinct language_code, up to eight, "
+            "then fill from the frozen sample order."
+        ),
+        "processed_sample_ids": [row["sample_id"] for row in selected[: dspark.MAX_SMOKE_ROWS]],
+        "smoke_gate": result["smoke_gate"],
+    }
+    assert manifest["timings_seconds"]["generation_includes_sequential_requests"] == 8
+    assert (
+        "This is an eight-row readiness smoke and its metrics are not a full pilot result."
+        in manifest["limitations"]
+    )
+    assert (run_dir / "frozen_sample.json").read_bytes() == frozen_before
+    assert e5_predictions.read_bytes() == b"preserve the E5 output"
 
 
 @pytest.mark.parametrize(
@@ -460,6 +663,7 @@ def test_context_guard_counts_generation_tokens_against_sglang_limit() -> None:
         ),
         ("</think>T11.", "stop", "T11", "valid", None),
         ("</think>T11...", "stop", "T11", "valid", None),
+        ("</think>   ", "stop", None, "invalid", "empty_answer"),
         ("</think>X'T11'X", "stop", None, "invalid", "invalid_format"),
         ("</think>T11X", "stop", None, "invalid", "unknown_code"),
         ("reasoning </think>NOT_A_CODE", "stop", None, "invalid", "unknown_code"),
@@ -467,7 +671,7 @@ def test_context_guard_counts_generation_tokens_against_sglang_limit() -> None:
         ("reasoning only", "stop", None, "invalid", "missing_think_close"),
         ("</think>choose between T11 and U62", "stop", None, "invalid", "invalid_format"),
         ("</think>`T11`<|im_end|>", "stop", "T11", "valid", None),
-        ("</think><|endoftext|>", "stop", None, "invalid", "empty_answer"),
+        ("</think><|endoftext|>", "stop", None, "invalid", "invalid_format"),
     ],
 )
 def test_parser_preserves_strict_allowed_label_validation(
@@ -597,6 +801,14 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "frozen_input_dir": str(run_dir),
         "sample_count": 100,
         "candidate_count": 158,
+        "run_scope": {
+            "kind": "full-pilot",
+            "frozen_sample_size": 100,
+            "processed_row_count": 100,
+            "processed_sample_ids_sha256": runner._sha256_json(
+                [row["sample_id"] for row in selected]
+            ),
+        },
         "metrics": {
             "sample_count": 100,
             "candidate_class_count": 158,
@@ -658,8 +870,8 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "prompt_version": "eunis-direct-label-v1",
         "prompt_instructions_sha256": "a0d4a58fee0c13edf0811a9a0fd8c800b6684393d8b69951fd07f7898558bcf4",
         "tokenizer_chat_template_sha256": hashlib.sha256(b"template-v1").hexdigest(),
-        "chat_template_kwargs": {"enable_thinking": False},
-        "sampling": {"temperature": 0.0, "max_new_tokens": 4096},
+        "chat_template_kwargs": {},
+        "sampling": dspark.SAMPLING,
         "engine": {
             "dtype": "bfloat16",
             "random_seed": 0,
@@ -670,8 +882,9 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "mem_fraction_static": 0.75,
             "max_running_requests": 1,
         },
+        "setting_provenance": dspark.GENERATION_SETTING_PROVENANCE,
         "runtime_context_limit_tokens": 128_000,
-        "maximum_new_tokens": 4096,
+        "maximum_new_tokens": 512,
         "candidate_count": 158,
         "candidate_csv_sha256": CANDIDATE_LABELS_SHA256,
         "sample_ids_sha256": sample["selection"]["sample_ids_sha256"],
@@ -729,6 +942,14 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "frozen_e5_manifest_sha256": runner.sha256_file(run_dir / "manifest.json"),
         "source_coverage": sample["source_coverage"],
         "sample": sample["selection"],
+        "run_scope": {
+            "kind": "full-pilot",
+            "frozen_sample_size": 100,
+            "processed_row_count": 100,
+            "processed_sample_ids_sha256": runner._sha256_json(
+                [row["sample_id"] for row in selected]
+            ),
+        },
         "candidate_labels": expected_candidate_labels,
         "model": {
             "repository": "LiquidAI/LFM2.5-2.6B",
@@ -756,7 +977,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "tokenizer_download_and_load": 1,
             "sglang_target_and_draft_load": 1,
             "generation_total": 201,
-            "generation_includes_sequential_100_requests": True,
+            "generation_includes_sequential_requests": 100,
         },
         "outputs_sha256": {
             "frozen_sample.json": runner.sha256_file(run_dir / "frozen_sample.json"),
@@ -767,12 +988,13 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "dspark_metrics.json": runner.sha256_file(output_dir / "dspark_metrics.json"),
         },
         "limitations": [
-            "The result uses the fixed 100-sentence positive-overlap pilot only.",
+            "The source is the fixed 100-sentence positive-overlap pilot.",
             "Gold labels are existing polygon-level EUNIS assignments, not sentence-level truth.",
             "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
             "The sample is occurrence-weighted before unique-text and unique-polygon filtering.",
             "Compare top-1 and macro-F1 only with E5; direct generation has no top-5 ranking.",
-            "Greedy generation is used; DSpark is the speculative draft path, not a compute device.",
+            "Generation uses the target model card's sampled decoding settings.",
+            "The DSpark vendor parity benchmarks use greedy decoding; this sampled run does not claim greedy parity.",
         ],
     }
     assert (run_dir / "frozen_sample.json").read_bytes() == frozen_before
@@ -1328,13 +1550,19 @@ def test_tokenizer_loader_uses_the_pinned_model_and_revision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: dict[str, Any] = {}
+    template_path = Path(__file__).parent / "fixtures/lfm25-2.6b-pinned/chat_template.jinja"
+    tokenizer = SimpleNamespace(
+        eos_token="<|im_end|>",
+        eos_token_id=124900,
+        chat_template=template_path.read_text(encoding="utf-8"),
+    )
 
     class _AutoTokenizer:
         @staticmethod
-        def from_pretrained(*args: Any, **kwargs: Any) -> str:
+        def from_pretrained(*args: Any, **kwargs: Any) -> Any:
             calls["args"] = args
             calls["kwargs"] = kwargs
-            return "mock tokenizer"
+            return tokenizer
 
     monkeypatch.setitem(
         __import__("sys").modules,
@@ -1342,7 +1570,7 @@ def test_tokenizer_loader_uses_the_pinned_model_and_revision(
         SimpleNamespace(AutoTokenizer=_AutoTokenizer),
     )
 
-    assert dspark.load_tokenizer() == "mock tokenizer"
+    assert dspark.load_tokenizer() is tokenizer
     assert calls == {
         "args": (dspark.TARGET_MODEL,),
         "kwargs": {"revision": dspark.TARGET_REVISION, "trust_remote_code": False},
@@ -1924,9 +2152,116 @@ def test_dspark_cli_uses_frozen_run_directory_and_cache_settings(
                 "output_dir": Path("dspark-output"),
                 "computation_commit": "a" * 40,
                 "validation_commit": "b" * 40,
+                "smoke": False,
             },
         )
     ]
+
+
+@pytest.mark.parametrize(("passed", "exit_code"), [(False, 1), (True, 0)])
+def test_dspark_smoke_cli_requires_separate_output_and_fails_closed(
+    passed: bool,
+    exit_code: int,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append((args, kwargs))
+        return {"sample_count": 8, "smoke_gate": {"passed": passed}}
+
+    monkeypatch.setattr(cli, "run_dspark_pilot", run)
+
+    assert (
+        cli.main(
+            [
+                "run-dspark-smoke",
+                "--run-dir",
+                "frozen-inputs",
+                "--output-dir",
+                "unique-smoke-output",
+                "--model-cache",
+                "hf-cache",
+                "--computation-commit",
+                "a" * 40,
+                "--validation-commit",
+                "b" * 40,
+            ]
+        )
+        == exit_code
+    )
+
+    assert (
+        capsys.readouterr().out
+        == json.dumps(
+            {"sample_count": 8, "smoke_gate": {"passed": passed}},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    assert calls == [
+        (
+            (Path("frozen-inputs"),),
+            {
+                "model_cache_dir": Path("hf-cache"),
+                "output_dir": Path("unique-smoke-output"),
+                "computation_commit": "a" * 40,
+                "validation_commit": "b" * 40,
+                "smoke": True,
+            },
+        )
+    ]
+
+
+def test_dspark_smoke_cli_requires_a_distinct_output_directory() -> None:
+    parser = cli._parser()
+    with pytest.raises(SystemExit) as error:
+        parser.parse_args(
+            [
+                "run-dspark-smoke",
+                "--run-dir",
+                "frozen-inputs",
+                "--computation-commit",
+                "a" * 40,
+                "--validation-commit",
+                "b" * 40,
+            ]
+        )
+
+    assert error.value.code == 2
+
+    for omitted_flag in ("--computation-commit", "--validation-commit"):
+        arguments = [
+            "run-dspark-smoke",
+            "--output-dir",
+            "unique-smoke-output",
+            "--computation-commit",
+            "a" * 40,
+            "--validation-commit",
+            "b" * 40,
+        ]
+        index = arguments.index(omitted_flag)
+        del arguments[index : index + 2]
+        with pytest.raises(SystemExit) as missing_commit:
+            parser.parse_args(arguments)
+        assert missing_commit.value.code == 2
+
+    defaults = parser.parse_args(
+        [
+            "run-dspark-smoke",
+            "--output-dir",
+            "unique-smoke-output",
+            "--computation-commit",
+            "a" * 40,
+            "--validation-commit",
+            "b" * 40,
+        ]
+    )
+    assert defaults.run_dir == Path("artifacts/e5-small-100-seed42")
+    assert defaults.model_cache == Path(".cache/model-dspark")
 
 
 @pytest.mark.parametrize(
@@ -2025,3 +2360,6 @@ def test_grid5000_runner_loads_the_cuda_toolkit_before_installing_sglang() -> No
     assert "command -v nvcc" in content
     assert "release 13.0" in content
     assert content.index("export CUDA_HOME=") < content.index("run_bounded uv sync")
+    assert "RUN_COMMAND=run-dspark-smoke" in content
+    assert "--smoke" in content
+    assert "OUTPUT_DIR already exists" in content

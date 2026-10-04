@@ -200,6 +200,22 @@ EQUIVALENT_MUTANTS = {
         "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
         "checks the emitted metadata reports ZSTD."
     ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_5": (
+        "The smoke flag is tested only for truthiness, so None and False select the same full-run "
+        "destination, rows, scope, metrics, and manifest."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_102": (
+        "Path.mkdir treats exist_ok=None as false, matching the explicit exist_ok=False; the "
+        "output race regression confirms an existing destination is rejected."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_104": (
+        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
+        "same exclusive output-directory behavior."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_121": (
+        "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
+        "checks the emitted metadata reports ZSTD."
+    ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_89": (
         "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
         "checks the emitted Parquet metadata reports ZSTD."
@@ -215,6 +231,14 @@ EQUIVALENT_MUTANTS = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": (
         "parse_label returns either None or a non-empty allowed code, and candidate_names has "
         "string keys only. candidate_names.get(None) is None, matching the conditional branch."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_encode_prompt__mutmut_8": (
+        "CHAT_TEMPLATE_KWARGS is pinned to an empty dict because the actual template ignores "
+        "thinking flags; expanding it or omitting the expansion passes the same template options."
+    ),
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_17": (
+        "json.dumps treats ensure_ascii=None as false, so CLI results have identical Unicode "
+        "serialization to ensure_ascii=False."
     ),
     "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": (
         "json.dumps treats ensure_ascii=None as false, so CLI results have identical Unicode "
