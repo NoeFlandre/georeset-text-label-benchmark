@@ -78,6 +78,16 @@ The run writes:
 * `manifest.json`: source/model revisions, model-file hashes, run settings,
   code commits, runtime, timings, output SHA-256 values, and limitations.
 
+Both adapters write outputs into a private staging directory first. The E5
+runner publishes its staged files with exclusive links and publishes
+`manifest.json` last; consumers should treat the manifest as the completed-run
+marker and ignore output files when it is absent. If publication stops after
+some links are created, those files remain without a manifest and must be
+removed before retrying. DSpark atomically renames its complete staged directory
+into place and fails if another writer created the destination. Both adapters
+clean up private staging directories, and a competing writer's files are never
+replaced or removed.
+
 Overall top-1 and top-5 accuracy are the fraction of rows whose existing
 polygon-level EUNIS code appears at rank one or among the first five. Macro-F1
 is the unweighted mean over all 158 candidates; a class with no pilot support

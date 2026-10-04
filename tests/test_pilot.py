@@ -1512,6 +1512,105 @@ def test_runner_executes_frozen_pilot_and_writes_metrics_and_hash_manifest(
     }
 
 
+def _inject_e5_output_failure(monkeypatch: pytest.MonkeyPatch, failing_name: str) -> None:
+    if failing_name == "predictions.parquet":
+        write_table = runner.pq.write_table
+
+        def write_then_fail(table: Any, path: Path, **kwargs: Any) -> None:
+            write_table(table, path, **kwargs)
+            raise OSError("injected publication failure")
+
+        monkeypatch.setattr(runner.pq, "write_table", write_then_fail)
+        return
+
+    write_json = runner._write_json_exclusive
+
+    def write_then_fail(path: Path, payload: Mapping[str, Any]) -> None:
+        write_json(path, payload)
+        if path.name == failing_name:
+            raise OSError("injected publication failure")
+
+    monkeypatch.setattr(runner, "_write_json_exclusive", write_then_fail)
+
+
+@pytest.mark.parametrize("failing_name", runner.OUTPUT_FILES)
+def test_runner_does_not_leave_partial_outputs_when_publication_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_name: str
+) -> None:
+    candidates = _candidate_file()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _frozen_sample(run_dir, candidates)
+    frozen_before = {
+        name: (run_dir / name).read_bytes()
+        for name in ("candidate_labels.csv", "frozen_sample.json")
+    }
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    for name in MODEL_FILES:
+        (model_dir / name).write_bytes(name.encode("utf-8"))
+    monkeypatch.setattr(runner, "_download_model", lambda _cache: model_dir)
+    monkeypatch.setattr(
+        runner, "_load_model", lambda _path: (_RecordingTokenizer(), _RecordingModel())
+    )
+    monkeypatch.setattr(runner, "perf_counter", iter(range(5, 25)).__next__)
+    _inject_e5_output_failure(monkeypatch, failing_name)
+
+    with pytest.raises(OSError, match="injected publication failure"):
+        runner.run_pilot(
+            run_dir,
+            tmp_path / "model-cache",
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            batch_size=2,
+            max_length=64,
+        )
+
+    assert not any((run_dir / name).exists() for name in runner.OUTPUT_FILES)
+    assert {name: (run_dir / name).read_bytes() for name in frozen_before} == frozen_before
+
+
+def test_runner_preserves_a_file_created_after_output_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from georeset_text_label_benchmark.pilot import publication
+
+    candidates = _candidate_file()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _frozen_sample(run_dir, candidates)
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    for name in MODEL_FILES:
+        (model_dir / name).write_bytes(name.encode("utf-8"))
+    monkeypatch.setattr(runner, "_download_model", lambda _cache: model_dir)
+    monkeypatch.setattr(
+        runner, "_load_model", lambda _path: (_RecordingTokenizer(), _RecordingModel())
+    )
+    monkeypatch.setattr(runner, "perf_counter", iter(range(5, 25)).__next__)
+    publish = publication.publish_files
+
+    def create_racing_file(staging: Path, destination: Path, names: Any) -> None:
+        (destination / "metrics.json").write_bytes(b"competing writer")
+        publish(staging, destination, names)
+
+    monkeypatch.setattr(runner, "publish_files", create_racing_file)
+
+    with pytest.raises(FileExistsError):
+        runner.run_pilot(
+            run_dir,
+            tmp_path / "model-cache",
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            batch_size=2,
+            max_length=64,
+        )
+
+    assert (run_dir / "metrics.json").read_bytes() == b"competing writer"
+    assert (run_dir / "predictions.parquet").is_file()
+    assert not (run_dir / "manifest.json").exists()
+
+
 def test_runner_preflight_rejects_bad_commits_settings_and_existing_outputs(
     tmp_path: Path,
 ) -> None:

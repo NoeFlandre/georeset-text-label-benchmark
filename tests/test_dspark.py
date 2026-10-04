@@ -8,6 +8,7 @@ import hashlib
 import json
 import shutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -747,6 +748,62 @@ def test_runner_preserves_output_created_during_inference(
 
     assert (output_dir / "race-marker.txt").read_text(encoding="utf-8") == "preserve"
     assert not (output_dir / "dspark_predictions.parquet").exists()
+    assert engine.shutdown_called
+
+
+@pytest.mark.parametrize(
+    "failing_name",
+    [dspark_runner.PREDICTIONS_NAME, dspark_runner.METRICS_NAME, dspark_runner.MANIFEST_NAME],
+)
+def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_name: str
+) -> None:
+    run_dir = tmp_path / "pilot"
+    output_dir = tmp_path / "dspark"
+    run_dir.mkdir()
+    selected = _write_frozen_run(run_dir)
+    tokenizer = _PromptTokenizer()
+    engine = _FakeEngine()
+    monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
+    monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: engine)
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
+    monkeypatch.setattr(dspark_runner, "_prepare_model_cache", lambda _path: tmp_path / "cache")
+    monkeypatch.setattr(
+        dspark,
+        "EXPECTED_SAMPLE_IDS_SHA256",
+        runner._sha256_json([row["sample_id"] for row in selected]),
+    )
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
+    if failing_name == dspark_runner.PREDICTIONS_NAME:
+        write_table = dspark_runner.pq.write_table
+
+        def write_then_fail(table: Any, path: Path, **kwargs: Any) -> None:
+            write_table(table, path, **kwargs)
+            raise OSError("injected publication failure")
+
+        monkeypatch.setattr(dspark_runner.pq, "write_table", write_then_fail)
+    else:
+        write_json = dspark_runner._write_json_exclusive
+
+        def write_then_fail(path: Path, payload: Mapping[str, Any]) -> None:
+            write_json(path, payload)
+            if path.name == failing_name:
+                raise OSError("injected publication failure")
+
+        monkeypatch.setattr(dspark_runner, "_write_json_exclusive", write_then_fail)
+
+    with pytest.raises(OSError, match="injected publication failure"):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            output_dir=output_dir,
+        )
+
+    assert not output_dir.exists()
+    assert (run_dir / "frozen_sample.json").is_file()
     assert engine.shutdown_called
 
 

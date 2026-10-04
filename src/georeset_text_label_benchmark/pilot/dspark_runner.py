@@ -34,6 +34,7 @@ from georeset_text_label_benchmark.pilot.protocol import (
     SAMPLE_SEED,
     SAMPLE_SIZE,
 )
+from georeset_text_label_benchmark.pilot.publication import publish_directory, staged_directory
 from georeset_text_label_benchmark.pilot.runner import (
     _candidate_provenance,
     _sha256_json,
@@ -87,31 +88,34 @@ def run_dspark_pilot(
     generation_seconds = _clock() - generation_start
     prediction_rows = _prediction_rows(rows, candidates, encoded, prompt_hashes, generated)
     metrics = _metrics_payload(prediction_rows, candidates)
-    destination.mkdir(parents=True, exist_ok=False)
+    with staged_directory(destination.parent, prefix=f".{destination.name}.staging-") as staging:
+        staged_prediction = staging / PREDICTIONS_NAME
+        staged_metrics = staging / METRICS_NAME
+        staged_manifest = staging / MANIFEST_NAME
+        pq.write_table(pa.Table.from_pylist(prediction_rows), staged_prediction, compression="zstd")
+        _write_json_exclusive(staged_metrics, metrics)
+        manifest = _build_manifest(
+            run_dir,
+            sample,
+            candidates,
+            staged_prediction,
+            staged_metrics,
+            computation_commit,
+            validation_commit,
+            gpu,
+            cache_dir,
+            template_hash,
+            tokenizer_seconds,
+            engine_seconds,
+            generation_seconds,
+            engine.version,
+            frozen_e5_manifest_sha256,
+            cuda_preflight,
+        )
+        _write_json_exclusive(staged_manifest, manifest)
+        publish_directory(staging, destination)
     prediction_path = destination / PREDICTIONS_NAME
-    metrics_path = destination / METRICS_NAME
     manifest_path = destination / MANIFEST_NAME
-    pq.write_table(pa.Table.from_pylist(prediction_rows), prediction_path, compression="zstd")
-    _write_json_exclusive(metrics_path, metrics)
-    manifest = _build_manifest(
-        run_dir,
-        sample,
-        candidates,
-        prediction_path,
-        metrics_path,
-        computation_commit,
-        validation_commit,
-        gpu,
-        cache_dir,
-        template_hash,
-        tokenizer_seconds,
-        engine_seconds,
-        generation_seconds,
-        engine.version,
-        frozen_e5_manifest_sha256,
-        cuda_preflight,
-    )
-    _write_json_exclusive(manifest_path, manifest)
     return {
         "run_dir": str(destination),
         "frozen_input_dir": str(run_dir),

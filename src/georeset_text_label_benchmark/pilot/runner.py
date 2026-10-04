@@ -36,6 +36,7 @@ from georeset_text_label_benchmark.pilot.protocol import (
     SAMPLE_SEED,
     SAMPLE_SIZE,
 )
+from georeset_text_label_benchmark.pilot.publication import publish_files, staged_directory
 from georeset_text_label_benchmark.pilot.sampling import (
     build_candidate_labels,
     select_distinct_sample,
@@ -599,26 +600,30 @@ def run_pilot(
     cpu_inference_seconds = perf_counter() - inference_start
     prediction_rows = _prediction_rows(rows, candidates, rankings)
     metrics = _metrics_payload(prediction_rows, candidates)
-    prediction_path, metrics_path = _write_outputs(run_dir, prediction_rows, metrics)
-    manifest = _build_manifest(
-        run_dir,
-        sample,
-        candidates,
-        model_inventory,
-        prediction_path,
-        metrics_path,
-        computation_commit,
-        validation_commit,
-        batch_size,
-        max_length,
-        model_download_seconds,
-        model_load_seconds,
-        sentence_encoding_seconds,
-        candidate_encoding_seconds,
-        scoring_seconds,
-        cpu_inference_seconds,
-    )
-    _write_json_exclusive(run_dir / "manifest.json", manifest)
+    with staged_directory(run_dir, prefix=".pilot-output-") as staging:
+        staged_prediction, staged_metrics = _write_outputs(staging, prediction_rows, metrics)
+        manifest = _build_manifest(
+            run_dir,
+            sample,
+            candidates,
+            model_inventory,
+            staged_prediction,
+            staged_metrics,
+            computation_commit,
+            validation_commit,
+            batch_size,
+            max_length,
+            model_download_seconds,
+            model_load_seconds,
+            sentence_encoding_seconds,
+            candidate_encoding_seconds,
+            scoring_seconds,
+            cpu_inference_seconds,
+        )
+        _write_json_exclusive(staging / "manifest.json", manifest)
+        publish_files(staging, run_dir, OUTPUT_FILES)
+    prediction_path = run_dir / "predictions.parquet"
+    manifest_path = run_dir / "manifest.json"
     return {
         "run_dir": str(run_dir),
         "sample_count": len(prediction_rows),
@@ -628,7 +633,7 @@ def run_pilot(
         "model_download_seconds": model_download_seconds,
         "model_load_seconds": model_load_seconds,
         "predictions_sha256": sha256_file(prediction_path),
-        "manifest_sha256": sha256_file(run_dir / "manifest.json"),
+        "manifest_sha256": sha256_file(manifest_path),
     }
 
 
