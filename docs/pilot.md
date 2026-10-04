@@ -142,23 +142,45 @@ The target is pinned to revision
 `654f9463ce32b05d0429d76fe1f580b27d4c1ac0`; its paired
 [`LFM2.5-2.6B-DSpark` draft](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark)
 is pinned to `458cedab07d0f7b2b05700c77e1aa463d43d6f04`. The validated
-runtime is SGLang `0.5.20` with FlashInfer `0.6.18`, BF16, `DSPARK`, greedy
-temperature `0`, one request at a time, and at most `4096` generated tokens.
+runtime is SGLang `0.5.20` with FlashInfer `0.6.18`, BF16, paired `DSPARK`
+speculative decoding, one request at a time, and at most `512` generated tokens.
 This uses the [upstream LFM2 DSpark support](https://github.com/sgl-project/sglang/pull/31041)
 and the launch settings in the [official draft card](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark).
 DSpark is speculative decoding with a paired draft checkpoint; it is not a
-hardware device. Under greedy decoding the target verifies draft tokens, so
-DSpark accelerates the target model without changing its output.
+hardware device and does not add a second label model. The target remains the
+LFM2.5 checkpoint, and the pinned sampling settings determine its output.
 
 LiquidAI documents a `131,072`-token target context. SGLang v0.5.20 passes the
 target context length to its DSpark draft worker, while this draft checkpoint
 supports `128,000` tokens. The adapter therefore pins the engine's
 `context_length` to `128,000`, and checks each rendered prompt plus the full
-`4096`-token generation cap before it loads the serving engine. The adapter uses the pinned tokenizer's chat template with
-`enable_thinking=False`; that template still opens a `<think>` region. Parsing
+`512`-token generation cap before it loads the serving engine. The
+[model-card example](https://huggingface.co/LiquidAI/LFM2.5-2.6B) uses
+temperature `0.1`, top-k `50`, repetition penalty `1.1`, and a 512-token cap;
+the adapter pins those settings. SGLang v0.5.20's per-request sampling seed is
+fixed at `42`. The EOS token `<|im_end|>` (token ID `124900`) from the [pinned
+tokenizer vocabulary](https://huggingface.co/LiquidAI/LFM2.5-2.6B/blob/654f9463ce32b05d0429d76fe1f580b27d4c1ac0/tokenizer.json)
+is an explicit stop token. The adapter keeps special tokens and the stop
+marker in raw output using SGLang v0.5.20's `skip_special_tokens` and
+`no_stop_trim` controls, alongside its `sampling_seed` and `stop_token_ids`
+fields ([pinned sampling API](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/sampling/sampling_params.py)).
+
+At the pinned tokenizer revision, the actual rendered chat template opens the
+assistant turn with `<think>` even when passed `enable_thinking=False`; the
+template does not read that flag. The adapter therefore passes no false
+thinking-control flag and leaves the model's reasoning format intact. Parsing
 uses only text after the final `</think>` and accepts an exact code from the
 candidate set. Truncated answers, unclosed reasoning, unknown codes, and other
-formats remain rows with their raw output and a parse failure reason.
+formats remain rows with their raw output and a parse failure reason. A
+regression test renders the exact pinned 5.4 KB template fixture without model
+weights.
+
+These decoding settings address the first run's length and repeated-span
+failure modes based on the official model-card example. They have not been
+validated on a GPU and do not establish that accuracy will improve. Preserve
+the earlier run and write any retry to a new output path, for example
+`pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2/`; the manifest records
+the complete generation settings so its results are distinguishable.
 
 The adapter writes three files into a separate LLM run directory beside the
 frozen E5 directory: `dspark_predictions.parquet`, `dspark_metrics.json`, and
@@ -193,9 +215,11 @@ CPU-only workspace used for unit tests.
 
 First obtain `frozen_sample.json`, `candidate_labels.csv`, and the E5
 `manifest.json` from the authorized, versioned run at
-`pilot/runs/e5-small-100-seed42/`. The run must come from the published dataset
-revision whose exact file hashes match the manifest. Install the runtime in a
-dedicated environment:
+`pilot/runs/e5-small-100-seed42/`. Use the published dataset revision
+[`073a1e478bd719f7a8ddc8c9fca191cb87c12926`](https://huggingface.co/datasets/NoeFlandre/georeset-text-label-benchmark/tree/073a1e478bd719f7a8ddc8c9fca191cb87c12926/pilot/runs/e5-small-100-seed42),
+which contains the exact frozen sample, candidate table, and E5 manifest. The
+runner verifies the sample and candidate hashes against that manifest. Install
+the runtime in a dedicated environment:
 
 ```bash
 uv sync --locked --no-default-groups --extra dspark
@@ -207,7 +231,7 @@ choose a different new path. `HF_HOME` may be set to a large local cache path be
 SGLang downloads the target and draft revisions on the first actual run.
 
 ```bash
-PILOT_REVISION=<commit-containing-the-frozen-pilot-files>
+PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926
 hf download NoeFlandre/georeset-text-label-benchmark \
   pilot/runs/e5-small-100-seed42/frozen_sample.json \
   pilot/runs/e5-small-100-seed42/candidate_labels.csv \
@@ -248,8 +272,16 @@ placed the code and input files on the cluster:
 ```bash
 scripts/run-dspark-grid5000.sh \
   /path/to/persistent/pilot/runs/e5-small-100-seed42 \
-  /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42
+  /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2
 ```
+
+Before the full 100-row retry, the cluster owner should run a short smoke on a
+few existing frozen rows using the same pinned template and generation
+settings. Check that each request ends with the expected SGLang finish reason,
+that completed output retains `<|im_end|>`, and that `</think>` is followed by
+one allowed code. The smoke is a runtime check only; keep its outputs outside
+the benchmark run path. The checked-in `run-dspark` command evaluates the
+complete frozen sample and does not resample or offer a smaller benchmark run.
 
 The preflight requires at least 20 GiB free under job-local `$TMPDIR` (or
 `/tmp`) and at least 1 GiB free in the persistent output filesystem. It places

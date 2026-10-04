@@ -324,7 +324,7 @@ def _build_manifest(
             "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
             "The sample is occurrence-weighted before unique-text and unique-polygon filtering.",
             "Compare top-1 and macro-F1 only with E5; direct generation has no top-5 ranking.",
-            "Greedy generation is used; DSpark is the speculative draft path, not a compute device.",
+            "Sampling follows the LFM2.5 model-card example with a fixed request seed; DSpark is a speculative draft path, not a compute device.",
         ],
     }
 
