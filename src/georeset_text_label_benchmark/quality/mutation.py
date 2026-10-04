@@ -169,6 +169,10 @@ EQUIVALENT_MUTANTS = {
         "Python resolves utf-8 and UTF-8 to the same codec, producing the same pinned chat "
         "template SHA-256."
     ),
+    "georeset_text_label_benchmark.pilot.dspark.x_encode_prompt__mutmut_8": (
+        "CHAT_TEMPLATE_KWARGS is an empty mapping, so removing its keyword expansion passes "
+        "the same tokenizer arguments and produces the same rendered prompt."
+    ),
     "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_15": (
         "single_label_report validates equal non-empty gold and prediction lengths before this "
         "zip, so strict=None has the same aligned iteration."
