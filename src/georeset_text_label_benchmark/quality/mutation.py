@@ -146,6 +146,84 @@ EQUIVALENT_MUTANTS = {
         "Python resolves ascii and ASCII to the same codec; the deterministic ranking digest "
         "is unchanged."
     ),
+    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_22": (
+        "build_prompt constructs codes by iterating the same candidate sequence immediately "
+        "before this zip, so both iterables always have equal lengths; strict=None cannot alter "
+        "the rendered candidate list."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_25": (
+        "build_prompt constructs codes by iterating the same candidate sequence immediately "
+        "before this zip, so both iterables always have equal lengths; omitting strict cannot "
+        "alter the rendered candidate list."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_26": (
+        "build_prompt constructs codes by iterating the same candidate sequence immediately "
+        "before this zip, so both iterables always have equal lengths; strict=False cannot "
+        "alter the rendered candidate list."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_29": (
+        "json.dumps treats ensure_ascii=None as false, so Unicode candidate text is serialized "
+        "identically to ensure_ascii=False; the prompt contract includes non-ASCII text."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_template_sha256__mutmut_5": (
+        "Python resolves utf-8 and UTF-8 to the same codec, producing the same pinned chat "
+        "template SHA-256."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark.x_encode_prompt__mutmut_8": (
+        "CHAT_TEMPLATE_KWARGS is an empty mapping, so removing its keyword expansion passes "
+        "the same tokenizer arguments and produces the same rendered prompt."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_15": (
+        "single_label_report validates equal non-empty gold and prediction lengths before this "
+        "zip, so strict=None has the same aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_18": (
+        "single_label_report validates equal non-empty gold and prediction lengths before this "
+        "zip, so omitting strict has the same aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x_single_label_report__mutmut_19": (
+        "single_label_report validates equal non-empty gold and prediction lengths before this "
+        "zip, so strict=False has the same aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__encode_frozen_prompts__mutmut_21": (
+        "Python resolves utf-8 and UTF-8 to the same codec, so per-prompt SHA-256 values are "
+        "unchanged."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": (
+        "Python resolves utf-8 and UTF-8 to the same codec when reading the manifest JSON."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_77": (
+        "Path.mkdir treats exist_ok=None as false, matching the explicit exist_ok=False; the "
+        "output race regression confirms an existing destination is rejected."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_79": (
+        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
+        "same exclusive output-directory behavior."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_96": (
+        "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
+        "checks the emitted metadata reports ZSTD."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_89": (
+        "PyArrow accepts zstd and ZSTD as aliases for the same Parquet codec; the adapter test "
+        "checks the emitted Parquet metadata reports ZSTD."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_70": (
+        "Path.mkdir treats exist_ok=None as false, matching the explicit exist_ok=False; a race "
+        "regression verifies that a destination created after preflight is rejected."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_72": (
+        "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
+        "same exclusive output-directory creation behavior."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": (
+        "parse_label returns either None or a non-empty allowed code, and candidate_names has "
+        "string keys only. candidate_names.get(None) is None, matching the conditional branch."
+    ),
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": (
+        "json.dumps treats ensure_ascii=None as false, so CLI results have identical Unicode "
+        "serialization to ensure_ascii=False."
+    ),
 }
 
 

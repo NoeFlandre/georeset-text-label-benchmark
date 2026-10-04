@@ -20,9 +20,9 @@ pretty_name: GeoReset text-label benchmark (Description/EUNIS overlap data)
 This project is a benchmark for evaluating prediction of geographic labels
 from text across data sources and reference datasets. The current implementation
 produces one reproducible Description sentence / EUNIS polygon overlap dataset
-and a separate 100-sentence, zero-shot multilingual E5 ranking pilot. It does
-not train or fine-tune a model, infer missing overlap labels, or recompute EUNIS
-geometry.
+and two separate 100-sentence pilots: multilingual E5 candidate ranking and
+LFM2.5-2.6B + DSpark direct label generation. It does not train or fine-tune a
+model, infer missing overlap labels, or recompute EUNIS geometry.
 
 The retained dataset contains one row per exact `yes` sentence occurrence
 whose OpenStreetMap feature already has an EUNIS assignment.
@@ -85,6 +85,17 @@ and a provenance manifest with pinned revisions, model-file and output hashes,
 runtime, and timings. The model weights are fetched from the public Hub on first
 run (about 471 MB). The pilot reports agreement with existing polygon-level
 EUNIS labels; scientific validation of those labels is unconfirmed.
+
+## Direct LFM2.5 labels
+
+The direct-generation adapter uses the exact same frozen sentence IDs and all
+158 pinned EUNIS name/definition candidates. It checks the published sample ID
+digest, passes no gold label or embedding shortlists, and stores each raw output
+along with a validated code or explicit parse failure. Its separate run
+directory keeps the E5 predictions and metrics intact. See the
+[`direct-label instructions`](docs/pilot.md#direct-labels-with-lfm25--dspark)
+for pinned runtime settings, GPU requirements, and how to run it. DSpark
+inference requires a supported NVIDIA GPU; CI uses mocked inference only.
 
 ## Engineering checks
 

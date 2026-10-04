@@ -1,4 +1,4 @@
-# Zero-shot EUNIS text-ranking pilot
+# 100-sentence EUNIS label pilots
 
 This pilot checks whether a pinned multilingual sentence-embedding model ranks
 the existing polygon-level EUNIS code among candidate habitat definitions for
@@ -22,7 +22,8 @@ recompute EUNIS geometry.
 
 The overlap dataset contains positive Description sentence / polygon EUNIS
 overlap records. It is not the entire relevance-label table and has no negative
-or missing-overlap examples. At the pinned revision it has 137,464 unique
+or missing-overlap examples. The 158 candidates cover the frozen natural-habitat
+vocabulary; built and intensive-cropland classes are absent. At the pinned revision it has 137,464 unique
 sentence hashes and 200,941 unique polygon keys. The pilot samples from this
 already-computed overlap only.
 
@@ -37,12 +38,13 @@ The model weights and tokenizer are MIT-licensed at the pinned model revision.
 
 Each overlap occurrence receives a stable ID from its source PBF, OSM type and
 ID, Description identity, tag key, zero-based sentence index, and sentence
-SHA-256. The sampler sorts these IDs by `SHA256("42:" + occurrence_id)` and
-walks that order, retaining the first 100 records with both an unseen exact
-sentence hash and an unseen `(source_pbf, osm_type, osm_id)` polygon key. This
-deterministically avoids counting duplicated sentence text or polygons more
-than once in this small pilot. The selected rows, IDs checksum, input hashes,
-coverage counts, and exact candidate CSV are written before model loading.
+SHA-256. Sampling ranks occurrence rows by `SHA256("42:" + occurrence_id)`,
+then keeps the first 100 with an unseen exact sentence hash and unseen
+`(source_pbf, osm_type, osm_id)` polygon key. This means the input is
+occurrence-weighted before the uniqueness filters. It deterministically avoids
+counting duplicated sentence text or polygons more than once in this small
+pilot. The selected rows, IDs checksum, input hashes, coverage counts, and exact
+candidate CSV are written before model loading.
 
 The frozen sample is reproducible from the pinned inputs and seed. Its manifest
 records the computation commit and validation commit so the published result
@@ -125,3 +127,198 @@ habitat judgment. Scientific validation of the EUNIS reference assignments is
 unconfirmed. Results only describe this 100-row sample from positive overlap;
 they do not estimate performance on negatives, missing labels, or a held-out
 population and should not be presented as a validated benchmark score.
+
+## Direct labels with LFM2.5 + DSpark
+
+The second adapter asks [`LiquidAI/LFM2.5-2.6B`](https://huggingface.co/LiquidAI/LFM2.5-2.6B)
+to choose one label directly from the same 158 EUNIS candidates, including each
+candidate's pinned EEA name and definition. It reads only the sentence text and
+candidate vocabulary; it does not pass the gold code/name, score embeddings, or
+shortlist candidates. The command accepts only the published 100-row ID digest
+(`74ab5826b51806947215b0e1635f173ce99af13577e41a431c263cd6a8e57e72`) and the
+pinned candidate CSV. It never calls `freeze` or the sampler.
+
+The target is pinned to revision
+`654f9463ce32b05d0429d76fe1f580b27d4c1ac0`; its paired
+[`LFM2.5-2.6B-DSpark` draft](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark)
+is pinned to `458cedab07d0f7b2b05700c77e1aa463d43d6f04`. The validated
+runtime is SGLang `0.5.20` with FlashInfer `0.6.18`, BF16, paired `DSPARK`
+speculative decoding, one request at a time, and at most `512` generated tokens.
+This uses the [upstream LFM2 DSpark support](https://github.com/sgl-project/sglang/pull/31041)
+and the launch settings in the [official draft card](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark).
+DSpark is speculative decoding with a paired draft checkpoint; it is not a
+hardware device and does not add a second label model. The target remains the
+LFM2.5 checkpoint, and the pinned sampling settings determine its output.
+
+LiquidAI documents a `131,072`-token target context. SGLang v0.5.20 passes the
+target context length to its DSpark draft worker, while this draft checkpoint
+supports `128,000` tokens. The adapter therefore pins the engine's
+`context_length` to `128,000`, and checks each rendered prompt plus the full
+`512`-token generation cap before it loads the serving engine. The
+[model-card example](https://huggingface.co/LiquidAI/LFM2.5-2.6B) uses
+temperature `0.1`, top-k `50`, repetition penalty `1.1`, and a 512-token cap;
+the adapter pins those settings. SGLang v0.5.20's per-request sampling seed is
+fixed at `42`. The EOS token `<|im_end|>` (token ID `124900`) from the [pinned
+tokenizer vocabulary](https://huggingface.co/LiquidAI/LFM2.5-2.6B/blob/654f9463ce32b05d0429d76fe1f580b27d4c1ac0/tokenizer.json)
+is an explicit stop token. The adapter keeps special tokens and the stop
+marker in raw output using SGLang v0.5.20's `skip_special_tokens` and
+`no_stop_trim` controls, alongside its `sampling_seed` and `stop_token_ids`
+fields ([pinned sampling API](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/sampling/sampling_params.py)).
+
+At the pinned tokenizer revision, the actual rendered chat template opens the
+assistant turn with `<think>` even when passed `enable_thinking=False`; the
+template does not read that flag. The adapter therefore passes no false
+thinking-control flag and leaves the model's reasoning format intact. Parsing
+uses only text after the final `</think>` and accepts an exact code from the
+candidate set. Truncated answers, unclosed reasoning, unknown codes, and other
+formats remain rows with their raw output and a parse failure reason. A
+regression test renders the exact pinned 5.4 KB template fixture without model
+weights.
+
+These decoding settings address the first run's length and repeated-span
+failure modes based on the official model-card example. They have not been
+validated on a GPU and do not establish that accuracy will improve. Preserve
+the earlier run and write any retry to a new output path, for example
+`pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2/`; the manifest records
+the complete generation settings so its results are distinguishable.
+
+The adapter writes three files into a separate LLM run directory beside the
+frozen E5 directory: `dspark_predictions.parquet`, `dspark_metrics.json`, and
+`dspark_manifest.json`. Existing E5 files are not overwritten. Each prediction
+retains the raw generation, parsed code/name or null, parse status/error, prompt
+hash, token counts, finish reason, timing, and DSpark accepted/proposed token
+counts. Overall top-1 accuracy and macro-F1 use all 100 rows; invalid output
+counts as an incorrect prediction and is included in a separate coverage rate.
+The macro-F1 denominator remains all 158 candidates. Direct generation has one
+label per sentence and no top-5 ranking; compare only top-1 accuracy and
+macro-F1 with the E5 output.
+
+### Run requirements
+
+Use Linux with an NVIDIA CUDA GPU visible through `nvidia-smi`, a CUDA 13.0
+toolkit, and an NVIDIA driver at least `580.65.06` (the CUDA 13.0 minimum in
+[NVIDIA's release notes](https://docs.nvidia.com/cuda/archive/13.0.0/cuda-toolkit-release-notes/index.html)).
+SGLang v0.5.20's [official container pin](https://github.com/sgl-project/sglang/blob/v0.5.20/docker/Dockerfile)
+uses CUDA 13.0.3 and FlashInfer 0.6.18. The serving gate admits GPUs with
+compute capability `8.0` or newer and at least `16,384 MiB` of VRAM; this is an
+admission floor, not a guarantee that every runtime allocation fits. LiquidAI's
+published SGLang throughput test used one BF16 H100 with 80 GB.
+
+Before loading any model weights, the adapter checks pinned SGLang and
+FlashInfer package versions, compares `nvcc` with PyTorch's CUDA runtime, then
+compiles and executes a tiny FlashInfer prefill kernel. Its result is recorded
+in `runtime.cuda_preflight` in the output manifest. This tests the allocated
+node's CUDA driver, toolkit, and JIT path without downloading target or draft
+weights. The command also checks that the Hub cache has at least 8 GiB free
+before loading the tokenizer or weights. Do not run this adapter on the
+CPU-only workspace used for unit tests.
+
+First obtain `frozen_sample.json`, `candidate_labels.csv`, and the E5
+`manifest.json` from the authorized, versioned run at
+`pilot/runs/e5-small-100-seed42/`. Use the published dataset revision
+[`073a1e478bd719f7a8ddc8c9fca191cb87c12926`](https://huggingface.co/datasets/NoeFlandre/georeset-text-label-benchmark/tree/073a1e478bd719f7a8ddc8c9fca191cb87c12926/pilot/runs/e5-small-100-seed42),
+which contains the exact frozen sample, candidate table, and E5 manifest. The
+runner verifies the sample and candidate hashes against that manifest. Install
+the runtime in a dedicated environment:
+
+```bash
+uv sync --locked --no-default-groups --extra dspark
+```
+
+Then run the adapter against that frozen directory. By default it writes to
+the sibling `lfm2.5-2.6b-dspark-100-seed42` directory; pass `--output-dir` to
+choose a different new path. `HF_HOME` may be set to a large local cache path before the command; otherwise `--model-cache` is used.
+SGLang downloads the target and draft revisions on the first actual run.
+
+```bash
+PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926
+hf download NoeFlandre/georeset-text-label-benchmark \
+  pilot/runs/e5-small-100-seed42/frozen_sample.json \
+  pilot/runs/e5-small-100-seed42/candidate_labels.csv \
+  pilot/runs/e5-small-100-seed42/manifest.json \
+  --repo-type dataset --revision "$PILOT_REVISION" --local-dir artifacts/source
+RUN_DIR=artifacts/source/pilot/runs/e5-small-100-seed42
+COMMIT_SHA=$(git rev-parse HEAD)
+uv run georeset-pilot run-dspark \
+  --run-dir "$RUN_DIR" \
+  --output-dir artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42 \
+  --model-cache .cache/model-dspark \
+  --computation-commit "$COMMIT_SHA" \
+  --validation-commit "$COMMIT_SHA"
+```
+
+Before GPU or CUDA preflight, the adapter verifies the SHA-256 values of the
+complete frozen sample and candidate CSV against that E5 manifest, and checks
+that its source, sample, candidates, and E5 model revision agree with the
+frozen files. It records the E5 manifest digest in the DSpark output manifest.
+The resulting files belong under the distinct run path
+`pilot/runs/lfm2.5-2.6b-dspark-100-seed42/` if published to the same Hub
+dataset. Verify uploaded file SHA-256 values against `dspark_manifest.json`.
+The model files, generated outputs, and inference costs are not downloaded or
+produced by CI.
+
+### Grid’5000 one-GPU execution
+
+Run `scripts/run-dspark-grid5000.sh` only inside a separately allocated Linux
+job with exactly one visible NVIDIA GPU and a one-hour wall-time limit. The
+script does not submit jobs or contact a scheduler. The verified A100 SXM4
+40-GiB node meets the adapter’s 16-GiB / compute-capability-8.0 admission gate.
+
+Provide absolute paths to the already-published frozen input directory and a
+new output directory on persistent storage. The persistent output parent must
+already exist and be writable. For example, after the authorized owner has
+placed the code and input files on the cluster:
+
+```bash
+scripts/run-dspark-grid5000.sh \
+  /path/to/persistent/pilot/runs/e5-small-100-seed42 \
+  /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2
+```
+
+Before the full 100-row retry, the cluster owner should run a short smoke on a
+few existing frozen rows using the same pinned template and generation
+settings. Check that each request ends with the expected SGLang finish reason,
+that completed output retains `<|im_end|>`, and that `</think>` is followed by
+one allowed code. The smoke is a runtime check only; keep its outputs outside
+the benchmark run path. The checked-in `run-dspark` command evaluates the
+complete frozen sample and does not resample or offer a smaller benchmark run.
+
+The preflight requires at least 20 GiB free under job-local `$TMPDIR` (or
+`/tmp`) and at least 1 GiB free in the persistent output filesystem. It places
+the locked Python environment, Hugging Face model cache, SGLang/FlashInfer
+runtime caches, and temporary home under a unique directory in that
+job-local filesystem. It never uses the real home directory for model or
+runtime caches. A monitor stops the run if job-local temporary use exceeds
+20 GiB and deletes only the temporary directory it created. The script spends
+at most 55 minutes on environment installation and inference to leave time
+inside the one-hour allocation for cleanup. The persistent prediction,
+metrics, and manifest directory is checked to remain below 1 GiB.
+
+Before installing SGLang, the wrapper loads the Grid'5000 Lmod setup and the
+Rennes modules `nvidia-driver-libs/580`, `cuda-toolkit/13.0.2`, and
+`uv/0.10.12`. It checks the visible GPU's driver, compiles the CUDA version
+gate, and exports `CUDA_HOME` and the toolkit library path. Set
+`DS_DRIVER_MODULE`, `DS_CUDA_MODULE`, or `DS_UV_MODULE` if an allocated site
+exposes one of these under another module name. The FlashInfer workspace cache
+also stays under the job-local limit. During startup, before target and draft
+weight loading, the Python adapter JIT-compiles a small FlashInfer operation;
+the run stops if that smoke test fails.
+
+The script reads the fixed 100-row input directory and writes only the new
+DSpark output directory. It does not alter the E5 run or submit, inspect,
+cancel, or modify any other cluster jobs. A scheduler allocation and
+authorization to use the persistent input/output paths are prerequisites; the
+script intentionally leaves scheduler-specific job submission to the cluster
+owner.
+
+### Comparison limits
+
+All 100 rows have polygon-level EUNIS assignments from the EEA probability-map
+v1 (2021) source, with reported overlap percentages from `4.82%` to `100%`
+(mean `86.89%`, median `100%`). They remain context rather than sentence-level
+ground truth. For example, the pilot includes a vegetable-shop sentence whose
+polygon code is Q11 (Raised bog), and a construction-site sentence whose code
+is Q51 (Tall-helophyte bed). The result measures agreement with these existing
+assignments on this positive-overlap sample; it does not establish that the
+sentence itself describes the assigned habitat or predict performance on
+negative examples. The EUNIS scientific validation status remains unconfirmed.

@@ -1788,13 +1788,15 @@ def test_model_download_is_pinned_and_inventory_requires_every_file(
 def test_cli_parser_help_is_stable_and_defaults_are_pinned() -> None:
     parser = cli._parser()
     assert parser.format_help() == (
-        "usage: georeset-pilot [-h] {freeze,run} ...\n\n"
+        "usage: georeset-pilot [-h] {freeze,run,run-dspark} ...\n\n"
         "positional arguments:\n"
-        "  {freeze,run}\n"
-        "    freeze      freeze selected rows before inference\n"
-        "    run         run frozen zero-shot candidate ranking\n\n"
+        "  {freeze,run,run-dspark}\n"
+        "    freeze              freeze selected rows before inference\n"
+        "    run                 run frozen zero-shot candidate ranking\n"
+        "    run-dspark          predict one EUNIS code per row with pinned LFM2.5 +\n"
+        "                        DSpark\n\n"
         "options:\n"
-        "  -h, --help    show this help message and exit\n"
+        "  -h, --help            show this help message and exit\n"
     )
     with pytest.raises(SystemExit, match="2"):
         parser.parse_args([])
@@ -1806,6 +1808,8 @@ def test_cli_parser_help_is_stable_and_defaults_are_pinned() -> None:
         parser.parse_args(["run", "--validation-commit", "b" * 40])
     with pytest.raises(SystemExit, match="2"):
         parser.parse_args(["run", "--computation-commit", "a" * 40])
+    with pytest.raises(SystemExit, match="2"):
+        parser.parse_args(["run-dspark"])
 
     frozen = parser.parse_args(["freeze", "--source-parquet", "overlap.parquet"])
     assert frozen.source_parquet == Path("overlap.parquet")
@@ -1820,6 +1824,12 @@ def test_cli_parser_help_is_stable_and_defaults_are_pinned() -> None:
     assert running.model_cache == Path(".cache/huggingface")
     assert running.batch_size == 16
     assert running.max_length == 512
+    dspark_running = parser.parse_args(
+        ["run-dspark", "--computation-commit", "a" * 40, "--validation-commit", "b" * 40]
+    )
+    assert dspark_running.run_dir == Path("artifacts/e5-small-100-seed42")
+    assert dspark_running.output_dir is None
+    assert dspark_running.model_cache == Path(".cache/model-dspark")
 
     explicit = parser.parse_args(
         [
