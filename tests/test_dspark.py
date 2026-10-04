@@ -177,7 +177,7 @@ class _FakeEngine:
         self.calls.append(input_ids)
         index = len(self.calls)
         if index == 1:
-            raw, finish = "</think>T11", "stop"
+            raw, finish = "</think>T11<|im_end|>", "stop"
         elif index == 2:
             raw, finish = "reasoning </think>NOT_A_CODE", "stop"
         else:
@@ -247,7 +247,17 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
     assert dspark.DRAFT_MODEL == "LiquidAI/LFM2.5-2.6B-DSpark"
     assert dspark.DRAFT_REVISION == "458cedab07d0f7b2b05700c77e1aa463d43d6f04"
     assert dspark.SGLANG_VERSION == "0.5.20"
-    assert dspark.SAMPLING == {"temperature": 0.0, "max_new_tokens": 4096}
+    assert dspark.SAMPLING == {
+        "temperature": 0.1,
+        "top_k": 50,
+        "repetition_penalty": 1.1,
+        "max_new_tokens": 512,
+        "sampling_seed": 42,
+        "stop_token_ids": [124900],
+        "skip_special_tokens": False,
+        "no_stop_trim": True,
+    }
+    assert dspark.CHAT_TEMPLATE_KWARGS == {}
     assert dspark.ENGINE_ARGS == {
         "dtype": "bfloat16",
         "random_seed": 0,
@@ -350,20 +360,46 @@ def test_chat_encoder_matches_pinned_template_kwargs_and_no_auto_special_tokens(
     input_ids = dspark.encode_prompt(tokenizer, "Choose one.")
 
     assert input_ids == [0, 1, 2]
-    assert tokenizer.template_kwargs == [
-        {"tokenize": False, "add_generation_prompt": True, "enable_thinking": False}
-    ]
+    assert tokenizer.template_kwargs == [{"tokenize": False, "add_generation_prompt": True}]
     assert tokenizer.messages == [[{"role": "user", "content": "Choose one."}]]
+
+
+def test_pinned_model_template_opens_thinking_even_when_flag_is_false() -> None:
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from transformers import PreTrainedTokenizerFast
+
+    template_path = Path(__file__).parent / "fixtures/lfm2_5_chat_template.jinja"
+    template = template_path.read_text(encoding="utf-8")
+    assert hashlib.sha256(template.encode("utf-8")).hexdigest() == (
+        "ea663864491de7ade391839479860ca95541f892f72665c73251fbd4643b1bef"
+    )
+    backend = Tokenizer(WordLevel({"[UNK]": 0}, unk_token="[UNK]"))
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="[UNK]")
+    tokenizer.chat_template = template
+    render = tokenizer.apply_chat_template
+    input_ids = dspark.encode_prompt(tokenizer, "Choose one.")
+
+    rendered = render(
+        [{"role": "user", "content": "Choose one."}],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+
+    assert input_ids
+    assert isinstance(rendered, str)
+    assert rendered.endswith("<|im_start|>assistant\n<think>")
 
 
 def test_context_guard_counts_generation_tokens_against_sglang_limit() -> None:
     dspark.validate_context_length(1, max_new_tokens=1)
-    dspark.validate_context_length(128_000 - 4096, max_new_tokens=4096)
+    dspark.validate_context_length(128_000 - 512, max_new_tokens=512)
 
     with pytest.raises(
         ValueError, match="prompt plus generation cap exceeds SGLang context"
     ) as error:
-        dspark.validate_context_length(128_000 - 4095, max_new_tokens=4096)
+        dspark.validate_context_length(128_000 - 511, max_new_tokens=512)
     assert str(error.value) == "prompt plus generation cap exceeds SGLang context"
 
     with pytest.raises(
@@ -497,7 +533,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "correct_top1": True,
         "parse_status": "valid",
         "parse_error": None,
-        "raw_output": "</think>T11",
+        "raw_output": "</think>T11<|im_end|>",
         "prompt_sha256": prompt_hash,
         "prompt_tokens": prompt_tokens,
         "generated_tokens": 17,
@@ -572,8 +608,17 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "prompt_version": "eunis-direct-label-v1",
         "prompt_instructions_sha256": "a0d4a58fee0c13edf0811a9a0fd8c800b6684393d8b69951fd07f7898558bcf4",
         "tokenizer_chat_template_sha256": hashlib.sha256(b"template-v1").hexdigest(),
-        "chat_template_kwargs": {"enable_thinking": False},
-        "sampling": {"temperature": 0.0, "max_new_tokens": 4096},
+        "chat_template_kwargs": {},
+        "sampling": {
+            "temperature": 0.1,
+            "top_k": 50,
+            "repetition_penalty": 1.1,
+            "max_new_tokens": 512,
+            "sampling_seed": 42,
+            "stop_token_ids": [124_900],
+            "skip_special_tokens": False,
+            "no_stop_trim": True,
+        },
         "engine": {
             "dtype": "bfloat16",
             "random_seed": 0,
@@ -585,7 +630,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "max_running_requests": 1,
         },
         "runtime_context_limit_tokens": 128_000,
-        "maximum_new_tokens": 4096,
+        "maximum_new_tokens": 512,
         "candidate_count": 158,
         "candidate_csv_sha256": CANDIDATE_LABELS_SHA256,
         "sample_ids_sha256": sample["selection"]["sample_ids_sha256"],
@@ -686,7 +731,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
             "The sample is occurrence-weighted before unique-text and unique-polygon filtering.",
             "Compare top-1 and macro-F1 only with E5; direct generation has no top-5 ranking.",
-            "Greedy generation is used; DSpark is the speculative draft path, not a compute device.",
+            "Sampling follows the LFM2.5 model-card example with a fixed request seed; DSpark is a speculative draft path, not a compute device.",
         ],
     }
     assert (run_dir / "frozen_sample.json").read_bytes() == frozen_before

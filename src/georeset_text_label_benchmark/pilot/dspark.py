@@ -28,10 +28,20 @@ PROMPT_SHA256 = hashlib.sha256(PROMPT_INSTRUCTIONS.encode("utf-8")).hexdigest()
 EXPECTED_SAMPLE_IDS_SHA256 = "74ab5826b51806947215b0e1635f173ce99af13577e41a431c263cd6a8e57e72"
 MODEL_CONTEXT_TOKENS = 131_072
 RUNTIME_CONTEXT_TOKENS = 128_000
-MAX_NEW_TOKENS = 4096
+MAX_NEW_TOKENS = 512
 MAX_CONCURRENCY = 1
-CHAT_TEMPLATE_KWARGS: dict[str, bool] = {"enable_thinking": False}
-SAMPLING: dict[str, float | int] = {"temperature": 0.0, "max_new_tokens": MAX_NEW_TOKENS}
+EOS_TOKEN_ID = 124_900  # <|im_end|> at the pinned target revision
+CHAT_TEMPLATE_KWARGS: dict[str, bool] = {}
+SAMPLING: dict[str, Any] = {
+    "temperature": 0.1,
+    "top_k": 50,
+    "repetition_penalty": 1.1,
+    "max_new_tokens": MAX_NEW_TOKENS,
+    "sampling_seed": 42,
+    "stop_token_ids": [EOS_TOKEN_ID],
+    "skip_special_tokens": False,
+    "no_stop_trim": True,
+}
 ENGINE_ARGS: dict[str, Any] = {
     "dtype": "bfloat16",
     "random_seed": 0,
