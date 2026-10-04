@@ -200,10 +200,6 @@ EQUIVALENT_MUTANTS = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": (
         "Python resolves utf-8 and UTF-8 to the same codec when reading the manifest JSON."
     ),
-    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_77": (
-        "Path.mkdir treats exist_ok=None as false, matching the explicit exist_ok=False; the "
-        "output race regression confirms an existing destination is rejected."
-    ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_79": (
         "Path.mkdir defaults exist_ok to False, so omitting the explicit False preserves the "
         "same exclusive output-directory behavior."
@@ -235,6 +231,70 @@ EQUIVALENT_MUTANTS = {
     "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": (
         "json.dumps treats ensure_ascii=None as false, so CLI results have identical Unicode "
         "serialization to ensure_ascii=False."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": (
+        "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the DSpark run "
+        "test verifies the emitted metadata reports ZSTD."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_15": (
+        "The probe source is written as a regular file inside a private temporary directory, so "
+        "following its symlink flag cannot change its identity."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_16": (
+        "The probe source is written as a regular file inside a private temporary directory, so "
+        "following symlinks cannot change its identity."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_18": (
+        "The probe link is created as a hard link to the regular source in a private temporary "
+        "directory, so its symlink flag cannot change its identity."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_19": (
+        "The probe link is created as a hard link to the regular source in a private temporary "
+        "directory, so following symlinks cannot change its identity."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_4": (
+        "The preflight prefix only names its private temporary directory; changing or omitting "
+        "that prefix does not change its parent filesystem."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_6": (
+        "The preflight prefix only names its private temporary directory; changing or omitting "
+        "that prefix does not change its parent filesystem."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_8": (
+        "The preflight prefix only names its private temporary directory; changing its text "
+        "does not change its parent filesystem."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_9": (
+        "The preflight prefix only names its private temporary directory; changing its case "
+        "does not change its parent filesystem."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_14": (
+        "The probe source path is used for both writing and linking, so changing its private "
+        "filename does not change the tested hard-link behavior."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_15": (
+        "The probe source path is used for both writing and linking, so changing its case does "
+        "not change the tested hard-link behavior."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_18": (
+        "The probe link path is passed directly to the hard-link capability check, so changing "
+        "its private filename does not change the test."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_19": (
+        "The probe link path is passed directly to the hard-link capability check, so changing "
+        "its case does not change the test."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_21": (
+        "The probe checks hard-link identity rather than file contents, so changing the private "
+        "probe payload does not alter the capability result."
+    ),
+    "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_22": (
+        "The probe checks hard-link identity rather than file contents, so changing the private "
+        "probe payload does not alter the capability result."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_98": (
+        "rank_candidates defaults top_k to 5; omitting the explicit top_k=5 argument preserves "
+        "the same ranking size verified in the row-level prediction test."
     ),
 }
 

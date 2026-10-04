@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import errno
 import hashlib
 import json
 import shutil
@@ -16,7 +17,7 @@ from typing import Any, cast
 import pyarrow.parquet as pq
 import pytest
 
-from georeset_text_label_benchmark.pilot import cli, dspark, dspark_runner, runner
+from georeset_text_label_benchmark.pilot import cli, dspark, dspark_runner, publication, runner
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
     OVERLAP_DATASET,
@@ -705,6 +706,7 @@ def _output_arguments(tmp_path: Path, mode: str) -> tuple[Path | None, Path]:
     assert not output_dir.exists()
     if mode == "nested":
         assert not output_dir.parent.exists()
+        output_dir.parent.mkdir(parents=True)
     return output_arg, output_dir
 
 
@@ -714,6 +716,7 @@ def test_runner_preserves_output_created_during_inference(
     run_dir = tmp_path / "pilot"
     output_dir = tmp_path / "raced" / "dspark"
     run_dir.mkdir()
+    output_dir.parent.mkdir()
     selected = _write_frozen_run(run_dir)
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
@@ -751,6 +754,20 @@ def test_runner_preserves_output_created_during_inference(
     assert (output_dir / "race-marker.txt").read_text(encoding="utf-8") == "preserve"
     assert not (output_dir / "dspark_predictions.parquet").exists()
     assert engine.shutdown_called
+    assert len(list(output_dir.parent.glob(".dspark.staging-*"))) == 1
+    monkeypatch.setattr(
+        dspark_runner,
+        "_require_supported_gpu",
+        lambda: pytest.fail("a retained stage must be checked before GPU admission"),
+    )
+    with pytest.raises(FileExistsError):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            output_dir=output_dir,
+        )
+    assert (output_dir / "race-marker.txt").read_text(encoding="utf-8") == "preserve"
 
 
 @pytest.mark.parametrize(
@@ -807,6 +824,426 @@ def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
     assert not output_dir.exists()
     assert (run_dir / "frozen_sample.json").is_file()
     assert engine.shutdown_called
+    staging_dirs = list(tmp_path.glob(".dspark.staging-*"))
+    assert len(staging_dirs) == 1
+    assert (staging_dirs[0] / dspark_runner.MANIFEST_NAME).exists() is (
+        failing_name == dspark_runner.MANIFEST_NAME
+    )
+
+
+def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "pilot"
+    output_dir = tmp_path / "dspark"
+    run_dir.mkdir()
+    selected = _write_frozen_run(run_dir)
+    tokenizer = _PromptTokenizer()
+    engine = _FakeEngine()
+    monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
+    monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: engine)
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
+    monkeypatch.setattr(dspark_runner, "_prepare_model_cache", lambda _path: tmp_path / "cache")
+    monkeypatch.setattr(
+        dspark,
+        "EXPECTED_SAMPLE_IDS_SHA256",
+        runner._sha256_json([row["sample_id"] for row in selected]),
+    )
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
+    original_link = publication.os.link
+    failed_once = False
+
+    def fail_manifest_once(source: Path, target: Path) -> None:
+        nonlocal failed_once
+        if (
+            target.parent == output_dir
+            and target.name == dspark_runner.MANIFEST_NAME
+            and not failed_once
+        ):
+            failed_once = True
+            raise OSError(errno.EIO, "transient publication failure")
+        original_link(source, target)
+
+    monkeypatch.setattr(publication.os, "link", fail_manifest_once)
+
+    with pytest.raises(OSError, match="transient publication failure"):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            output_dir=output_dir,
+        )
+
+    staging_dirs = list(tmp_path.glob(".dspark.staging-*"))
+    assert len(staging_dirs) == 1
+    staging = staging_dirs[0]
+    assert all(
+        (staging / name).is_file()
+        for name in (
+            dspark_runner.PREDICTIONS_NAME,
+            dspark_runner.METRICS_NAME,
+            dspark_runner.MANIFEST_NAME,
+        )
+    )
+    assert (output_dir / dspark_runner.PREDICTIONS_NAME).stat().st_ino == (
+        staging / dspark_runner.PREDICTIONS_NAME
+    ).stat().st_ino
+    assert not (output_dir / dspark_runner.MANIFEST_NAME).exists()
+
+    monkeypatch.setattr(
+        dspark_runner,
+        "_require_supported_gpu",
+        lambda: pytest.fail("a complete retained stage must recover before GPU admission"),
+    )
+    monkeypatch.setattr(
+        dspark,
+        "load_tokenizer",
+        lambda: pytest.fail("a complete retained stage must recover before model loading"),
+    )
+
+    result = dspark_runner.run_dspark_pilot(
+        run_dir,
+        computation_commit="a" * 40,
+        validation_commit="b" * 40,
+        output_dir=output_dir,
+    )
+
+    published_manifest = json.loads(
+        (output_dir / dspark_runner.MANIFEST_NAME).read_text(encoding="utf-8")
+    )
+    published_metrics = json.loads(
+        (output_dir / dspark_runner.METRICS_NAME).read_text(encoding="utf-8")
+    )
+    timings = published_manifest["timings_seconds"]
+    assert result == {
+        "run_dir": str(output_dir),
+        "frozen_input_dir": str(run_dir),
+        "sample_count": 100,
+        "candidate_count": 158,
+        "metrics": published_metrics["overall"],
+        "generation_seconds": timings["generation_total"],
+        "model_load_seconds": timings["tokenizer_download_and_load"]
+        + timings["sglang_target_and_draft_load"],
+        "predictions_sha256": runner.sha256_file(output_dir / dspark_runner.PREDICTIONS_NAME),
+        "manifest_sha256": runner.sha256_file(output_dir / dspark_runner.MANIFEST_NAME),
+    }
+    assert (output_dir / dspark_runner.MANIFEST_NAME).is_file()
+    assert result["manifest_sha256"] == runner.sha256_file(output_dir / dspark_runner.MANIFEST_NAME)
+    with pytest.raises(FileExistsError, match="output directory already exists"):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            output_dir=output_dir,
+        )
+
+
+def test_dspark_staged_reader_uses_explicit_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    manifest_path = staging / dspark_runner.MANIFEST_NAME
+    manifest_path.write_text('{"name": "Forêt"}', encoding="utf-8")
+    observed: list[str | None] = []
+    original_read_text = Path.read_text
+
+    def record_encoding(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == manifest_path:
+            observed.append(kwargs.get("encoding"))
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", record_encoding)
+
+    assert dspark_runner._read_staged_dspark_manifest(staging) == {"name": "Forêt"}
+    assert observed == ["utf-8"]
+
+
+@pytest.mark.parametrize(("contents", "expected_error"), [("{", "unreadable"), ("[]", "object")])
+def test_dspark_staged_reader_rejects_invalid_manifests(
+    tmp_path: Path, contents: str, expected_error: str
+) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / dspark_runner.MANIFEST_NAME).write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=expected_error) as error:
+        dspark_runner._read_staged_dspark_manifest(staging)
+
+    if expected_error == "unreadable":
+        assert str(error.value) == (
+            f"retained DSpark staging directory is incomplete or unreadable: {staging}"
+        )
+    else:
+        assert str(error.value) == (
+            f"retained DSpark staging manifest must be a JSON object: {staging}"
+        )
+
+
+def test_dspark_resume_reports_staged_protocol_mismatch_with_its_path(tmp_path: Path) -> None:
+    run_dir = tmp_path / "pilot"
+    destination = tmp_path / "dspark"
+    staging = tmp_path / ".dspark.staging-test"
+    staging.mkdir()
+    (staging / dspark_runner.MANIFEST_NAME).write_text("{}", encoding="utf-8")
+    sample = {"source": {}, "selection": {}, "candidate_labels": {}}
+    candidate_rows = [
+        {
+            "classification_release": "release",
+            "classification_source": "source",
+            "source_sha256": "hash",
+        }
+    ]
+
+    with pytest.raises(ValueError, match="does not match this frozen run") as error:
+        dspark_runner._resume_staged_dspark_run(
+            run_dir,
+            destination,
+            staging,
+            sample,
+            candidate_rows,
+            "a" * 40,
+            "b" * 40,
+            "c" * 64,
+        )
+
+    assert str(error.value) == (
+        f"retained DSpark staging manifest does not match this frozen run: {staging}"
+    )
+
+
+def test_dspark_staged_summary_returns_the_complete_result_contract(tmp_path: Path) -> None:
+    run_dir = tmp_path / "pilot"
+    destination = tmp_path / "dspark"
+    staging = tmp_path / "staging"
+    run_dir.mkdir()
+    destination.mkdir()
+    staging.mkdir()
+    (staging / dspark_runner.METRICS_NAME).write_text(
+        '{"overall": {"accuracy": 0.75}}', encoding="utf-8"
+    )
+    (destination / dspark_runner.PREDICTIONS_NAME).write_bytes(b"predictions")
+    (destination / dspark_runner.MANIFEST_NAME).write_bytes(b"manifest")
+    sample = {"selection": {"sample_size": 4}}
+    candidates = [{"eunis_code": "T11"}, {"eunis_code": "T12"}]
+    manifest = {
+        "timings_seconds": {
+            "generation_total": 5.0,
+            "tokenizer_download_and_load": 2.0,
+            "sglang_target_and_draft_load": 3.0,
+        }
+    }
+
+    result = dspark_runner._staged_dspark_summary(
+        destination, run_dir, staging, sample, candidates, manifest
+    )
+
+    assert result == {
+        "run_dir": str(destination),
+        "frozen_input_dir": str(run_dir),
+        "sample_count": 4,
+        "candidate_count": 2,
+        "metrics": {"accuracy": 0.75},
+        "generation_seconds": 5.0,
+        "model_load_seconds": 5.0,
+        "predictions_sha256": runner.sha256_file(destination / dspark_runner.PREDICTIONS_NAME),
+        "manifest_sha256": runner.sha256_file(destination / dspark_runner.MANIFEST_NAME),
+    }
+
+
+def test_staged_dspark_summary_reads_metrics_as_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "pilot"
+    destination = tmp_path / "dspark"
+    staging = tmp_path / "staging"
+    run_dir.mkdir()
+    destination.mkdir()
+    staging.mkdir()
+    metrics_path = staging / dspark_runner.METRICS_NAME
+    metrics_path.write_text('{"overall": {"name": "Forêt"}}', encoding="utf-8")
+    (destination / dspark_runner.PREDICTIONS_NAME).write_bytes(b"predictions")
+    (destination / dspark_runner.MANIFEST_NAME).write_bytes(b"manifest")
+    sample = {"selection": {"sample_size": 1}}
+    manifest = {
+        "timings_seconds": {
+            "generation_total": 1.0,
+            "tokenizer_download_and_load": 2.0,
+            "sglang_target_and_draft_load": 3.0,
+        }
+    }
+    original_read_text = Path.read_text
+    observed_encodings: list[str | None] = []
+
+    def read_text(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == metrics_path:
+            observed_encodings.append(kwargs.get("encoding"))
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    result = dspark_runner._staged_dspark_summary(
+        destination, run_dir, staging, sample, [], manifest
+    )
+
+    assert result["metrics"] == {"name": "Forêt"}
+    assert observed_encodings == ["utf-8"]
+
+
+def test_dspark_run_option_validator_reports_exact_commit_and_path_errors(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "pilot"
+    output_dir = tmp_path / "dspark"
+    with pytest.raises(ValueError, match="computation_commit") as error:
+        dspark_runner._validate_run_options(run_dir, output_dir, "A" * 40, "b" * 40)
+    assert str(error.value) == (
+        "computation_commit must be a 40-character lowercase Git commit SHA"
+    )
+
+    with pytest.raises(ValueError, match="validation_commit") as error:
+        dspark_runner._validate_run_options(run_dir, output_dir, "a" * 40, "B" * 40)
+    assert str(error.value) == ("validation_commit must be a 40-character lowercase Git commit SHA")
+
+    with pytest.raises(ValueError, match="must be separate from frozen E5 inputs") as error:
+        dspark_runner._validate_run_options(run_dir, run_dir, "a" * 40, "b" * 40)
+    assert str(error.value) == "DSpark output directory must be separate from frozen E5 inputs"
+
+
+def test_dspark_output_availability_error_is_exact(tmp_path: Path) -> None:
+    output_dir = tmp_path / "dspark"
+    output_dir.mkdir()
+
+    with pytest.raises(FileExistsError) as error:
+        dspark_runner._validate_output_is_available(output_dir)
+
+    assert str(error.value) == "DSpark output directory already exists; choose a fresh path"
+
+
+def test_dspark_staged_hash_validation_reports_hash_group_and_path(tmp_path: Path) -> None:
+    run_dir = tmp_path / "pilot"
+    staging = tmp_path / "staging"
+    run_dir.mkdir()
+    staging.mkdir()
+    input_path = run_dir / "frozen_sample.json"
+    candidate_path = run_dir / "candidate_labels.csv"
+    output_path = staging / dspark_runner.PREDICTIONS_NAME
+    input_path.write_bytes(b"frozen")
+    candidate_path.write_bytes(b"candidates")
+    output_path.write_bytes(b"prediction")
+    hashes = {
+        "frozen_sample.json": runner.sha256_file(input_path),
+        "candidate_labels.csv": runner.sha256_file(candidate_path),
+        dspark_runner.PREDICTIONS_NAME: "0" * 64,
+    }
+
+    with pytest.raises(ValueError, match="hash mismatch") as error:
+        dspark_runner._validate_staged_dspark_hashes(run_dir, staging, {"outputs_sha256": hashes})
+
+    assert str(error.value) == (
+        "retained DSpark staging output hash mismatch for "
+        f"{dspark_runner.PREDICTIONS_NAME}: {staging}"
+    )
+
+
+def test_dspark_staged_protocol_rejects_a_frozen_input_mismatch(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    sample = {
+        "source": {"dataset": "overlap"},
+        "selection": {"seed": 42},
+        "candidate_labels": {"file": "candidate_labels.csv"},
+    }
+    candidate_rows = [
+        {
+            "classification_release": "release",
+            "classification_source": "source",
+            "source_sha256": "hash",
+        }
+    ]
+    manifest = {
+        "computation_commit": "a" * 40,
+        "validation_commit": "b" * 40,
+        "source": sample["source"],
+        "sample": sample["selection"],
+        "candidate_labels": runner._candidate_provenance(sample, candidate_rows),
+        "frozen_e5_manifest_sha256": "c" * 64,
+    }
+
+    dspark_runner._validate_staged_dspark_protocol(
+        staging, manifest, sample, candidate_rows, "a" * 40, "b" * 40, "c" * 64
+    )
+
+    with pytest.raises(ValueError, match="does not match this frozen run") as error:
+        dspark_runner._validate_staged_dspark_protocol(
+            staging,
+            {**manifest, "frozen_e5_manifest_sha256": "d" * 64},
+            sample,
+            candidate_rows,
+            "a" * 40,
+            "b" * 40,
+            "c" * 64,
+        )
+
+    assert str(error.value) == (
+        f"retained DSpark staging manifest does not match this frozen run: {staging}"
+    )
+
+
+def test_dspark_staged_protocol_error_includes_stage_context(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    sample = {"source": {}, "selection": {}, "candidate_labels": {}}
+    candidate_rows = [
+        {
+            "classification_release": "release",
+            "classification_source": "source",
+            "source_sha256": "hash",
+        }
+    ]
+
+    with pytest.raises(ValueError, match="does not match this frozen run") as error:
+        dspark_runner._validate_staged_dspark_protocol(
+            staging, {}, sample, candidate_rows, "a" * 40, "b" * 40, "c" * 64
+        )
+
+    assert str(error.value) == (
+        f"retained DSpark staging manifest does not match this frozen run: {staging}"
+    )
+
+
+def test_runner_rejects_nfs_style_link_failure_before_gpu_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "pilot"
+    output_dir = tmp_path / "dspark"
+    run_dir.mkdir()
+    selected = _write_frozen_run(run_dir)
+    monkeypatch.setattr(
+        dspark,
+        "EXPECTED_SAMPLE_IDS_SHA256",
+        runner._sha256_json([row["sample_id"] for row in selected]),
+    )
+
+    def unsupported_link(_source: Path, _target: Path) -> None:
+        raise OSError(errno.EINVAL, "NFS server rejects this link operation")
+
+    monkeypatch.setattr(publication.os, "link", unsupported_link)
+    monkeypatch.setattr(
+        dspark_runner,
+        "_require_supported_gpu",
+        lambda: pytest.fail("publication capability must be checked before GPU admission"),
+    )
+
+    with pytest.raises(OSError, match="output filesystem must support exclusive hard links"):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            output_dir=output_dir,
+        )
+
+    assert not output_dir.exists()
 
 
 def test_prediction_row_preserves_empty_text_and_zero_completion_tokens() -> None:

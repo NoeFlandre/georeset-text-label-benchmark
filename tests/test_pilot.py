@@ -1568,6 +1568,460 @@ def test_runner_does_not_leave_partial_outputs_when_publication_write_fails(
 
     assert not any((run_dir / name).exists() for name in runner.OUTPUT_FILES)
     assert {name: (run_dir / name).read_bytes() for name in frozen_before} == frozen_before
+    staging_dirs = list(run_dir.glob(".pilot-output-*"))
+    assert len(staging_dirs) == 1
+    assert (staging_dirs[0] / "manifest.json").exists() is (failing_name == "manifest.json")
+
+
+def test_runner_resumes_a_completed_staged_publication_without_reloading_the_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from georeset_text_label_benchmark.pilot import publication
+
+    candidates = _candidate_file()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _frozen_sample(run_dir, candidates)
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    for name in MODEL_FILES:
+        (model_dir / name).write_bytes(name.encode("utf-8"))
+    monkeypatch.setattr(runner, "_download_model", lambda _cache: model_dir)
+    monkeypatch.setattr(
+        runner, "_load_model", lambda _path: (_RecordingTokenizer(), _RecordingModel())
+    )
+    monkeypatch.setattr(runner, "perf_counter", iter(range(5, 25)).__next__)
+    original_link = publication.os.link
+    failed_once = False
+
+    def fail_metrics_once(source: Path, target: Path) -> None:
+        nonlocal failed_once
+        if target.parent == run_dir and target.name == "metrics.json" and not failed_once:
+            failed_once = True
+            raise OSError("transient publication failure")
+        original_link(source, target)
+
+    monkeypatch.setattr(publication.os, "link", fail_metrics_once)
+
+    with pytest.raises(OSError, match="transient publication failure"):
+        runner.run_pilot(
+            run_dir,
+            tmp_path / "model-cache",
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            batch_size=2,
+            max_length=64,
+        )
+
+    staging_dirs = list(run_dir.glob(".pilot-output-*"))
+    assert len(staging_dirs) == 1
+    staging = staging_dirs[0]
+    assert all((staging / name).is_file() for name in runner.OUTPUT_FILES)
+    assert (run_dir / "predictions.parquet").stat().st_ino == (
+        staging / "predictions.parquet"
+    ).stat().st_ino
+    assert not (run_dir / "manifest.json").exists()
+
+    monkeypatch.setattr(
+        runner,
+        "_download_model",
+        lambda _cache: pytest.fail("a valid staged prediction run must resume before model load"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_load_model",
+        lambda _path: pytest.fail("a valid staged prediction run must resume before model load"),
+    )
+
+    result = runner.run_pilot(
+        run_dir,
+        tmp_path / "model-cache",
+        computation_commit="a" * 40,
+        validation_commit="b" * 40,
+        batch_size=2,
+        max_length=64,
+    )
+
+    published_manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    published_metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    timings = published_manifest["timings_seconds"]
+    assert result == {
+        "run_dir": str(run_dir),
+        "sample_count": 3,
+        "candidate_count": 158,
+        "metrics": published_metrics["overall"],
+        "cpu_inference_seconds": timings["total_cpu_inference"],
+        "model_download_seconds": timings["model_download"],
+        "model_load_seconds": timings["model_load_setup"],
+        "predictions_sha256": runner.sha256_file(run_dir / "predictions.parquet"),
+        "manifest_sha256": runner.sha256_file(run_dir / "manifest.json"),
+    }
+    assert (run_dir / "manifest.json").is_file()
+    assert result["manifest_sha256"] == runner.sha256_file(run_dir / "manifest.json")
+    with pytest.raises(FileExistsError, match="outputs already exist"):
+        runner.run_pilot(
+            run_dir,
+            tmp_path / "model-cache",
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            batch_size=2,
+            max_length=64,
+        )
+
+
+def test_runner_rejects_a_staged_protocol_mismatch_with_its_path(tmp_path: Path) -> None:
+    staging = tmp_path / ".pilot-output-staging"
+    staging.mkdir()
+    (staging / "manifest.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match this frozen run and settings") as error:
+        runner._resume_staged_run(
+            tmp_path,
+            staging,
+            {"source": {}, "selection": {}, "candidate_labels": {}},
+            [],
+            "a" * 40,
+            "b" * 40,
+            1,
+            1,
+        )
+
+    assert str(error.value) == (
+        f"retained E5 staging manifest does not match this frozen run and settings: {staging}"
+    )
+
+
+@pytest.mark.parametrize("contents", ["{", "[]"])
+def test_resume_staged_run_names_the_e5_adapter_in_manifest_errors(
+    tmp_path: Path, contents: str
+) -> None:
+    staging = tmp_path / ".pilot-output-staging"
+    staging.mkdir()
+    (staging / "manifest.json").write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="retained E5 staging") as error:
+        runner._resume_staged_run(
+            tmp_path,
+            staging,
+            {"source": {}, "selection": {}, "candidate_labels": {}},
+            [],
+            "a" * 40,
+            "b" * 40,
+            1,
+            1,
+        )
+
+    expected = (
+        f"retained E5 staging directory is incomplete or unreadable: {staging}"
+        if contents == "{"
+        else f"retained E5 staging manifest must be a JSON object: {staging}"
+    )
+    assert str(error.value) == expected
+
+
+def test_runner_staged_manifest_reader_uses_explicit_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    manifest_path = staging / "manifest.json"
+    manifest_path.write_text('{"name": "Forêt"}', encoding="utf-8")
+    observed: list[str | None] = []
+    original_read_text = Path.read_text
+
+    def record_encoding(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == manifest_path:
+            observed.append(kwargs.get("encoding"))
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", record_encoding)
+
+    assert runner._read_staged_manifest(staging, "E5") == {"name": "Forêt"}
+    assert observed == ["utf-8"]
+
+
+def test_runner_staged_manifest_reader_reports_exact_invalid_json_error(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "manifest.json").write_text("{", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="incomplete or unreadable") as error:
+        runner._read_staged_manifest(staging, "E5")
+
+    assert str(error.value) == (
+        f"retained E5 staging directory is incomplete or unreadable: {staging}"
+    )
+
+
+def test_runner_staged_manifest_reader_rejects_non_object_json(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "manifest.json").write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a JSON object") as error:
+        runner._read_staged_manifest(staging, "E5")
+
+    assert str(error.value) == f"retained E5 staging manifest must be a JSON object: {staging}"
+
+
+def test_runner_staged_summary_returns_the_complete_result_contract(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    staging = tmp_path / "staging"
+    run_dir.mkdir()
+    staging.mkdir()
+    (staging / "metrics.json").write_text('{"overall": {"accuracy": 0.5}}', encoding="utf-8")
+    (run_dir / "predictions.parquet").write_bytes(b"predictions")
+    (run_dir / "manifest.json").write_bytes(b"manifest")
+    sample = {"selection": {"sample_size": 2}}
+    candidates = [{"eunis_code": "T11"}, {"eunis_code": "T12"}]
+    manifest = {
+        "timings_seconds": {
+            "total_cpu_inference": 3.5,
+            "model_download": 1.25,
+            "model_load_setup": 2.0,
+        }
+    }
+
+    result = runner._staged_run_summary(run_dir, staging, sample, candidates, manifest)
+
+    assert result == {
+        "run_dir": str(run_dir),
+        "sample_count": 2,
+        "candidate_count": 2,
+        "metrics": {"accuracy": 0.5},
+        "cpu_inference_seconds": 3.5,
+        "model_download_seconds": 1.25,
+        "model_load_seconds": 2.0,
+        "predictions_sha256": runner.sha256_file(run_dir / "predictions.parquet"),
+        "manifest_sha256": runner.sha256_file(run_dir / "manifest.json"),
+    }
+
+
+def test_staged_e5_summary_reads_metrics_as_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    staging = tmp_path / "staging"
+    run_dir.mkdir()
+    staging.mkdir()
+    metrics_path = staging / "metrics.json"
+    metrics_path.write_text('{"overall": {"name": "Forêt"}}', encoding="utf-8")
+    (run_dir / "predictions.parquet").write_bytes(b"predictions")
+    (run_dir / "manifest.json").write_bytes(b"manifest")
+    sample = {"selection": {"sample_size": 1}}
+    manifest = {
+        "timings_seconds": {
+            "total_cpu_inference": 1.0,
+            "model_download": 2.0,
+            "model_load_setup": 3.0,
+        }
+    }
+    original_read_text = Path.read_text
+    observed_encodings: list[str | None] = []
+
+    def read_text(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == metrics_path:
+            observed_encodings.append(kwargs.get("encoding"))
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    result = runner._staged_run_summary(run_dir, staging, sample, [], manifest)
+
+    assert result["metrics"] == {"name": "Forêt"}
+    assert observed_encodings == ["utf-8"]
+
+
+def test_staged_e5_protocol_validates_identity_and_settings_exactly(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    sample = {
+        "source": {"dataset": "overlap"},
+        "selection": {"seed": 42},
+        "candidate_labels": {"file": "candidate_labels.csv"},
+    }
+    candidates = [
+        {
+            "classification_release": "release",
+            "classification_source": "source",
+            "source_sha256": "hash",
+        }
+    ]
+    manifest = {
+        "computation_commit": "a" * 40,
+        "validation_commit": "b" * 40,
+        "source": sample["source"],
+        "sample": sample["selection"],
+        "candidate_labels": runner._candidate_provenance(sample, candidates),
+        "settings": {"batch_size": 1, "maximum_tokens": 64},
+    }
+
+    runner._validate_staged_run_protocol(
+        staging, manifest, sample, candidates, "a" * 40, "b" * 40, 1, 64
+    )
+
+    for invalid_manifest in (
+        {**manifest, "settings": {"batch_size": 2, "maximum_tokens": 64}},
+        {**manifest, "computation_commit": "c" * 40},
+        {**manifest, "settings": []},
+    ):
+        with pytest.raises(
+            ValueError, match="does not match this frozen run and settings"
+        ) as error:
+            runner._validate_staged_run_protocol(
+                staging, invalid_manifest, sample, candidates, "a" * 40, "b" * 40, 1, 64
+            )
+        assert str(error.value) == (
+            f"retained E5 staging manifest does not match this frozen run and settings: {staging}"
+        )
+
+
+@pytest.mark.parametrize(("batch_size", "max_length"), [(0, 1), (1, 0)])
+def test_run_option_validator_checks_each_positive_boundary(
+    batch_size: int, max_length: int
+) -> None:
+    with pytest.raises(ValueError, match="batch size and max length must be positive") as error:
+        runner._validate_run_options("a" * 40, "b" * 40, batch_size, max_length)
+
+    assert str(error.value) == "batch size and max length must be positive"
+
+
+def test_run_option_validator_accepts_one_as_a_positive_boundary() -> None:
+    runner._validate_run_options("a" * 40, "b" * 40, 1, 1)
+
+
+def test_run_option_validator_reports_exact_commit_field_names() -> None:
+    with pytest.raises(ValueError, match="computation_commit") as computation_error:
+        runner._validate_run_options("A" * 40, "b" * 40, 1, 1)
+    assert str(computation_error.value) == (
+        "computation_commit must be a 40-character lowercase Git commit SHA"
+    )
+
+    with pytest.raises(ValueError, match="validation_commit") as validation_error:
+        runner._validate_run_options("a" * 40, "B" * 40, 1, 1)
+    assert str(validation_error.value) == (
+        "validation_commit must be a 40-character lowercase Git commit SHA"
+    )
+
+
+def test_staged_hash_validation_reports_input_and_output_context(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    input_path = tmp_path / "frozen_sample.json"
+    output_path = staging / "predictions.parquet"
+    input_path.write_bytes(b"frozen")
+    output_path.write_bytes(b"prediction")
+    input_paths = {"frozen_sample.json": input_path}
+    output_paths = {"predictions.parquet": output_path}
+
+    for hashes, expected in (
+        (
+            {
+                "frozen_sample.json": "0" * 64,
+                "predictions.parquet": runner.sha256_file(output_path),
+            },
+            f"retained E5 staging input hash mismatch for frozen_sample.json: {staging}",
+        ),
+        (
+            {
+                "frozen_sample.json": runner.sha256_file(input_path),
+                "predictions.parquet": "0" * 64,
+            },
+            f"retained E5 staging output hash mismatch for predictions.parquet: {staging}",
+        ),
+    ):
+        with pytest.raises(ValueError, match="retained E5 staging") as error:
+            runner._validate_staged_hashes(
+                staging,
+                {"outputs_sha256": hashes},
+                input_paths,
+                output_paths,
+                "E5",
+            )
+        assert str(error.value) == expected
+
+
+def test_staged_e5_hash_validator_binds_frozen_inputs_and_staged_outputs(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    staging = tmp_path / "staging"
+    run_dir.mkdir()
+    staging.mkdir()
+    frozen_sample = run_dir / "frozen_sample.json"
+    candidate_labels = run_dir / "candidate_labels.csv"
+    predictions = staging / "predictions.parquet"
+    metrics = staging / "metrics.json"
+    for path, content in (
+        (frozen_sample, b"frozen sample"),
+        (candidate_labels, b"candidate labels"),
+        (predictions, b"predictions"),
+        (metrics, b"metrics"),
+    ):
+        path.write_bytes(content)
+    hashes = {
+        path.name: runner.sha256_file(path)
+        for path in (frozen_sample, candidate_labels, predictions, metrics)
+    }
+    manifest = {"outputs_sha256": hashes}
+
+    with pytest.raises(ValueError, match="retained E5 staging input hash mismatch") as error:
+        runner._validate_staged_run_hashes(run_dir, staging, {"outputs_sha256": {}})
+    assert str(error.value) == (
+        f"retained E5 staging input hash mismatch for frozen_sample.json: {staging}"
+    )
+
+    runner._validate_staged_run_hashes(run_dir, staging, manifest)
+
+
+def test_staged_hash_validation_requires_a_hash_mapping(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+
+    with pytest.raises(ValueError, match="has no output hashes") as error:
+        runner._validate_staged_hashes(staging, {}, {}, {}, "E5")
+
+    assert str(error.value) == f"retained E5 staging manifest has no output hashes: {staging}"
+
+
+def test_no_existing_outputs_error_is_exact(tmp_path: Path) -> None:
+    (tmp_path / "metrics.json").touch()
+
+    with pytest.raises(FileExistsError) as error:
+        runner._validate_no_existing_outputs(tmp_path)
+
+    assert str(error.value) == "pilot prediction outputs already exist"
+
+
+def test_runner_checks_output_mount_before_downloading_the_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from georeset_text_label_benchmark.pilot import publication
+
+    candidates = _candidate_file()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _frozen_sample(run_dir, candidates)
+
+    def unsupported_link(_source: Path, _target: Path) -> None:
+        raise OSError(22, "this filesystem rejects exclusive hard links")
+
+    monkeypatch.setattr(publication.os, "link", unsupported_link)
+    monkeypatch.setattr(
+        runner,
+        "_download_model",
+        lambda _cache: pytest.fail("unsupported publication must be rejected before download"),
+    )
+
+    with pytest.raises(OSError, match="output filesystem must support exclusive hard links"):
+        runner.run_pilot(
+            run_dir,
+            tmp_path / "model-cache",
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            batch_size=2,
+            max_length=64,
+        )
+
+    assert not any((run_dir / name).exists() for name in runner.OUTPUT_FILES)
 
 
 def test_runner_preserves_a_file_created_after_output_preflight(
@@ -1609,6 +2063,18 @@ def test_runner_preserves_a_file_created_after_output_preflight(
     assert (run_dir / "metrics.json").read_bytes() == b"competing writer"
     assert (run_dir / "predictions.parquet").is_file()
     assert not (run_dir / "manifest.json").exists()
+    assert len(list(run_dir.glob(".pilot-output-*"))) == 1
+
+    with pytest.raises(FileExistsError):
+        runner.run_pilot(
+            run_dir,
+            tmp_path / "model-cache",
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            batch_size=2,
+            max_length=64,
+        )
+    assert (run_dir / "metrics.json").read_bytes() == b"competing writer"
 
 
 def test_runner_preflight_rejects_bad_commits_settings_and_existing_outputs(

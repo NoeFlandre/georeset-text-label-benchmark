@@ -36,7 +36,12 @@ from georeset_text_label_benchmark.pilot.protocol import (
     SAMPLE_SEED,
     SAMPLE_SIZE,
 )
-from georeset_text_label_benchmark.pilot.publication import publish_files, staged_directory
+from georeset_text_label_benchmark.pilot.publication import (
+    ensure_publication_supported,
+    find_staged_directory,
+    publish_files,
+    staged_directory,
+)
 from georeset_text_label_benchmark.pilot.sampling import (
     build_candidate_labels,
     select_distinct_sample,
@@ -81,6 +86,32 @@ def sha256_file(path: Path) -> str:
     """Return a lowercase SHA-256 digest without loading the whole file."""
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _validate_staged_hashes(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    input_paths: Mapping[str, Path],
+    output_paths: Mapping[str, Path],
+    label: str,
+) -> None:
+    hashes = manifest.get("outputs_sha256")
+    if not isinstance(hashes, Mapping):
+        raise ValueError(f"retained {label} staging manifest has no output hashes: {staging}")
+    _validate_staged_hash_group(staging, hashes, input_paths, label, "input")
+    _validate_staged_hash_group(staging, hashes, output_paths, label, "output")
+
+
+def _validate_staged_hash_group(
+    staging: Path,
+    hashes: Mapping[str, Any],
+    paths: Mapping[str, Path],
+    label: str,
+    kind: str,
+) -> None:
+    for name, path in paths.items():
+        if hashes.get(name) != sha256_file(path):
+            raise ValueError(f"retained {label} staging {kind} hash mismatch for {name}: {staging}")
 
 
 def _sha256_json(value: Any) -> str:
@@ -558,9 +589,22 @@ def run_pilot(
     max_length: int = MAX_LENGTH,
 ) -> dict[str, Any]:
     """Run inference only after the source rows and candidate labels are frozen."""
-    _validate_run_inputs(run_dir, computation_commit, validation_commit, batch_size, max_length)
+    _validate_run_options(computation_commit, validation_commit, batch_size, max_length)
     sample, rows = _read_frozen_sample(run_dir)
     candidates = _candidate_rows(run_dir, sample)
+    staging = _find_staged_run(run_dir)
+    if staging is not None:
+        return _resume_staged_run(
+            run_dir,
+            staging,
+            sample,
+            candidates,
+            computation_commit,
+            validation_commit,
+            batch_size,
+            max_length,
+        )
+    ensure_publication_supported(run_dir)
     download_start = perf_counter()
     model_dir = _download_model(model_cache_dir)
     model_download_seconds = perf_counter() - download_start
@@ -600,7 +644,7 @@ def run_pilot(
     cpu_inference_seconds = perf_counter() - inference_start
     prediction_rows = _prediction_rows(rows, candidates, rankings)
     metrics = _metrics_payload(prediction_rows, candidates)
-    with staged_directory(run_dir, prefix=".pilot-output-") as staging:
+    with staged_directory(run_dir, prefix=".pilot-output-", preserve_on_error=True) as staging:
         staged_prediction, staged_metrics = _write_outputs(staging, prediction_rows, metrics)
         manifest = _build_manifest(
             run_dir,
@@ -644,12 +688,132 @@ def _validate_run_inputs(
     batch_size: int,
     max_length: int,
 ) -> None:
+    _validate_run_options(computation_commit, validation_commit, batch_size, max_length)
+    _validate_no_existing_outputs(run_dir)
+
+
+def _validate_run_options(
+    computation_commit: str,
+    validation_commit: str,
+    batch_size: int,
+    max_length: int,
+) -> None:
     _validate_commit(computation_commit, "computation_commit")
     _validate_commit(validation_commit, "validation_commit")
     if batch_size < 1 or max_length < 1:
         raise ValueError("batch size and max length must be positive")
+
+
+def _validate_no_existing_outputs(run_dir: Path) -> None:
     if any((run_dir / name).exists() for name in OUTPUT_FILES):
         raise FileExistsError("pilot prediction outputs already exist")
+
+
+def _find_staged_run(run_dir: Path) -> Path | None:
+    staging = find_staged_directory(run_dir, prefix=".pilot-output-")
+    if staging is None or (run_dir / "manifest.json").exists():
+        _validate_no_existing_outputs(run_dir)
+    return staging
+
+
+def _resume_staged_run(
+    run_dir: Path,
+    staging: Path,
+    sample: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+    computation_commit: str,
+    validation_commit: str,
+    batch_size: int,
+    max_length: int,
+) -> dict[str, Any]:
+    manifest = _read_staged_manifest(staging, "E5")
+    _validate_staged_run_protocol(
+        staging,
+        manifest,
+        sample,
+        candidates,
+        computation_commit,
+        validation_commit,
+        batch_size,
+        max_length,
+    )
+    _validate_staged_run_hashes(run_dir, staging, manifest)
+    ensure_publication_supported(run_dir)
+    publish_files(staging, run_dir, OUTPUT_FILES)
+    return _staged_run_summary(run_dir, staging, sample, candidates, manifest)
+
+
+def _read_staged_manifest(staging: Path, model_name: str) -> Mapping[str, Any]:
+    path = staging / "manifest.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"retained {model_name} staging directory is incomplete or unreadable: {staging}"
+        ) from error
+    if not isinstance(manifest, Mapping):
+        raise ValueError(f"retained {model_name} staging manifest must be a JSON object: {staging}")
+    return manifest
+
+
+def _validate_staged_run_protocol(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    sample: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+    computation_commit: str,
+    validation_commit: str,
+    batch_size: int,
+    max_length: int,
+) -> None:
+    settings = manifest.get("settings")
+    expected = {
+        "computation_commit": computation_commit,
+        "validation_commit": validation_commit,
+        "source": sample["source"],
+        "sample": sample["selection"],
+        "candidate_labels": _candidate_provenance(sample, candidates),
+    }
+    settings_valid = isinstance(settings, Mapping) and {
+        "batch_size": settings.get("batch_size"),
+        "maximum_tokens": settings.get("maximum_tokens"),
+    } == {"batch_size": batch_size, "maximum_tokens": max_length}
+    if {key: manifest.get(key) for key in expected} != expected or not settings_valid:
+        raise ValueError(
+            f"retained E5 staging manifest does not match this frozen run and settings: {staging}"
+        )
+
+
+def _validate_staged_run_hashes(run_dir: Path, staging: Path, manifest: Mapping[str, Any]) -> None:
+    _validate_staged_hashes(
+        staging,
+        manifest,
+        {name: run_dir / name for name in ("frozen_sample.json", "candidate_labels.csv")},
+        {name: staging / name for name in ("predictions.parquet", "metrics.json")},
+        "E5",
+    )
+
+
+def _staged_run_summary(
+    run_dir: Path,
+    staging: Path,
+    sample: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    metrics = json.loads((staging / "metrics.json").read_text(encoding="utf-8"))
+    timings = manifest["timings_seconds"]
+    return {
+        "run_dir": str(run_dir),
+        "sample_count": sample["selection"]["sample_size"],
+        "candidate_count": len(candidates),
+        "metrics": metrics["overall"],
+        "cpu_inference_seconds": timings["total_cpu_inference"],
+        "model_download_seconds": timings["model_download"],
+        "model_load_seconds": timings["model_load_setup"],
+        "predictions_sha256": sha256_file(run_dir / "predictions.parquet"),
+        "manifest_sha256": sha256_file(run_dir / "manifest.json"),
+    }
 
 
 def _build_manifest(
