@@ -342,6 +342,7 @@ def test_mutation_fingerprint_binds_the_reviewed_patch_and_hunk_location() -> No
 def test_mutation_fingerprint_rejects_invalid_or_incomplete_diffs() -> None:
     name = "example.x_gate__mutmut_1"
     malformed = [
+        ("", "unexpected header"),
         (
             f"# {name}: killed\n--- src/example.py\n+++ src/example.py\n"
             "@@ -14,3 +14,3 @@\n-return False\n+return True\n",
@@ -355,6 +356,11 @@ def test_mutation_fingerprint_rejects_invalid_or_incomplete_diffs() -> None:
         (
             f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
             "@@ -14,3 +14,3 @@\n unchanged line\n",
+            "incomplete diff",
+        ),
+        (
+            f"# {name}: survived\n+++ src/example.py\n"
+            "@@ -14,3 +14,3 @@\n-return False\n+return True\n",
             "incomplete diff",
         ),
     ]
@@ -397,6 +403,20 @@ def test_mutation_fingerprint_never_waives_invalid_statuses(
     )
 
     assert _failures({name: status}, {name: fingerprint}) == [f"{name}: {status}"]
+
+
+def test_reviewed_survivor_names_filters_status_and_unreviewed_mutants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        mutation,
+        "REVIEWED_EXEMPTIONS",
+        {"reviewed": mutation.MutationExemption("a" * 64, "fixture")},
+    )
+
+    assert mutation._reviewed_survivor_names(
+        {"reviewed": "survived", "killed": "killed", "unreviewed": "survived"}
+    ) == ["reviewed"]
 
 
 def test_mutation_gate_fails_when_mutmut_command_fails(

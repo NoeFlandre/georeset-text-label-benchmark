@@ -317,8 +317,7 @@ def _parse_results(output: str) -> dict[str, str]:
 def _mutation_fingerprint(output: str, mutant_name: str) -> str:
     """Hash the reviewed unified patch, including its file and hunk locations."""
     lines = output.splitlines()
-    if not lines or lines[0] != f"# {mutant_name}: survived":
-        raise ValueError(f"mutmut show returned an unexpected header for {mutant_name}")
+    _validate_mutation_header(lines, mutant_name)
 
     canonical = lines[1:]
     if any(not _valid_mutation_diff_line(line) for line in canonical):
@@ -328,17 +327,28 @@ def _mutation_fingerprint(output: str, mutant_name: str) -> str:
     return hashlib.sha256("\n".join(canonical).encode("utf-8")).hexdigest()
 
 
+def _validate_mutation_header(lines: list[str], mutant_name: str) -> None:
+    if not lines or lines[0] != f"# {mutant_name}: survived":
+        raise ValueError(f"mutmut show returned an unexpected header for {mutant_name}")
+
+
 def _valid_mutation_diff_line(line: str) -> bool:
     return line.startswith(("@@", "--- ", "+++ ", "+", "-", " "))
 
 
 def _has_complete_mutation_diff(lines: list[str]) -> bool:
-    old_path = any(line.startswith("--- ") for line in lines)
-    new_path = any(line.startswith("+++ ") for line in lines)
-    changed_content = any(
+    return _has_diff_paths(lines) and _has_changed_diff_content(lines)
+
+
+def _has_diff_paths(lines: list[str]) -> bool:
+    headers = {line[:4] for line in lines if line.startswith(("--- ", "+++ "))}
+    return headers == {"--- ", "+++ "}
+
+
+def _has_changed_diff_content(lines: list[str]) -> bool:
+    return any(
         line.startswith(("+", "-")) and not line.startswith(("--- ", "+++ ")) for line in lines
     )
-    return old_path and new_path and changed_content
 
 
 def _matches_reviewed_fingerprint(name: str, fingerprint: str | None) -> bool:
@@ -388,20 +398,25 @@ def _read_results() -> dict[str, str] | None:
     return results
 
 
+def _reviewed_survivor_names(results: Mapping[str, str]) -> list[str]:
+    return [
+        name
+        for name, status in sorted(results.items())
+        if status == "survived" and name in REVIEWED_EXEMPTIONS
+    ]
+
+
+def _read_mutation_fingerprint(name: str) -> str:
+    completed = subprocess.run(
+        ["mutmut", "show", name], capture_output=True, text=True, check=False
+    )
+    if completed.returncode:
+        raise ValueError(f"mutmut show failed for {name}: {completed.stderr or completed.stdout}")
+    return _mutation_fingerprint(completed.stdout, name)
+
+
 def _read_mutation_fingerprints(results: Mapping[str, str]) -> dict[str, str]:
-    fingerprints = {}
-    for name, status in sorted(results.items()):
-        if status != "survived" or name not in REVIEWED_EXEMPTIONS:
-            continue
-        completed = subprocess.run(
-            ["mutmut", "show", name], capture_output=True, text=True, check=False
-        )
-        if completed.returncode:
-            raise ValueError(
-                f"mutmut show failed for {name}: {completed.stderr or completed.stdout}"
-            )
-        fingerprints[name] = _mutation_fingerprint(completed.stdout, name)
-    return fingerprints
+    return {name: _read_mutation_fingerprint(name) for name in _reviewed_survivor_names(results)}
 
 
 def _report_results(results: dict[str, str], fingerprints: Mapping[str, str]) -> int:
