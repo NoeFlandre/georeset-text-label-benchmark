@@ -114,6 +114,10 @@ def _mock_cuda_preflight(_gpu: dict[str, Any]) -> dict[str, Any]:
     return {"status": "passed", "torch_cuda": "13.0"}
 
 
+def _test_prompt_for_sentence(sentence: str, _candidates: Any) -> str:
+    return f"prompt:{sentence}"
+
+
 def _expected_dspark_class_metrics(
     candidate_codes: list[str], names: dict[str, str]
 ) -> list[dict[str, Any]]:
@@ -941,6 +945,7 @@ def test_runner_preserves_output_created_during_inference(
     run_dir.mkdir()
     output_dir.parent.mkdir()
     selected = _write_frozen_run(run_dir)
+    monkeypatch.setattr(dspark, "build_prompt", _test_prompt_for_sentence)
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
@@ -1004,6 +1009,7 @@ def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
     output_dir = tmp_path / "dspark"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    monkeypatch.setattr(dspark, "build_prompt", _test_prompt_for_sentence)
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
@@ -1061,6 +1067,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
     output_dir = tmp_path / "dspark"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    monkeypatch.setattr(dspark, "build_prompt", _test_prompt_for_sentence)
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
@@ -1748,6 +1755,7 @@ def test_runner_rejects_context_overflow_before_constructing_engine(
     run_dir = tmp_path / "pilot"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    monkeypatch.setattr(dspark, "build_prompt", _test_prompt_for_sentence)
     monkeypatch.setattr(
         dspark,
         "EXPECTED_SAMPLE_IDS_SHA256",
