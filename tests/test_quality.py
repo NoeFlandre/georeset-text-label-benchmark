@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from georeset_text_label_benchmark.quality import mutation
 from georeset_text_label_benchmark.quality.crap import (
     _complexity,
     _coverage_file,
@@ -249,8 +250,8 @@ def test_mutation_parser_rejects_empty_or_duplicate_results(output: str, error: 
 
 
 def test_mutation_gate_rejects_every_status_other_than_killed() -> None:
-    assert _failures({"killed": "killed"}) == []
-    assert _failures({"z": "timeout", "a": "survived", "b": "no tests"}) == [
+    assert _failures({"killed": "killed"}, {}) == []
+    assert _failures({"z": "timeout", "a": "survived", "b": "no tests"}, {}) == [
         "a: survived",
         "b: no tests",
         "z: timeout",
@@ -259,9 +260,12 @@ def test_mutation_gate_rejects_every_status_other_than_killed() -> None:
 
 @pytest.mark.parametrize("name", list(EQUIVALENT_MUTANTS))
 def test_mutation_gate_waives_only_documented_equivalent_survivors(name: str) -> None:
-    assert EQUIVALENT_MUTANTS[name]
-    assert _failures({name: "survived"}) == []
-    assert _failures({name: "no tests"}) == [f"{name}: no tests"]
+    exemption = EQUIVALENT_MUTANTS[name]
+    assert exemption.rationale
+    assert len(exemption.fingerprint) == 64
+    assert _failures({name: "survived"}, {name: exemption.fingerprint}) == []
+    assert _failures({name: "survived"}, {name: "0" * 64}) == [f"{name}: survived"]
+    assert _failures({name: "no tests"}, {name: exemption.fingerprint}) == [f"{name}: no tests"]
 
 
 def test_mutation_summary_distinguishes_killed_and_exact_equivalent_results() -> None:
@@ -270,22 +274,129 @@ def test_mutation_summary_distinguishes_killed_and_exact_equivalent_results() ->
     results = {"killed": "killed", first: "survived", second: "killed"}
 
     assert _killed_count(results) == 2
-    assert _equivalent_survivors(results) == [first]
+    assert _equivalent_survivors(results, {first: EQUIVALENT_MUTANTS[first].fingerprint}) == [first]
 
 
 def test_mutation_gate_reports_exact_equivalence_evidence(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     name = next(iter(EQUIVALENT_MUTANTS))
+    exemption = EQUIVALENT_MUTANTS[name]
 
-    assert _report_results({name: "survived"}) == 0
+    assert _report_results({name: "survived"}, {name: exemption.fingerprint}) == 0
     assert capsys.readouterr().out == (
         "Mutation results: 0/1 killed\n"
-        f"Equivalent mutant documented: {name}: {EQUIVALENT_MUTANTS[name]}\n"
+        f"Equivalent mutant documented: {name}: {exemption.rationale} "
+        f"(diff sha256: {exemption.fingerprint})\n"
     )
 
-    assert _report_results({name: "killed"}) == 0
+    assert _report_results({name: "killed"}, {}) == 0
     assert capsys.readouterr().out == "Mutation results: 1/1 killed\n"
+
+
+def test_mutation_gate_reads_fingerprint_for_surviving_reviewed_patch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = "example.x_gate__mutmut_1"
+    diff = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -14,3 +14,3 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
+    )
+    fingerprint = mutation._mutation_fingerprint(diff, name)
+    monkeypatch.setattr(
+        mutation,
+        "REVIEWED_EXEMPTIONS",
+        {name: mutation.MutationExemption(fingerprint, "fixture reviewed as equivalent")},
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        calls.append(args)
+        output = f"{name}: survived\n" if args[1] == "results" else diff
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(mutation.subprocess, "run", fake_run)
+
+    assert check_mutations() == 0
+    assert calls == [["mutmut", "results", "--all=true"], ["mutmut", "show", name]]
+    assert capsys.readouterr().out.endswith(f"(diff sha256: {fingerprint})\n")
+
+
+def test_mutation_fingerprint_binds_the_reviewed_patch_and_hunk_location() -> None:
+    name = "example.x_gate__mutmut_1"
+    reviewed = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -14,3 +14,3 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
+    )
+    shifted = reviewed.replace("@@ -14,3 +14,3 @@", "@@ -114,3 +114,3 @@")
+    changed = reviewed.replace("+    return bool(value)", "+    return value")
+
+    assert mutation._mutation_fingerprint(reviewed, name) != mutation._mutation_fingerprint(
+        shifted, name
+    )
+    assert mutation._mutation_fingerprint(reviewed, name) != mutation._mutation_fingerprint(
+        changed, name
+    )
+
+
+def test_mutation_fingerprint_rejects_invalid_or_incomplete_diffs() -> None:
+    name = "example.x_gate__mutmut_1"
+    malformed = [
+        (
+            f"# {name}: killed\n--- src/example.py\n+++ src/example.py\n"
+            "@@ -14,3 +14,3 @@\n-return False\n+return True\n",
+            "unexpected header",
+        ),
+        (
+            f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+            "@@ -14,3 +14,3 @@\n\\ No newline at end of file\n",
+            "invalid diff",
+        ),
+        (
+            f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+            "@@ -14,3 +14,3 @@\n unchanged line\n",
+            "incomplete diff",
+        ),
+    ]
+
+    for diff, message in malformed:
+        with pytest.raises(ValueError, match=message):
+            mutation._mutation_fingerprint(diff, name)
+
+
+def test_mutation_gate_requires_the_exact_reviewed_diff_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = "example.x_gate__mutmut_1"
+    reviewed = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -14,3 +14,3 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
+    )
+    fingerprint = mutation._mutation_fingerprint(reviewed, name)
+    monkeypatch.setattr(
+        mutation,
+        "REVIEWED_EXEMPTIONS",
+        {name: mutation.MutationExemption(fingerprint, "fixture reviewed as equivalent")},
+    )
+
+    assert _failures({name: "survived"}, {name: fingerprint}) == []
+    assert _failures({name: "survived"}, {name: "0" * 64}) == [f"{name}: survived"]
+    assert _failures({name: "survived"}, {}) == [f"{name}: survived"]
+
+
+@pytest.mark.parametrize("status", ["no tests", "timeout", "unknown"])
+def test_mutation_fingerprint_never_waives_invalid_statuses(
+    monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    name = "example.x_gate__mutmut_1"
+    fingerprint = "a" * 64
+    monkeypatch.setattr(
+        mutation,
+        "REVIEWED_EXEMPTIONS",
+        {name: mutation.MutationExemption(fingerprint, "fixture reviewed as equivalent")},
+    )
+
+    assert _failures({name: status}, {name: fingerprint}) == [f"{name}: {status}"]
 
 
 def test_mutation_gate_fails_when_mutmut_command_fails(
@@ -298,6 +409,22 @@ def test_mutation_gate_fails_when_mutmut_command_fails(
 
     assert check_mutations() == 1
     assert capsys.readouterr().out == "mutmut failed\n"
+
+
+def test_mutation_gate_fails_closed_when_survivor_diff_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = next(iter(EQUIVALENT_MUTANTS))
+
+    def fake_run(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        if args[1] == "results":
+            return SimpleNamespace(returncode=0, stdout=f"{name}: survived\n", stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="show denied")
+
+    monkeypatch.setattr(mutation.subprocess, "run", fake_run)
+
+    assert check_mutations() == 1
+    assert capsys.readouterr().out == f"mutmut show failed for {name}: show denied\n"
 
 
 @pytest.mark.parametrize(
