@@ -135,24 +135,24 @@ EQUIVALENT_RATIONALES = {
         "this zip, so strict=False has the same aligned iteration."
     ),
     "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_15": (
-        "This mutation changes only the private capability probe name or payload. The probe "
-        "still runs under the destination parent, verifies an exclusive hard link and inode "
-        "identity, and removes its temporary files."
+        "The probe writes a regular source file and creates a regular hard link immediately "
+        "before these stat calls, so the follow flag cannot change their inode/device "
+        "identity. Separate publication tests cover symlinks and hard links to symlinks."
     ),
     "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_16": (
-        "This mutation changes only the private capability probe name or payload. The probe "
-        "still runs under the destination parent, verifies an exclusive hard link and inode "
-        "identity, and removes its temporary files."
+        "The probe writes a regular source file and creates a regular hard link immediately "
+        "before these stat calls, so the follow flag cannot change their inode/device "
+        "identity. Separate publication tests cover symlinks and hard links to symlinks."
     ),
     "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_18": (
-        "This mutation changes only the private capability probe name or payload. The probe "
-        "still runs under the destination parent, verifies an exclusive hard link and inode "
-        "identity, and removes its temporary files."
+        "The probe writes a regular source file and creates a regular hard link immediately "
+        "before these stat calls, so the follow flag cannot change their inode/device "
+        "identity. Separate publication tests cover symlinks and hard links to symlinks."
     ),
     "georeset_text_label_benchmark.pilot.publication.x__probe_exclusive_link__mutmut_19": (
-        "This mutation changes only the private capability probe name or payload. The probe "
-        "still runs under the destination parent, verifies an exclusive hard link and inode "
-        "identity, and removes its temporary files."
+        "The probe writes a regular source file and creates a regular hard link immediately "
+        "before these stat calls, so the follow flag cannot change their inode/device "
+        "identity. Separate publication tests cover symlinks and hard links to symlinks."
     ),
     "georeset_text_label_benchmark.pilot.publication.x_ensure_publication_supported__mutmut_14": (
         "This mutation changes only the private capability probe name or payload. The probe "
