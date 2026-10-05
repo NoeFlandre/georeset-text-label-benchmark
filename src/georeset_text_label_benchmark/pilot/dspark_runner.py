@@ -61,13 +61,15 @@ def run_dspark_pilot(
     validation_commit: str,
     output_dir: Path | None = None,
     model_cache_dir: Path = Path(".cache/model-dspark"),
+    smoke: bool = False,
 ) -> dict[str, Any]:
-    """Run only the published frozen sample and write non-overwriting DSpark sidecars."""
-    destination = output_dir or run_dir.parent / "lfm2.5-2.6b-dspark-100-seed42"
+    """Run a frozen DSpark evaluation or its fixed eight-row readiness smoke."""
+    destination = _output_destination(run_dir, output_dir, smoke)
     _validate_run_inputs(run_dir, destination, computation_commit, validation_commit)
-    sample, rows, candidates = read_frozen_pilot_inputs(run_dir)
-    _validate_published_sample(sample, rows)
+    sample, frozen_rows, candidates = read_frozen_pilot_inputs(run_dir)
+    _validate_published_sample(sample, frozen_rows)
     frozen_e5_manifest_sha256 = _validate_frozen_e5_manifest(run_dir, sample)
+    rows = _rows_for_run(frozen_rows, smoke)
     gpu = _require_supported_gpu()
     cuda_preflight = _runtime_compatibility_preflight(gpu)
     cache_dir = _prepare_model_cache(model_cache_dir)
@@ -87,6 +89,10 @@ def run_dspark_pilot(
     generation_seconds = _clock() - generation_start
     prediction_rows = _prediction_rows(rows, candidates, encoded, prompt_hashes, generated)
     metrics = _metrics_payload(prediction_rows, candidates)
+    smoke_gate = _smoke_gate(prediction_rows) if smoke else None
+    if smoke_gate is not None:
+        metrics["smoke_gate"] = smoke_gate
+    run_scope = _run_scope(sample, rows, smoke, smoke_gate)
     destination.mkdir(parents=True, exist_ok=False)
     prediction_path = destination / PREDICTIONS_NAME
     metrics_path = destination / METRICS_NAME
@@ -96,6 +102,7 @@ def run_dspark_pilot(
     manifest = _build_manifest(
         run_dir,
         sample,
+        run_scope,
         candidates,
         prediction_path,
         metrics_path,
@@ -112,17 +119,36 @@ def run_dspark_pilot(
         cuda_preflight,
     )
     _write_json_exclusive(manifest_path, manifest)
-    return {
+    result = {
         "run_dir": str(destination),
         "frozen_input_dir": str(run_dir),
         "sample_count": len(prediction_rows),
         "candidate_count": len(candidates),
+        "run_scope": run_scope,
         "metrics": metrics["overall"],
         "generation_seconds": generation_seconds,
         "model_load_seconds": tokenizer_seconds + engine_seconds,
         "predictions_sha256": sha256_file(prediction_path),
         "manifest_sha256": sha256_file(manifest_path),
     }
+    if smoke_gate is not None:
+        result["smoke_gate"] = smoke_gate
+    return result
+
+
+def _output_destination(run_dir: Path, output_dir: Path | None, smoke: bool) -> Path:
+    """Use a caller-supplied path or a distinct default name for each run scope."""
+    if output_dir is not None:
+        return output_dir
+    default_name = "lfm2.5-2.6b-dspark-smoke-8-seed42" if smoke else "lfm2.5-2.6b-dspark-100-seed42"
+    return run_dir.parent / default_name
+
+
+def _rows_for_run(
+    frozen_rows: Sequence[Mapping[str, Any]], smoke: bool
+) -> Sequence[Mapping[str, Any]]:
+    """Keep full-run order or choose the bounded, language-diverse smoke rows."""
+    return _select_smoke_rows(frozen_rows) if smoke else frozen_rows
 
 
 async def _generate_rows(
@@ -259,6 +285,7 @@ def _invalid_output_reasons(predictions: Sequence[Mapping[str, Any]]) -> list[di
 def _build_manifest(
     run_dir: Path,
     sample: Mapping[str, Any],
+    run_scope: Mapping[str, Any],
     candidates: Sequence[Mapping[str, str]],
     prediction_path: Path,
     metrics_path: Path,
@@ -283,6 +310,7 @@ def _build_manifest(
         "frozen_e5_manifest_sha256": frozen_e5_manifest_sha256,
         "source_coverage": sample["source_coverage"],
         "sample": sample["selection"],
+        "run_scope": dict(run_scope),
         "candidate_labels": _candidate_provenance(sample, candidates),
         "model": {
             "repository": dspark.TARGET_MODEL,
@@ -310,7 +338,7 @@ def _build_manifest(
             "tokenizer_download_and_load": tokenizer_seconds,
             "sglang_target_and_draft_load": engine_seconds,
             "generation_total": generation_seconds,
-            "generation_includes_sequential_100_requests": True,
+            "generation_includes_sequential_requests": run_scope["processed_row_count"],
         },
         "outputs_sha256": {
             "frozen_sample.json": sha256_file(run_dir / "frozen_sample.json"),
@@ -319,12 +347,20 @@ def _build_manifest(
             METRICS_NAME: sha256_file(metrics_path),
         },
         "limitations": [
-            "The result uses the fixed 100-sentence positive-overlap pilot only.",
+            "The source is the fixed 100-sentence positive-overlap pilot.",
             "Gold labels are existing polygon-level EUNIS assignments, not sentence-level truth.",
             "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
             "The sample is occurrence-weighted before unique-text and unique-polygon filtering.",
             "Compare top-1 and macro-F1 only with E5; direct generation has no top-5 ranking.",
-            "Greedy generation is used; DSpark is the speculative draft path, not a compute device.",
+            "Generation uses the target model card's sampled decoding settings.",
+            "The DSpark vendor parity benchmarks use greedy decoding; this sampled run does not claim greedy parity.",
+            *(
+                [
+                    "This is an eight-row readiness smoke and its metrics are not a full pilot result."
+                ]
+                if run_scope["kind"] == "bounded-smoke"
+                else []
+            ),
         ],
     }
 
@@ -337,6 +373,7 @@ def _generation_config(template_hash: str, sample: Mapping[str, Any]) -> dict[st
         "chat_template_kwargs": dspark.CHAT_TEMPLATE_KWARGS,
         "sampling": dspark.SAMPLING,
         "engine": dspark.ENGINE_ARGS,
+        "setting_provenance": dspark.GENERATION_SETTING_PROVENANCE,
         "runtime_context_limit_tokens": dspark.RUNTIME_CONTEXT_TOKENS,
         "maximum_new_tokens": dspark.MAX_NEW_TOKENS,
         "candidate_count": len(sample["candidate_labels"]["codes"]),
@@ -347,12 +384,107 @@ def _generation_config(template_hash: str, sample: Mapping[str, Any]) -> dict[st
     }
 
 
+def _select_smoke_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Choose up to eight rows with distinct languages, then fill in frozen order."""
+    first_by_language = {}
+    for row in rows:
+        language = row.get("language_code")
+        first_by_language.setdefault(language, row)
+    selected = list(first_by_language.values())[: dspark.MAX_SMOKE_ROWS]
+    if len(selected) < dspark.MAX_SMOKE_ROWS:
+        selected_ids = {row["sample_id"] for row in selected}
+        selected.extend(_fill_smoke_rows(rows, selected_ids, dspark.MAX_SMOKE_ROWS - len(selected)))
+    return selected
+
+
+def _fill_smoke_rows(
+    rows: Sequence[Mapping[str, Any]], selected_ids: set[str], count: int
+) -> list[Mapping[str, Any]]:
+    """Fill a language-diverse smoke selection in frozen sample order."""
+    selected = []
+    for row in rows:
+        if row["sample_id"] not in selected_ids:
+            selected.append(row)
+            if len(selected) == count:
+                break
+    return selected
+
+
+def _smoke_gate(predictions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Require several EOS-finished final codes and reject every truncated row."""
+    valid = _count_parse_status(predictions, "valid")
+    truncated = _count_parse_status(predictions, "truncated")
+    valid_eos_stopped = _count_valid_eos_stopped_answers(predictions)
+    minimum_valid = min(dspark.MIN_SMOKE_VALID_OUTPUTS, len(predictions))
+    passed = (
+        len(predictions) == dspark.MAX_SMOKE_ROWS
+        and valid >= minimum_valid
+        and valid_eos_stopped >= minimum_valid
+        and truncated == 0
+    )
+    return {
+        "passed": passed,
+        "row_count": len(predictions),
+        "valid_final_answer_count": valid,
+        "minimum_valid_final_answers": minimum_valid,
+        "truncated_count": truncated,
+        "valid_eos_stopped_answer_count": valid_eos_stopped,
+        "minimum_eos_stopped_answers": minimum_valid,
+    }
+
+
+def _count_parse_status(predictions: Sequence[Mapping[str, Any]], status: str) -> int:
+    """Count rows with one exact parse status."""
+    return sum(row["parse_status"] == status for row in predictions)
+
+
+def _count_valid_eos_stopped_answers(predictions: Sequence[Mapping[str, Any]]) -> int:
+    """Count valid parser results whose raw text retains the matched EOS token."""
+    return sum(_is_valid_eos_stopped_answer(row) for row in predictions)
+
+
+def _is_valid_eos_stopped_answer(row: Mapping[str, Any]) -> bool:
+    """Check that one parsed final code was visibly stopped by the pinned EOS."""
+    raw_output = row.get("raw_output")
+    return (
+        row.get("parse_status") == "valid"
+        and row.get("finish_reason") == "stop"
+        and isinstance(raw_output, str)
+        and raw_output.endswith(dspark.TARGET_EOS_TOKEN)
+    )
+
+
+def _run_scope(
+    sample: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    smoke: bool,
+    smoke_gate: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    ids = [str(row["sample_id"]) for row in rows]
+    scope: dict[str, Any] = {
+        "kind": "bounded-smoke" if smoke else "full-pilot",
+        "frozen_sample_size": sample["selection"]["sample_size"],
+        "processed_row_count": len(rows),
+        "processed_sample_ids_sha256": _sha256_json(ids),
+    }
+    if smoke:
+        scope["selection_method"] = (
+            "Take the first sample-order row for each distinct language_code, up to eight, "
+            "then fill from the frozen sample order."
+        )
+        scope["processed_sample_ids"] = ids
+        scope["smoke_gate"] = dict(smoke_gate or {})
+    return scope
+
+
 def _validate_run_inputs(
     run_dir: Path, output_dir: Path, computation_commit: str, validation_commit: str
 ) -> None:
     _validate_commit(computation_commit, "computation_commit")
     _validate_commit(validation_commit, "validation_commit")
-    if output_dir.resolve() == run_dir.resolve():
+    resolved_run_dir = run_dir.resolve()
+    resolved_output_dir = output_dir.resolve()
+    if resolved_output_dir == resolved_run_dir or resolved_run_dir in resolved_output_dir.parents:
         raise ValueError("DSpark output directory must be separate from frozen E5 inputs")
     if output_dir.exists():
         raise FileExistsError("DSpark output directory already exists; choose a fresh path")

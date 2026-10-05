@@ -11,6 +11,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from georeset_text_label_benchmark.pilot.protocol import SAMPLE_SEED
+
 TARGET_MODEL = "LiquidAI/LFM2.5-2.6B"
 TARGET_REVISION = "654f9463ce32b05d0429d76fe1f580b27d4c1ac0"
 DRAFT_MODEL = "LiquidAI/LFM2.5-2.6B-DSpark"
@@ -25,16 +27,30 @@ PROMPT_INSTRUCTIONS = (
     "other text. Do not invent a code."
 )
 PROMPT_SHA256 = hashlib.sha256(PROMPT_INSTRUCTIONS.encode("utf-8")).hexdigest()
+TARGET_EOS_TOKEN = "<|im_end|>"
+TARGET_EOS_TOKEN_ID = 124900
+TARGET_CHAT_TEMPLATE_SHA256 = "ea663864491de7ade391839479860ca95541f892f72665c73251fbd4643b1bef"
 EXPECTED_SAMPLE_IDS_SHA256 = "74ab5826b51806947215b0e1635f173ce99af13577e41a431c263cd6a8e57e72"
 MODEL_CONTEXT_TOKENS = 131_072
 RUNTIME_CONTEXT_TOKENS = 128_000
-MAX_NEW_TOKENS = 4096
+MAX_NEW_TOKENS = 512
 MAX_CONCURRENCY = 1
-CHAT_TEMPLATE_KWARGS: dict[str, bool] = {"enable_thinking": False}
-SAMPLING: dict[str, float | int] = {"temperature": 0.0, "max_new_tokens": MAX_NEW_TOKENS}
+MAX_SMOKE_ROWS = 8
+MIN_SMOKE_VALID_OUTPUTS = 6
+# This pinned template ignores enable_thinking and always opens <think> for generation.
+CHAT_TEMPLATE_KWARGS: dict[str, bool] = {}
+SAMPLING: dict[str, Any] = {
+    "temperature": 0.1,
+    "top_k": 50,
+    "repetition_penalty": 1.1,
+    "max_new_tokens": MAX_NEW_TOKENS,
+    "stop_token_ids": [TARGET_EOS_TOKEN_ID],
+    "skip_special_tokens": False,
+    "no_stop_trim": True,
+}
 ENGINE_ARGS: dict[str, Any] = {
     "dtype": "bfloat16",
-    "random_seed": 0,
+    "random_seed": SAMPLE_SEED,
     # SGLang v0.5.20's DSpark draft worker otherwise inherits the target's
     # 131,072-token context and rejects the 128,000-token draft checkpoint.
     "context_length": RUNTIME_CONTEXT_TOKENS,
@@ -46,7 +62,57 @@ ENGINE_ARGS: dict[str, Any] = {
 }
 THINK_CLOSE = "</think>"
 _CODE_ONLY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_END_MARKERS = ("<|im_end|>", "<|endoftext|>")
+_END_MARKERS = (TARGET_EOS_TOKEN,)
+GENERATION_SETTING_PROVENANCE = {
+    "chat_template_kwargs": (
+        "The pinned chat_template.jinja has no enable_thinking option and appends <think> "
+        "when add_generation_prompt is true. The adapter passes no thinking-disable flag."
+    ),
+    "sampling.temperature": (
+        "LiquidAI/LFM2.5-2.6B@654f9463ce32b05d0429d76fe1f580b27d4c1ac0 generation_config.json "
+        "sets temperature=0.1."
+    ),
+    "sampling.top_k": (
+        "LiquidAI/LFM2.5-2.6B@654f9463ce32b05d0429d76fe1f580b27d4c1ac0 generation_config.json "
+        "sets top_k=50."
+    ),
+    "sampling.repetition_penalty": (
+        "LiquidAI/LFM2.5-2.6B@654f9463ce32b05d0429d76fe1f580b27d4c1ac0 generation_config.json "
+        "sets repetition_penalty=1.1."
+    ),
+    "sampling.max_new_tokens": (
+        "The pinned model card's Quick start example sets max_new_tokens=512; length-finished "
+        "outputs remain truncated and invalid."
+    ),
+    "sampling.stop_token_ids": (
+        "The pinned target config sets eos_token_id=124900 and tokenizer_config.json names it "
+        "<|im_end|>; SGLang v0.5.20 SamplingParams accepts stop_token_ids."
+    ),
+    "sampling.skip_special_tokens": (
+        "Retain the special EOS token in the generated text for the audit record."
+    ),
+    "sampling.no_stop_trim": (
+        "SGLang v0.5.20 otherwise trims the matched stop token from returned text."
+    ),
+    "engine.dtype": "The pinned target and DSpark checkpoints use BF16.",
+    "engine.random_seed": (
+        "Use the frozen pilot seed 42 for SGLang's Python, NumPy, Torch, and CUDA RNGs. "
+        "The SGLang v0.5.20 DSpark acceptance path uses torch.rand; SamplingParams.sampling_seed "
+        "is not consumed by that path, so requests run sequentially under the engine seed."
+    ),
+    "engine.context_length": (
+        "Use the smaller pinned context limit: target 131072 tokens, draft 128000 tokens."
+    ),
+    "engine.speculative_algorithm": "The pinned DSpark card requires speculative algorithm DSPARK.",
+    "engine.speculative_draft_attention_backend": (
+        "The pinned DSpark card's SGLang command selects the FlashInfer draft attention backend."
+    ),
+    "engine.disable_radix_cache": "The pinned DSpark card's SGLang command disables radix cache.",
+    "engine.mem_fraction_static": "The pinned DSpark card's SGLang command sets 0.75.",
+    "engine.max_running_requests": (
+        "The pilot serves one prompt at a time to keep the fixed single-GPU run sequential."
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,15 +199,25 @@ def template_sha256(tokenizer: Any) -> str:
     return hashlib.sha256(str(tokenizer.chat_template).encode("utf-8")).hexdigest()
 
 
+def validate_pinned_tokenizer(tokenizer: Any) -> None:
+    """Reject a tokenizer whose EOS or rendered chat template differs from the pin."""
+    if tokenizer.eos_token != TARGET_EOS_TOKEN or tokenizer.eos_token_id != TARGET_EOS_TOKEN_ID:
+        raise RuntimeError("pinned LFM tokenizer EOS does not match the target configuration")
+    if template_sha256(tokenizer) != TARGET_CHAT_TEMPLATE_SHA256:
+        raise RuntimeError("pinned LFM chat template does not match the target configuration")
+
+
 def load_tokenizer() -> Any:
     """Load only the pinned tokenizer; SGLang loads model and draft weights later."""
     from transformers import AutoTokenizer
 
-    return AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
         TARGET_MODEL,
         revision=TARGET_REVISION,
         trust_remote_code=False,
     )
+    validate_pinned_tokenizer(tokenizer)
+    return tokenizer
 
 
 class SGLangEngine:

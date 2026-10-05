@@ -141,22 +141,66 @@ pinned candidate CSV. It never calls `freeze` or the sampler.
 The target is pinned to revision
 `654f9463ce32b05d0429d76fe1f580b27d4c1ac0`; its paired
 [`LFM2.5-2.6B-DSpark` draft](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark)
-is pinned to `458cedab07d0f7b2b05700c77e1aa463d43d6f04`. The validated
-runtime is SGLang `0.5.20` with FlashInfer `0.6.18`, BF16, `DSPARK`, greedy
-temperature `0`, one request at a time, and at most `4096` generated tokens.
-This uses the [upstream LFM2 DSpark support](https://github.com/sgl-project/sglang/pull/31041)
+is pinned to `458cedab07d0f7b2b05700c77e1aa463d43d6f04`. The runtime uses
+SGLang `0.5.20` with FlashInfer `0.6.18`, BF16, `DSPARK`, and one request at a
+time. This uses the [upstream LFM2 DSpark support](https://github.com/sgl-project/sglang/pull/31041)
 and the launch settings in the [official draft card](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark).
 DSpark is speculative decoding with a paired draft checkpoint; it is not a
-hardware device. Under greedy decoding the target verifies draft tokens, so
-DSpark accelerates the target model without changing its output.
+hardware device. The DSpark card demonstrates output parity under greedy
+decoding. This adapter uses the pinned target model's documented sampling
+settings, so this evaluation does not claim greedy parity.
+
+### Generation diagnosis and settings
+
+The failed `job4184197` used 100 frozen sentences and all 158 EUNIS candidates
+from `pilot/runs/e5-small-100-seed42/`, target revision
+`654f9463ce32b05d0429d76fe1f580b27d4c1ac0`, temperature `0`, and a `4096`
+token cap without a repetition penalty or explicit stop IDs. Its existing
+artifacts remain a separate historical run: 97 outputs reached the cap while
+still reasoning, 95 contained a repeated 12-token span, none of those 97
+contained `</think>` or `<|im_end|>`, and the three parser-valid codes were
+`MA223`, `MA221`, and `N1A` with zero correct. No unfinished reasoning is
+reinterpreted as an answer.
+
+The pinned [`chat_template.jinja`](https://huggingface.co/LiquidAI/LFM2.5-2.6B/blob/654f9463ce32b05d0429d76fe1f580b27d4c1ac0/chat_template.jinja)
+always appends `<think>` to a generation prompt and does not read
+`enable_thinking`; passing `enable_thinking=False` cannot disable reasoning.
+The pinned tokenizer and model config identify `<|im_end|>` / token ID `124900`
+as EOS. The [pinned generation config](https://huggingface.co/LiquidAI/LFM2.5-2.6B/blob/654f9463ce32b05d0429d76fe1f580b27d4c1ac0/generation_config.json)
+and [model-card example](https://huggingface.co/LiquidAI/LFM2.5-2.6B/blob/654f9463ce32b05d0429d76fe1f580b27d4c1ac0/README.md)
+document temperature `0.1`, top-k `50`, and repetition penalty `1.1`; the
+example caps generation at `512` tokens. The adapter passes those sampler
+settings, uses SGLang's `stop_token_ids=[124900]`, and requests
+`skip_special_tokens=False` plus `no_stop_trim=True` so the matched EOS remains
+visible in the recorded raw output. SGLang v0.5.20 supports these fields in its
+[sampling parameters](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/sampling/sampling_params.py)
+and treats a matching token ID as a stop condition in its
+[request scheduler](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/managers/schedule_batch.py).
+
+The adapter fixes SGLang's engine `random_seed` to `42`, the frozen pilot seed.
+SGLang v0.5.20 seeds Python, NumPy, Torch, and CUDA RNGs from that engine value;
+the DSpark verifier draws its acceptance coins with `torch.rand`. Its
+per-request `SamplingParams.sampling_seed` is not consumed by that DSpark
+acceptance path, so the runner keeps requests sequential on one GPU. The
+manifest records the effective engine seed and the source of every generation
+and engine setting in `generation_config.setting_provenance`, then hashes that
+complete config.
+
+The shorter cap is a diagnostic stop condition, not a way to accept partial
+reasoning: outputs that finish by length, lack `</think>`, or fail exact
+candidate-code parsing remain invalid. The parser accepts only the final text
+after the last `</think>` and strips the pinned `<|im_end|>` EOS marker for
+parsing, while preserving that marker in the raw output. The eight-row smoke
+gate requires at least six valid final codes that ended with the explicit EOS
+stop, as well as zero length-truncated rows, before the 100-row retry can be
+started.
 
 LiquidAI documents a `131,072`-token target context. SGLang v0.5.20 passes the
 target context length to its DSpark draft worker, while this draft checkpoint
 supports `128,000` tokens. The adapter therefore pins the engine's
 `context_length` to `128,000`, and checks each rendered prompt plus the full
-`4096`-token generation cap before it loads the serving engine. The adapter uses the pinned tokenizer's chat template with
-`enable_thinking=False`; that template still opens a `<think>` region. Parsing
-uses only text after the final `</think>` and accepts an exact code from the
+`512`-token generation cap before it loads the serving engine. Parsing uses
+only text after the final `</think>` and accepts an exact code from the
 candidate set. Truncated answers, unclosed reasoning, unknown codes, and other
 formats remain rows with their raw output and a parse failure reason.
 
@@ -201,13 +245,16 @@ dedicated environment:
 uv sync --locked --no-default-groups --extra dspark
 ```
 
-Then run the adapter against that frozen directory. By default it writes to
-the sibling `lfm2.5-2.6b-dspark-100-seed42` directory; pass `--output-dir` to
-choose a different new path. `HF_HOME` may be set to a large local cache path before the command; otherwise `--model-cache` is used.
-SGLang downloads the target and draft revisions on the first actual run.
+Then run the bounded smoke first and inspect its manifest, predictions, and
+gate. The smoke selects eight rows in frozen sample order, preferring distinct
+languages, and writes separate files under a new output directory. The full
+100-row retry must use a second new output directory. `HF_HOME` may be set to a
+large local cache path before the command; otherwise `--model-cache` is used.
+SGLang downloads target and draft revisions only when the allocated GPU run
+starts.
 
 ```bash
-PILOT_REVISION=<commit-containing-the-frozen-pilot-files>
+PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926
 hf download NoeFlandre/georeset-text-label-benchmark \
   pilot/runs/e5-small-100-seed42/frozen_sample.json \
   pilot/runs/e5-small-100-seed42/candidate_labels.csv \
@@ -215,9 +262,19 @@ hf download NoeFlandre/georeset-text-label-benchmark \
   --repo-type dataset --revision "$PILOT_REVISION" --local-dir artifacts/source
 RUN_DIR=artifacts/source/pilot/runs/e5-small-100-seed42
 COMMIT_SHA=$(git rev-parse HEAD)
+SMOKE_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA"
+uv run georeset-pilot run-dspark-smoke \
+  --run-dir "$RUN_DIR" \
+  --output-dir "$SMOKE_OUT" \
+  --model-cache .cache/model-dspark \
+  --computation-commit "$COMMIT_SHA" \
+  --validation-commit "$COMMIT_SHA"
+# Inspect dspark_metrics.json and dspark_manifest.json. Continue only if
+# smoke_gate.passed is true. Use a distinct path for the complete retry.
+FULL_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA"
 uv run georeset-pilot run-dspark \
   --run-dir "$RUN_DIR" \
-  --output-dir artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42 \
+  --output-dir "$FULL_OUT" \
   --model-cache .cache/model-dspark \
   --computation-commit "$COMMIT_SHA" \
   --validation-commit "$COMMIT_SHA"
@@ -237,8 +294,9 @@ produced by CI.
 
 Run `scripts/run-dspark-grid5000.sh` only inside a separately allocated Linux
 job with exactly one visible NVIDIA GPU and a one-hour wall-time limit. The
-script does not submit jobs or contact a scheduler. The verified A100 SXM4
-40-GiB node meets the adapter’s 16-GiB / compute-capability-8.0 admission gate.
+script does not submit jobs or contact a scheduler. The existing Grid'5000
+executor uses an A40 with CUDA 13 and driver 580; it meets the adapter's
+16-GiB / compute-capability-8.0 admission gate.
 
 Provide absolute paths to the already-published frozen input directory and a
 new output directory on persistent storage. The persistent output parent must
@@ -246,9 +304,33 @@ already exist and be writable. For example, after the authorized owner has
 placed the code and input files on the cluster:
 
 ```bash
+COMMIT_SHA=$(git rev-parse HEAD)
 scripts/run-dspark-grid5000.sh \
   /path/to/persistent/pilot/runs/e5-small-100-seed42 \
-  /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42
+  "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA" \
+  --smoke
+```
+
+The wrapper runs only eight requests in smoke mode. Inspect the resulting
+`dspark_metrics.json` and `dspark_manifest.json`; start a separate full run
+only when the smoke gate passes (at least six valid final answers ending with
+the explicit EOS stop, no truncated rows). Use another path containing
+`100-seed42-retry-$COMMIT_SHA` for that run. The wrapper refuses to reuse
+either output directory. For
+example, check the recorded gate and then launch a separate full-pilot job:
+
+```bash
+COMMIT_SHA=$(git rev-parse HEAD)
+SMOKE_OUT="/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA"
+if python3 -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
+  "$SMOKE_OUT/dspark_metrics.json"; then
+  scripts/run-dspark-grid5000.sh \
+    /path/to/persistent/pilot/runs/e5-small-100-seed42 \
+    "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA"
+else
+  echo "Smoke gate failed; do not start the full pilot." >&2
+  exit 1
+fi
 ```
 
 The preflight requires at least 20 GiB free under job-local `$TMPDIR` (or
