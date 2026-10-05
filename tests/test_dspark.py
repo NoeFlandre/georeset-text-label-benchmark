@@ -115,6 +115,8 @@ def _mock_cuda_preflight(_gpu: dict[str, Any]) -> dict[str, Any]:
 
 
 def _test_prompt_for_sentence(sentence: str, _candidates: Any) -> str:
+    if not isinstance(sentence, str) or not sentence.strip():
+        raise ValueError("prompt sentence must be non-empty text")
     return f"prompt:{sentence}"
 
 
