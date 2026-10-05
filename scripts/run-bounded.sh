@@ -59,7 +59,7 @@ run_bounded() {
 
   local run_status=0 wait_status=0 cache_bytes elapsed_seconds
   while _runner_pid_is_running "$RUNNER_PID"; do
-    if ! cache_bytes=$(du -sb "$JOB_TMP_ROOT" | awk '{print $1}'); then
+    if ! cache_bytes=$(_runner_measure_directory_bytes "$JOB_TMP_ROOT"); then
       echo "Could not measure job-local temporary storage; stopping." >&2
       run_status=1
       break
@@ -101,6 +101,20 @@ run_bounded() {
     RUNNER_PGID=
   fi
   return "$wait_status"
+}
+
+_runner_measure_directory_bytes() {
+  local path=$1 attempts=5 attempt output
+  for ((attempt = 0; attempt < attempts; attempt++)); do
+    if output=$(du -sb -- "$path") && [[ "$output" =~ ^([0-9]+)[[:space:]] ]]; then
+      printf '%s' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+    if ((attempt + 1 < attempts)); then
+      sleep 0.2
+    fi
+  done
+  return 1
 }
 
 runner_stop() {

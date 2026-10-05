@@ -11,10 +11,11 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from importlib.metadata import version
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from time import perf_counter
 from typing import Any
 
@@ -55,6 +56,7 @@ MIN_COMPUTE_CAPABILITY = (8, 0)
 MIN_DRIVER_VERSION = (580, 65, 6)
 MIN_DRIVER_VERSION_TEXT = "580.65.06"
 MIN_CACHE_FREE_BYTES = 8 * 1024**3
+MAX_CACHE_TREE_METADATA_BYTES = 16 * 1024**2
 PREDICTIONS_NAME = "dspark_predictions.parquet"
 METRICS_NAME = "dspark_metrics.json"
 MANIFEST_NAME = "dspark_manifest.json"
@@ -68,6 +70,7 @@ def run_dspark_pilot(
     validation_commit: str,
     output_dir: Path | None = None,
     model_cache_dir: Path = Path(".cache/model-dspark"),
+    model_cache_seed_dir: Path | None = None,
     smoke: bool = False,
 ) -> dict[str, Any]:
     """Run the frozen DSpark pilot or its fixed eight-row readiness smoke."""
@@ -96,6 +99,8 @@ def run_dspark_pilot(
     gpu = _require_supported_gpu()
     cuda_preflight = _runtime_compatibility_preflight(gpu)
     cache_dir = _prepare_model_cache(model_cache_dir)
+    if model_cache_seed_dir is not None:
+        _seed_model_cache_from_hub_cache(model_cache_seed_dir, cache_dir)
     tokenizer_start = _clock()
     tokenizer = dspark.load_tokenizer()
     tokenizer_seconds = _clock() - tokenizer_start
@@ -144,6 +149,7 @@ def run_dspark_pilot(
             engine.version,
             frozen_e5_manifest_sha256,
             cuda_preflight,
+            model_cache_seed_dir,
         )
         _write_json_exclusive(staged_manifest, manifest)
         publish_directory(staging, destination)
@@ -420,6 +426,7 @@ def _build_manifest(
     engine_version: str,
     frozen_e5_manifest_sha256: str,
     cuda_preflight: Mapping[str, Any],
+    model_cache_seed_dir: Path | None,
 ) -> dict[str, Any]:
     generation_config = _generation_config(template_hash, sample)
     return {
@@ -454,6 +461,7 @@ def _build_manifest(
             "gpu": dict(gpu),
             "cuda_preflight": dict(cuda_preflight),
             "model_cache": str(cache_dir),
+            "model_cache_seed": _cache_seed_provenance(model_cache_seed_dir),
         },
         "timings_seconds": {
             "tokenizer_download_and_load": tokenizer_seconds,
@@ -988,6 +996,323 @@ def _prepare_model_cache(model_cache_dir: Path) -> Path:
         free_gib = free_bytes / 1024**3
         raise OSError(f"model cache needs {required_gib} GiB free; found {free_gib:.1f} GiB")
     return cache_dir
+
+
+def _seed_model_cache_from_hub_cache(source_hub_cache: Path, target_hub_cache: Path) -> list[str]:
+    """Seed pinned Hub snapshots from a trusted cache without copying model weights."""
+    source, target = _validate_model_cache_seed_roots(source_hub_cache, target_hub_cache)
+    if not source.is_dir():
+        raise RuntimeError(f"model cache seed is not a readable Hub cache directory: {source}")
+    target.mkdir(parents=True, exist_ok=True)
+    repositories = _pinned_cache_repositories()
+    folder_names = _pinned_cache_folder_names(repositories)
+    collisions = _cache_folder_collisions(target, folder_names)
+    if collisions:
+        raise RuntimeError(
+            "model cache seed requires an empty pinned-repository cache; existing entries: "
+            + ", ".join(collisions)
+        )
+
+    with tempfile.TemporaryDirectory(dir=target) as stage_name:
+        stage = Path(stage_name)
+        _stage_pinned_repositories(source, stage, repositories)
+        _install_staged_cache_folders(stage, target, folder_names)
+    return [revision for _repository, revision in repositories]
+
+
+def _validate_model_cache_seed_roots(source: Path, target: Path) -> tuple[Path, Path]:
+    """Resolve cache roots and forbid either cache from nesting inside the other."""
+    source_root = source.expanduser().resolve()
+    target_root = target.expanduser().resolve()
+    if (
+        source_root == target_root
+        or source_root.is_relative_to(target_root)
+        or target_root.is_relative_to(source_root)
+    ):
+        raise ValueError("model cache seed and writable cache must be separate directories")
+    return source_root, target_root
+
+
+def _pinned_cache_repositories() -> tuple[tuple[str, str], ...]:
+    """List only the exact model and draft repositories supported by this runner."""
+    return (
+        (dspark.TARGET_MODEL, dspark.TARGET_REVISION),
+        (dspark.DRAFT_MODEL, dspark.DRAFT_REVISION),
+    )
+
+
+def _pinned_cache_folder_names(repositories: Sequence[tuple[str, str]]) -> tuple[str, ...]:
+    """Map pinned repository IDs to their Hub cache folder names."""
+    return tuple(
+        f"models--{repository.replace('/', '--')}" for repository, _revision in repositories
+    )
+
+
+def _cache_folder_collisions(target: Path, folder_names: Sequence[str]) -> list[str]:
+    """Find pinned cache folders that would overwrite existing job-local data."""
+    collisions = []
+    for name in folder_names:
+        candidate = target / name
+        if candidate.exists() or candidate.is_symlink():
+            collisions.append(name)
+    return collisions
+
+
+def _stage_pinned_repositories(
+    source: Path, stage: Path, repositories: Sequence[tuple[str, str]]
+) -> None:
+    """Build and locally validate each pinned repo before installing any of them."""
+    for repository, revision in repositories:
+        _seed_pinned_repository(source, stage, repository, revision)
+        _validate_staged_repository(stage, repository, revision)
+
+
+def _install_staged_cache_folders(stage: Path, target: Path, folder_names: Sequence[str]) -> None:
+    """Install already validated repository folders atomically into the job cache."""
+    for folder_name in folder_names:
+        os.replace(stage / folder_name, target / folder_name)
+
+
+def _seed_pinned_repository(
+    source_cache: Path, staged_cache: Path, repository: str, revision: str
+) -> None:
+    """Build a temporary pinned repo cache from tree metadata and source blob links."""
+    folder_name = f"models--{repository.replace('/', '--')}"
+    source_repo = source_cache / folder_name
+    source_snapshot = source_repo / "snapshots" / revision
+    source_tree = source_repo / "trees" / f"{revision}.json"
+    tree_bytes, entries = _read_pinned_cache_tree(
+        source_snapshot, source_tree, repository, revision
+    )
+    staged_repo = staged_cache / folder_name
+    staged_blobs = staged_repo / "blobs"
+    staged_snapshot = staged_repo / "snapshots" / revision
+    staged_blobs.mkdir(parents=True)
+    staged_snapshot.mkdir(parents=True)
+    blob_targets: dict[str, Path] = {}
+    for file_name, metadata in entries.items():
+        _seed_snapshot_entry(
+            file_name,
+            metadata,
+            source_snapshot,
+            source_repo / "blobs",
+            staged_blobs,
+            staged_snapshot,
+            blob_targets,
+            repository,
+            revision,
+        )
+    staged_tree = staged_repo / "trees" / f"{revision}.json"
+    staged_tree.parent.mkdir()
+    staged_tree.write_bytes(tree_bytes)
+
+
+def _seed_snapshot_entry(
+    file_name: Any,
+    metadata: Any,
+    source_snapshot: Path,
+    source_blobs: Path,
+    staged_blobs: Path,
+    staged_snapshot: Path,
+    blob_targets: dict[str, Path],
+    repository: str,
+    revision: str,
+) -> None:
+    """Check Hub blob names and sizes, then add pointers to trusted source bytes."""
+    relative = _pinned_snapshot_relative_path(file_name, repository, revision)
+    expected_size, expected_blob_name = _pinned_snapshot_file_metadata(
+        metadata, repository, revision
+    )
+    source_file = source_snapshot.joinpath(*relative.parts)
+    source_blob = _source_blob_for_snapshot(source_file, source_blobs, repository, revision)
+    if source_blob.stat().st_size != expected_size:
+        raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
+    if source_blob.name != expected_blob_name:
+        raise RuntimeError(
+            f"pinned model cache seed has a blob identity mismatch for {repository}@{revision}"
+        )
+    staged_blob = staged_blobs / source_blob.name
+    _link_seed_blob(staged_blob, source_blob, blob_targets, repository, revision)
+    staged_file = staged_snapshot.joinpath(*relative.parts)
+    staged_file.parent.mkdir(parents=True, exist_ok=True)
+    staged_file.symlink_to(os.path.relpath(staged_blob, staged_file.parent))
+
+
+def _read_pinned_cache_tree(
+    snapshot: Path, tree_path: Path, repository: str, revision: str
+) -> tuple[bytes, dict[str, Any]]:
+    """Read pinned Hub tree metadata and reject missing or unbounded metadata."""
+    if not snapshot.is_dir() or not tree_path.is_file():
+        raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
+    tree_bytes, tree = _read_bounded_cache_tree(tree_path, repository, revision)
+    if tree.get("format_version") != 1:
+        raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
+    return tree_bytes, _pinned_cache_tree_entries(tree, repository, revision)
+
+
+def _pinned_cache_tree_entries(
+    tree: Mapping[str, Any], repository: str, revision: str
+) -> dict[str, Any]:
+    """Require a nonempty file mapping in the pinned Hub tree metadata."""
+    entries = tree.get("files")
+    if not isinstance(entries, dict) or not entries:
+        raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
+    return entries
+
+
+def _read_bounded_cache_tree(
+    tree_path: Path, repository: str, revision: str
+) -> tuple[bytes, dict[str, Any]]:
+    """Read at most the bounded Hub tree metadata size before parsing JSON."""
+    try:
+        with tree_path.open("rb") as stream:
+            data = stream.read(MAX_CACHE_TREE_METADATA_BYTES + 1)
+        if len(data) > MAX_CACHE_TREE_METADATA_BYTES:
+            raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
+        tree = json.loads(data)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
+        raise RuntimeError(
+            f"pinned model cache seed is incomplete for {repository}@{revision}"
+        ) from error
+    if not isinstance(tree, dict):
+        raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
+    return data, tree
+
+
+def _pinned_snapshot_relative_path(file_name: Any, repository: str, revision: str) -> PurePosixPath:
+    """Reject tree names that could escape their Hub snapshot directory."""
+    message = f"pinned model cache seed has invalid tree metadata for {repository}@{revision}"
+    if not isinstance(file_name, str):
+        raise RuntimeError(message)
+    relative = PurePosixPath(file_name)
+    if not _valid_hub_snapshot_name(file_name, relative):
+        raise RuntimeError(message)
+    return relative
+
+
+def _valid_hub_snapshot_name(file_name: str, path: PurePosixPath) -> bool:
+    """Return whether a Hub filename is a safe relative POSIX path."""
+    return bool(file_name) and "\\" not in file_name and _valid_hub_snapshot_parts(path)
+
+
+def _valid_hub_snapshot_parts(path: PurePosixPath) -> bool:
+    """Reject absolute paths, empty paths, and path traversal components."""
+    if path.is_absolute() or not path.parts:
+        return False
+    return _valid_hub_snapshot_components(path.parts)
+
+
+def _valid_hub_snapshot_components(parts: Sequence[str]) -> bool:
+    """Reject empty or traversal path components."""
+    return all(part != ".." for part in parts)
+
+
+def _pinned_snapshot_file_metadata(
+    metadata: Any, repository: str, revision: str
+) -> tuple[int, str]:
+    """Return expected size and Hub cache blob name from a tree entry."""
+    message = f"pinned model cache seed has invalid tree metadata for {repository}@{revision}"
+    if not _valid_hub_file_metadata(metadata):
+        raise RuntimeError(message)
+    size = metadata["size"]
+    blob_id = metadata["blob_id"]
+    lfs_sha256 = metadata.get("lfs_sha256")
+    return size, lfs_sha256 if lfs_sha256 is not None else blob_id
+
+
+def _valid_hub_file_metadata(metadata: Any) -> bool:
+    """Validate Hub tree metadata without opening or hashing model weights."""
+    if not isinstance(metadata, dict):
+        return False
+    size = metadata.get("size")
+    blob_id = metadata.get("blob_id")
+    lfs_sha256 = metadata.get("lfs_sha256")
+    return (
+        _valid_hub_blob_size(size)
+        and _nonempty_string(blob_id)
+        and (lfs_sha256 is None or _nonempty_string(lfs_sha256))
+    )
+
+
+def _valid_hub_blob_size(size: Any) -> bool:
+    """Require nonnegative integer byte size metadata, excluding bool values."""
+    return isinstance(size, int) and not isinstance(size, bool) and size >= 0
+
+
+def _nonempty_string(value: Any) -> bool:
+    """Return whether a metadata value is a nonempty string."""
+    return isinstance(value, str) and bool(value)
+
+
+def _source_blob_for_snapshot(
+    source_file: Path, source_blobs: Path, repository: str, revision: str
+) -> Path:
+    """Resolve a snapshot link to its Hub blob entry, including shared storage links."""
+    if not source_file.is_symlink():
+        raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
+    try:
+        source_blob = Path(os.path.abspath(source_file.parent / source_file.readlink()))
+    except OSError as error:
+        raise RuntimeError(
+            f"pinned model cache seed is incomplete for {repository}@{revision}"
+        ) from error
+    if source_blob.parent != Path(os.path.abspath(source_blobs)) or not source_blob.is_file():
+        raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
+    return source_blob
+
+
+def _link_seed_blob(
+    staged_blob: Path,
+    source_blob: Path,
+    blob_targets: dict[str, Path],
+    repository: str,
+    revision: str,
+) -> None:
+    """Link each source blob once and reject two paths with the same cache name."""
+    previous = blob_targets.get(source_blob.name)
+    if previous is not None and previous != source_blob:
+        raise RuntimeError(
+            f"pinned model cache seed has conflicting blob names for {repository}@{revision}"
+        )
+    if previous is None:
+        staged_blob.symlink_to(source_blob)
+        blob_targets[source_blob.name] = source_blob
+
+
+def _validate_staged_repository(cache: Path, repository: str, revision: str) -> None:
+    """Resolve the exact seeded commit with the pinned Hub client in offline mode."""
+    from huggingface_hub import snapshot_download
+
+    try:
+        resolved = snapshot_download(
+            repository,
+            revision=revision,
+            cache_dir=cache,
+            local_files_only=True,
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"pinned model cache seed is incomplete for {repository}@{revision}"
+        ) from error
+    expected = cache / f"models--{repository.replace('/', '--')}" / "snapshots" / revision
+    if Path(resolved) != expected:
+        raise RuntimeError(
+            f"pinned model cache seed resolved an unexpected snapshot for {repository}@{revision}"
+        )
+
+
+def _cache_seed_provenance(source_hub_cache: Path | None) -> dict[str, Any] | None:
+    """Record the read-only cache and exact snapshots linked into the job cache."""
+    if source_hub_cache is None:
+        return None
+    return {
+        "source_hub_cache": str(source_hub_cache.expanduser().resolve()),
+        "repositories": [
+            {"repository": dspark.TARGET_MODEL, "revision": dspark.TARGET_REVISION},
+            {"repository": dspark.DRAFT_MODEL, "revision": dspark.DRAFT_REVISION},
+        ],
+        "method": "copy tree metadata; link Hub-named source blobs (trusted cache bytes)",
+    }
 
 
 def _runtime_metadata() -> dict[str, Any]:

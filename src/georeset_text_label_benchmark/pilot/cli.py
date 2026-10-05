@@ -48,6 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     dspark.add_argument("--run-dir", type=Path, default=Path("artifacts/e5-small-100-seed42"))
     dspark.add_argument("--output-dir", type=Path)
     dspark.add_argument("--model-cache", type=Path, default=Path(".cache/model-dspark"))
+    dspark.add_argument("--model-cache-seed", type=Path)
     dspark.add_argument("--computation-commit", required=True)
     dspark.add_argument("--validation-commit", required=True)
     smoke = commands.add_parser(
@@ -56,6 +57,7 @@ def _parser() -> argparse.ArgumentParser:
     smoke.add_argument("--run-dir", type=Path, default=Path("artifacts/e5-small-100-seed42"))
     smoke.add_argument("--output-dir", type=Path, required=True)
     smoke.add_argument("--model-cache", type=Path, default=Path(".cache/model-dspark"))
+    smoke.add_argument("--model-cache-seed", type=Path)
     smoke.add_argument("--computation-commit", required=True)
     smoke.add_argument("--validation-commit", required=True)
     return parser
@@ -106,6 +108,7 @@ def _run_dspark_command(args: argparse.Namespace) -> dict[str, Any]:
         args.run_dir,
         output_dir=args.output_dir,
         model_cache_dir=args.model_cache,
+        model_cache_seed_dir=args.model_cache_seed,
         computation_commit=args.computation_commit,
         validation_commit=args.validation_commit,
         smoke=args.command == "run-dspark-smoke",

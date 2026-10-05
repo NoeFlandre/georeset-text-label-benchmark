@@ -21,7 +21,13 @@ def _runner_library() -> Path:
     raise FileNotFoundError("Grid'5000 bounded runner library is missing")
 
 
-def _driver(tmp_path: Path, *, body: str, ps_mode: str = "normal") -> tuple[Path, dict[str, str]]:
+def _driver(
+    tmp_path: Path,
+    *,
+    body: str,
+    ps_mode: str = "normal",
+    du_mode: str = "normal",
+) -> tuple[Path, dict[str, str]]:
     shell = tmp_path / "driver.sh"
     shell.write_text(
         """#!/usr/bin/env bash
@@ -31,7 +37,7 @@ RUNNER_PID=
 RUNNER_PGID=
 RUNNER_WAIT_STATUS=
 JOB_TMP_ROOT=$(mktemp -d)
-MAX_CACHE_BYTES=$((1024 * 1024 * 1024))
+MAX_CACHE_BYTES=$((20 * 1024 * 1024 * 1024))
 JOB_START=$(date +%s)
 JOB_BUDGET_SECONDS=3600
 CALLER_PID=$$
@@ -64,7 +70,9 @@ trap 'exit 143' TERM
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     real_ps = shutil.which("ps")
+    real_du = shutil.which("du")
     assert real_ps is not None
+    assert real_du is not None
     (fake_bin / "ps").write_text(
         """#!/usr/bin/env bash
 set -u
@@ -99,19 +107,114 @@ exec "$REAL_PS" "$@"
         encoding="utf-8",
     )
     (fake_bin / "ps").chmod(0o755)
+    (fake_bin / "du").write_text(
+        """#!/usr/bin/env bash
+set -u
+path=
+for arg in "$@"; do path=$arg; done
+case "${DU_MODE:-normal}" in
+  fail-once)
+    if [[ ! -e "$DU_STATE" ]]; then
+      : > "$DU_STATE"
+      echo 'du: fts_read failed: temporary/python: No such file or directory' >&2
+      exit 1
+    fi
+    ;;
+  always-fail)
+    printf x >> "$DU_STATE"
+    echo 'du: cannot read temporary directory: Permission denied' >&2
+    exit 1
+    ;;
+  over-limit)
+    printf '21474836481\\t%s\\n' "$path"
+    exit 0
+    ;;
+esac
+exec "$REAL_DU" "$@"
+""",
+        encoding="utf-8",
+    )
+    (fake_bin / "du").chmod(0o755)
     environment = os.environ.copy()
     environment.update(
         {
             "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
             "RUNNER_LIBRARY": str(_runner_library()),
             "REAL_PS": real_ps,
+            "REAL_DU": real_du,
             "PS_MODE": ps_mode,
+            "DU_MODE": du_mode,
             "PS_STATE": str(tmp_path / "ps-state"),
+            "DU_STATE": str(tmp_path / "du-state"),
             "PS_INJECTION_LOG": str(tmp_path / "ps-injection.log"),
             "RUNNER_SIGNAL_LOG": str(tmp_path / "signals.log"),
         }
     )
     return shell, environment
+
+
+def test_transient_removed_file_during_storage_scan_does_not_stop_runner(
+    tmp_path: Path,
+) -> None:
+    shell, environment = _driver(tmp_path, body="run_bounded sleep 0.3", du_mode="fail-once")
+
+    result = _run_driver(shell, environment)
+
+    assert result.returncode == 0, result.stderr
+    assert Path(environment["DU_STATE"]).is_file()
+    signal_log = Path(environment["RUNNER_SIGNAL_LOG"])
+    assert "SHARED" not in (signal_log.read_text() if signal_log.exists() else "")
+
+
+def test_persistent_storage_scan_failure_stops_runner_and_preserves_fail_closed_behavior(
+    tmp_path: Path,
+) -> None:
+    child_pid_file = tmp_path / "child.pid"
+    status_file = tmp_path / "status"
+    body = f"""set +e
+run_bounded bash -c 'echo $$ > "{child_pid_file}"; exec sleep 30'
+status=$?
+set -e
+printf '%s' "$status" > "{status_file}"
+"""
+    shell, environment = _driver(tmp_path, body=body, du_mode="always-fail")
+    environment["CHILD_PID_FILE"] = str(child_pid_file)
+
+    result = _run_driver(shell, environment)
+
+    assert result.returncode == 0, result.stderr
+    assert status_file.read_text(encoding="utf-8") == "1"
+    assert len(Path(environment["DU_STATE"]).read_text(encoding="utf-8")) == 5
+    child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+    _assert_not_running(child_pid)
+    assert "Could not measure job-local temporary storage" in result.stderr
+    signals = Path(environment["RUNNER_SIGNAL_LOG"]).read_text(encoding="utf-8")
+    assert "-TERM " in signals
+    assert "SHARED" not in signals
+
+
+def test_storage_limit_still_stops_runner_above_20_gib(tmp_path: Path) -> None:
+    child_pid_file = tmp_path / "child.pid"
+    status_file = tmp_path / "status"
+    body = f"""set +e
+run_bounded bash -c 'echo $$ > "{child_pid_file}"; exec sleep 30'
+status=$?
+set -e
+printf '%s' "$status" > "{status_file}"
+"""
+    shell, environment = _driver(tmp_path, body=body, du_mode="over-limit")
+    environment["CHILD_PID_FILE"] = str(child_pid_file)
+
+    result = _run_driver(shell, environment)
+
+    assert result.returncode == 0, result.stderr
+    assert status_file.read_text(encoding="utf-8") == "1"
+    child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+    _assert_not_running(child_pid)
+    assert "exceeded 20 GiB" in result.stderr
+    signals = Path(environment["RUNNER_SIGNAL_LOG"]).read_text(encoding="utf-8")
+    assert "-TERM " in signals
+    assert "SHARED" not in signals
 
 
 def _run_driver(

@@ -278,8 +278,22 @@ uv sync --locked --no-default-groups --extra dspark
 
 Then run the adapter against that frozen directory. By default it writes to
 the sibling `lfm2.5-2.6b-dspark-100-seed42` directory; pass `--output-dir` to
-choose a different new path. `HF_HOME` may be set to a large local cache path before the command; otherwise `--model-cache` is used.
-SGLang downloads the target and draft revisions on the first actual run.
+choose a different new path. `HF_HOME` may be set to a large local cache path
+before the command; otherwise `--model-cache` is used. SGLang downloads the
+target and draft revisions on the first actual run unless a trusted Hub cache
+is supplied with `--model-cache-seed`.
+
+The `--model-cache-seed` value is the read-only HF Hub cache root containing
+`models--LiquidAI--LFM2.5-2.6B` and
+`models--LiquidAI--LFM2.5-2.6B-DSpark`. The runner requires the exact pinned
+snapshot revisions and complete, bounded Hub tree metadata. It checks Hub blob
+names and declared sizes, copies only tree metadata, and links the job-local
+snapshot entries to source blob entries; it does not copy weights or modify
+the source cache. Offline Hub snapshot resolution validates the staged
+metadata. This assumes a trusted HF-managed cache whose blob bytes match their
+content-addressed names; the runner does not re-hash model payloads. The
+manifest records the source root, both repository revisions, and seeding
+method.
 
 ```bash
 PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926
@@ -290,12 +304,30 @@ hf download NoeFlandre/georeset-text-label-benchmark \
   --repo-type dataset --revision "$PILOT_REVISION" --local-dir artifacts/source
 RUN_DIR=artifacts/source/pilot/runs/e5-small-100-seed42
 COMMIT_SHA=$(git rev-parse HEAD)
-uv run georeset-pilot run-dspark \
+HF_HUB_CACHE_SEED=/path/to/trusted/hf-hub-cache
+SMOKE_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA"
+uv run georeset-pilot run-dspark-smoke \
   --run-dir "$RUN_DIR" \
-  --output-dir artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42 \
+  --output-dir "$SMOKE_OUT" \
   --model-cache .cache/model-dspark \
+  --model-cache-seed "$HF_HUB_CACHE_SEED" \
   --computation-commit "$COMMIT_SHA" \
   --validation-commit "$COMMIT_SHA"
+# Inspect the smoke gate and continue only if it passed.
+FULL_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA"
+if python -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
+  "$SMOKE_OUT/dspark_metrics.json"; then
+  uv run georeset-pilot run-dspark \
+    --run-dir "$RUN_DIR" \
+    --output-dir "$FULL_OUT" \
+    --model-cache .cache/model-dspark \
+    --model-cache-seed "$HF_HUB_CACHE_SEED" \
+    --computation-commit "$COMMIT_SHA" \
+    --validation-commit "$COMMIT_SHA"
+else
+  echo "Smoke gate failed; do not start the full pilot." >&2
+  exit 1
+fi
 ```
 
 Before GPU or CUDA preflight, the adapter verifies the SHA-256 values of the
@@ -312,8 +344,9 @@ produced by CI.
 
 Run `scripts/run-dspark-grid5000.sh` only inside a separately allocated Linux
 job with exactly one visible NVIDIA GPU and a one-hour wall-time limit. The
-script does not submit jobs or contact a scheduler. The verified A100 SXM4
-40-GiB node meets the adapter’s 16-GiB / compute-capability-8.0 admission gate.
+script does not submit jobs or contact a scheduler. The existing Grid'5000
+executor uses an A40 with CUDA 13 and driver 580; it meets the adapter's
+16-GiB / compute-capability-8.0 admission gate.
 
 Provide absolute paths to the already-published frozen input directory and a
 new output directory on persistent storage. The persistent output parent must
@@ -321,9 +354,13 @@ already exist and be writable. For example, after the authorized owner has
 placed the code and input files on the cluster:
 
 ```bash
+COMMIT_SHA=$(git rev-parse HEAD)
+HF_HUB_CACHE_SEED=/path/to/trusted/hf-hub-cache
 scripts/run-dspark-grid5000.sh \
   /path/to/persistent/pilot/runs/e5-small-100-seed42 \
-  /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2
+  "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA" \
+  --smoke \
+  --model-cache-seed "$HF_HUB_CACHE_SEED"
 ```
 
 Before the full 100-row retry, run the checked-in eight-row smoke against a
@@ -337,18 +374,24 @@ both the original failed run and frozen E5 input unchanged. The smoke does not
 resample or relabel the full benchmark and its metrics are not a full pilot
 result.
 
-Example bounded smoke command:
+After that smoke passes, invoke the wrapper without `--smoke`, using a separate
+new full-run path and the same cache seed. The script requires a clean,
+committed checkout so both manifest commit fields identify the exact runtime
+code.
 
 ```bash
-scripts/run-dspark-grid5000.sh \
-  /path/to/persistent/pilot/runs/e5-small-100-seed42 \
-  /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-v2 \
-  --smoke
+SMOKE_OUT="/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA"
+if python3 -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
+  "$SMOKE_OUT/dspark_metrics.json"; then
+  scripts/run-dspark-grid5000.sh \
+    /path/to/persistent/pilot/runs/e5-small-100-seed42 \
+    "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA" \
+    --model-cache-seed "$HF_HUB_CACHE_SEED"
+else
+  echo "Smoke gate failed; do not start the full pilot." >&2
+  exit 1
+fi
 ```
-
-After that smoke passes, invoke the wrapper without `--smoke`, using a separate
-new full-run path. The script requires a clean, committed checkout so both
-manifest commit fields identify the exact runtime code.
 
 Grid'5000 documents `/home` and Group Storage as NFS mounts. The adapter checks
 the chosen persistent output parent with the no-clobber probe before GPU

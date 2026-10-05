@@ -2,23 +2,54 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output [--smoke]" >&2
+  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output [--smoke] [--model-cache-seed /persistent/path/to/hf-hub-cache]" >&2
 }
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
+if [[ $# -lt 2 ]]; then
   usage
   exit 2
 fi
 
 RUN_DIR=$1
 OUTPUT_DIR=$2
+shift 2
 RUN_COMMAND=run-dspark
-if [[ $# -eq 3 ]]; then
-  if [[ $3 != "--smoke" ]]; then
-    usage
-    exit 2
-  fi
-  RUN_COMMAND=run-dspark-smoke
+MODEL_CACHE_SEED=
+SMOKE_REQUESTED=false
+SEED_REQUESTED=false
+while (($#)); do
+  case "$1" in
+    --smoke)
+      if [[ "$SMOKE_REQUESTED" == true ]]; then
+        usage
+        exit 2
+      fi
+      SMOKE_REQUESTED=true
+      RUN_COMMAND=run-dspark-smoke
+      shift
+      ;;
+    --model-cache-seed)
+      if [[ "$SEED_REQUESTED" == true || $# -lt 2 ]]; then
+        usage
+        exit 2
+      fi
+      if [[ -z "$2" ]]; then
+        echo "--model-cache-seed must name an existing absolute HF Hub cache directory." >&2
+        exit 2
+      fi
+      SEED_REQUESTED=true
+      MODEL_CACHE_SEED=$2
+      shift 2
+      ;;
+    *)
+      usage
+      exit 2
+      ;;
+  esac
+done
+if [[ -n "$MODEL_CACHE_SEED" && ( "$MODEL_CACHE_SEED" != /* || ! -d "$MODEL_CACHE_SEED" ) ]]; then
+  echo "--model-cache-seed must name an existing absolute HF Hub cache directory." >&2
+  exit 2
 fi
 if [[ "$RUN_DIR" != /* || "$OUTPUT_DIR" != /* ]]; then
   echo "RUN_DIR and OUTPUT_DIR must be absolute paths." >&2
@@ -51,15 +82,18 @@ if [[ ! -d "$TMP_PARENT" || ! -d "$OUTPUT_PARENT" || ! -w "$OUTPUT_PARENT" ]]; t
   echo "TMPDIR and the existing persistent output parent must be directories; output parent must be writable." >&2
   exit 2
 fi
-python3 - "$TMP_PARENT" "$RUN_DIR" "$OUTPUT_DIR" <<'PY'
+python3 - "$TMP_PARENT" "$RUN_DIR" "$OUTPUT_DIR" "$MODEL_CACHE_SEED" <<'PY'
 import sys
 from pathlib import Path
 
 temporary_root = Path(sys.argv[1]).resolve()
-for label, raw_path in (
+paths = [
     ("RUN_DIR", sys.argv[2]),
     ("OUTPUT_DIR", sys.argv[3]),
-):
+]
+if sys.argv[4]:
+    paths.append(("model cache seed", sys.argv[4]))
+for label, raw_path in paths:
     path = Path(raw_path).resolve()
     if temporary_root == path or temporary_root in path.parents:
         raise SystemExit(f"{label} must be outside job-local temporary storage")
@@ -185,12 +219,17 @@ if [[ "$RUN_COMMAND" == "run-dspark-smoke" ]]; then
 else
   echo "Running the frozen 100-row pilot; temporary cache limit is 20 GiB."
 fi
-run_bounded uv run --locked georeset-pilot "$RUN_COMMAND" \
-  --run-dir "$RUN_DIR" \
-  --output-dir "$OUTPUT_DIR" \
-  --model-cache "$HF_HOME" \
-  --computation-commit "$COMMIT_SHA" \
+DS_PILOT_ARGS=(
+  --run-dir "$RUN_DIR"
+  --output-dir "$OUTPUT_DIR"
+  --model-cache "$HF_HOME"
+  --computation-commit "$COMMIT_SHA"
   --validation-commit "$COMMIT_SHA"
+)
+if [[ -n "$MODEL_CACHE_SEED" ]]; then
+  DS_PILOT_ARGS+=(--model-cache-seed "$MODEL_CACHE_SEED")
+fi
+run_bounded uv run --locked georeset-pilot "$RUN_COMMAND" "${DS_PILOT_ARGS[@]}"
 
 OUTPUT_BYTES=$(du -sb "$OUTPUT_DIR" | awk '{print $1}')
 if (( OUTPUT_BYTES >= MAX_OUTPUT_BYTES )); then
