@@ -787,11 +787,18 @@ def _identity_observed_prediction_rows(output_dir: Path) -> list[tuple[str, str,
 class _IdentityTokenizer:
     chat_template = "identity-template-v1"
 
-    def __init__(self) -> None:
+    def __init__(self, expected_prompts: list[str] | None = None) -> None:
+        self.expected_prompts = expected_prompts
         self.prompts: list[str] = []
 
     def apply_chat_template(self, messages: list[dict[str, str]], **_kwargs: Any) -> str:
         prompt = messages[0]["content"]
+        if self.expected_prompts is not None:
+            row_index = len(self.prompts)
+            if row_index >= len(self.expected_prompts):
+                raise AssertionError("identity tokenizer received an extra prompt")
+            if prompt != self.expected_prompts[row_index]:
+                raise AssertionError(f"identity tokenizer prompt mismatch at row {row_index}")
         self.prompts.append(prompt)
         return f"rendered:{prompt}"
 
@@ -800,6 +807,15 @@ class _IdentityTokenizer:
         payload_text = prompt.split("Input data (JSON):\n", maxsplit=1)[1]
         sentence = json.loads(payload_text)["sentence"]
         return {"input_ids": [_identity_from_sentence(sentence)]}
+
+
+def test_identity_tokenizer_rejects_a_mismatched_prompt_immediately() -> None:
+    tokenizer = _IdentityTokenizer(["expected prompt"])
+
+    with pytest.raises(AssertionError, match="row 0"):
+        tokenizer.apply_chat_template([{"role": "user", "content": "changed prompt"}])
+
+    assert tokenizer.prompts == []
 
 
 class _InputDrivenEngine:
@@ -842,7 +858,7 @@ def test_runner_preserves_sample_prompt_generation_prediction_identity(
     code_by_identity = _identity_code_mapping(candidate_rows, len(selected))
     expected_prompts = _identity_expected_prompts(selected, candidate_rows)
 
-    tokenizer = _IdentityTokenizer()
+    tokenizer = _IdentityTokenizer(expected_prompts)
     engine = _InputDrivenEngine(code_by_identity)
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
     monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: engine)
