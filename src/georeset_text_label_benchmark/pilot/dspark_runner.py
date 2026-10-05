@@ -68,14 +68,18 @@ def run_dspark_pilot(
     validation_commit: str,
     output_dir: Path | None = None,
     model_cache_dir: Path = Path(".cache/model-dspark"),
+    smoke: bool = False,
 ) -> dict[str, Any]:
-    """Run only the published frozen sample and write non-overwriting DSpark sidecars."""
-    destination = output_dir or run_dir.parent / "lfm2.5-2.6b-dspark-100-seed42"
+    """Run the frozen DSpark pilot or its fixed eight-row readiness smoke."""
+    destination = _output_destination(run_dir, output_dir, smoke)
     _validate_run_options(run_dir, destination, computation_commit, validation_commit)
     staging = _find_staged_dspark_run(destination)
-    sample, rows, candidates = read_frozen_pilot_inputs(run_dir)
-    _validate_published_sample(sample, rows)
+    sample, frozen_rows, candidates = read_frozen_pilot_inputs(run_dir)
+    _validate_published_sample(sample, frozen_rows)
     frozen_e5_manifest_sha256 = _validate_frozen_e5_manifest(run_dir, sample)
+    rows = _rows_for_run(frozen_rows, smoke)
+    smoke_gate = None
+    run_scope = _run_scope(sample, rows, smoke)
     if staging is not None:
         return _resume_staged_dspark_run(
             run_dir,
@@ -86,6 +90,7 @@ def run_dspark_pilot(
             computation_commit,
             validation_commit,
             frozen_e5_manifest_sha256,
+            run_scope,
         )
     ensure_publication_supported(destination.parent)
     gpu = _require_supported_gpu()
@@ -107,6 +112,9 @@ def run_dspark_pilot(
     generation_seconds = _clock() - generation_start
     prediction_rows = _prediction_rows(rows, candidates, encoded, prompt_hashes, generated)
     metrics = _metrics_payload(prediction_rows, candidates)
+    if smoke:
+        smoke_gate = _smoke_gate(prediction_rows)
+        metrics["smoke_gate"] = smoke_gate
     with staged_directory(
         destination.parent,
         prefix=f".{destination.name}.staging-",
@@ -120,6 +128,8 @@ def run_dspark_pilot(
         manifest = _build_manifest(
             run_dir,
             sample,
+            run_scope,
+            smoke_gate,
             candidates,
             staged_prediction,
             staged_metrics,
@@ -139,7 +149,7 @@ def run_dspark_pilot(
         publish_directory(staging, destination)
     prediction_path = destination / PREDICTIONS_NAME
     manifest_path = destination / MANIFEST_NAME
-    return {
+    result = {
         "run_dir": str(destination),
         "frozen_input_dir": str(run_dir),
         "sample_count": len(prediction_rows),
@@ -150,6 +160,114 @@ def run_dspark_pilot(
         "predictions_sha256": sha256_file(prediction_path),
         "manifest_sha256": sha256_file(manifest_path),
     }
+    if smoke_gate is not None:
+        result["run_scope"] = run_scope
+        result["smoke_gate"] = smoke_gate
+    return result
+
+
+def _output_destination(run_dir: Path, output_dir: Path | None, smoke: bool) -> Path:
+    """Use a caller-supplied path or a distinct default name for each run scope."""
+    if output_dir is not None:
+        return output_dir
+    name = "lfm2.5-2.6b-dspark-smoke-8-seed42" if smoke else "lfm2.5-2.6b-dspark-100-seed42"
+    return run_dir.parent / name
+
+
+def _rows_for_run(
+    frozen_rows: Sequence[Mapping[str, Any]], smoke: bool
+) -> Sequence[Mapping[str, Any]]:
+    """Keep full-run order or select bounded, language-diverse smoke rows."""
+    return _select_smoke_rows(frozen_rows) if smoke else frozen_rows
+
+
+def _select_smoke_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Choose up to eight rows with distinct languages, then fill in frozen order."""
+    first_by_language = {}
+    for row in rows:
+        language = row.get("language_code")
+        first_by_language.setdefault(language, row)
+    selected = list(first_by_language.values())[: dspark.MAX_SMOKE_ROWS]
+    if len(selected) < dspark.MAX_SMOKE_ROWS:
+        selected_ids = {row["sample_id"] for row in selected}
+        selected.extend(_fill_smoke_rows(rows, selected_ids, dspark.MAX_SMOKE_ROWS - len(selected)))
+    return selected
+
+
+def _fill_smoke_rows(
+    rows: Sequence[Mapping[str, Any]], selected_ids: set[str], count: int
+) -> list[Mapping[str, Any]]:
+    """Fill a language-diverse smoke selection in frozen sample order."""
+    selected = []
+    for row in rows:
+        if row["sample_id"] not in selected_ids:
+            selected.append(row)
+            if len(selected) == count:
+                break
+    return selected
+
+
+def _smoke_gate(predictions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Require six EOS-finished final codes and reject every truncated row."""
+    valid = _count_parse_status(predictions, "valid")
+    truncated = _count_parse_status(predictions, "truncated")
+    valid_eos_stopped = _count_valid_eos_stopped_answers(predictions)
+    minimum_valid = min(dspark.MIN_SMOKE_VALID_OUTPUTS, len(predictions))
+    passed = (
+        len(predictions) == dspark.MAX_SMOKE_ROWS
+        and valid >= minimum_valid
+        and valid_eos_stopped >= minimum_valid
+        and truncated == 0
+    )
+    return {
+        "passed": passed,
+        "row_count": len(predictions),
+        "valid_final_answer_count": valid,
+        "minimum_valid_final_answers": minimum_valid,
+        "truncated_count": truncated,
+        "valid_eos_stopped_answer_count": valid_eos_stopped,
+        "minimum_eos_stopped_answers": minimum_valid,
+    }
+
+
+def _count_parse_status(predictions: Sequence[Mapping[str, Any]], status: str) -> int:
+    """Count rows with one exact parse status."""
+    return sum(row["parse_status"] == status for row in predictions)
+
+
+def _count_valid_eos_stopped_answers(predictions: Sequence[Mapping[str, Any]]) -> int:
+    """Count valid parser results whose raw text retains the matched EOS token."""
+    return sum(_is_valid_eos_stopped_answer(row) for row in predictions)
+
+
+def _is_valid_eos_stopped_answer(row: Mapping[str, Any]) -> bool:
+    """Check that one parsed final code was visibly stopped by the pinned EOS."""
+    raw_output = row.get("raw_output")
+    return (
+        row.get("parse_status") == "valid"
+        and row.get("finish_reason") == "stop"
+        and isinstance(raw_output, str)
+        and raw_output.endswith(dspark.TARGET_EOS_TOKEN)
+    )
+
+
+def _run_scope(
+    sample: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], smoke: bool
+) -> dict[str, Any]:
+    ids = [str(row["sample_id"]) for row in rows]
+    scope: dict[str, Any] = {
+        "kind": "bounded-smoke" if smoke else "full-pilot",
+        "frozen_sample_size": sample["selection"]["sample_size"],
+        "processed_row_count": len(rows),
+        "processed_sample_ids_sha256": _sha256_json(ids),
+    }
+    if smoke:
+        scope["selection_method"] = (
+            "Take the first sample-order row for each distinct language_code, up to eight, "
+            "then fill from the frozen sample order."
+        )
+        scope["processed_sample_ids"] = ids
+    return scope
 
 
 async def _generate_rows(
@@ -286,6 +404,8 @@ def _invalid_output_reasons(predictions: Sequence[Mapping[str, Any]]) -> list[di
 def _build_manifest(
     run_dir: Path,
     sample: Mapping[str, Any],
+    run_scope: Mapping[str, Any],
+    smoke_gate: Mapping[str, Any] | None,
     candidates: Sequence[Mapping[str, str]],
     prediction_path: Path,
     metrics_path: Path,
@@ -310,6 +430,8 @@ def _build_manifest(
         "frozen_e5_manifest_sha256": frozen_e5_manifest_sha256,
         "source_coverage": sample["source_coverage"],
         "sample": sample["selection"],
+        "run_scope": dict(run_scope),
+        "smoke_gate": dict(smoke_gate) if smoke_gate is not None else None,
         "candidate_labels": _candidate_provenance(sample, candidates),
         "model": {
             "repository": dspark.TARGET_MODEL,
@@ -337,7 +459,7 @@ def _build_manifest(
             "tokenizer_download_and_load": tokenizer_seconds,
             "sglang_target_and_draft_load": engine_seconds,
             "generation_total": generation_seconds,
-            "generation_includes_sequential_100_requests": True,
+            "generation_includes_sequential_requests": run_scope["processed_row_count"],
         },
         "outputs_sha256": {
             "frozen_sample.json": sha256_file(run_dir / "frozen_sample.json"),
@@ -346,12 +468,20 @@ def _build_manifest(
             METRICS_NAME: sha256_file(metrics_path),
         },
         "limitations": [
-            "The result uses the fixed 100-sentence positive-overlap pilot only.",
+            "The source is the fixed 100-sentence positive-overlap pilot.",
             "Gold labels are existing polygon-level EUNIS assignments, not sentence-level truth.",
             "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
             "The sample is occurrence-weighted before unique-text and unique-polygon filtering.",
             "Compare top-1 and macro-F1 only with E5; direct generation has no top-5 ranking.",
-            "Sampling follows the LFM2.5 model-card example with a fixed request seed; DSpark is a speculative draft path, not a compute device.",
+            "Generation uses the target model card's sampled decoding settings.",
+            "The DSpark vendor parity benchmarks use greedy decoding; this sampled run does not claim greedy parity.",
+            *(
+                [
+                    "This is an eight-row readiness smoke and its metrics are not a full pilot result."
+                ]
+                if run_scope["kind"] == "bounded-smoke"
+                else []
+            ),
         ],
     }
 
@@ -364,6 +494,7 @@ def _generation_config(template_hash: str, sample: Mapping[str, Any]) -> dict[st
         "chat_template_kwargs": dspark.CHAT_TEMPLATE_KWARGS,
         "sampling": dspark.SAMPLING,
         "engine": dspark.ENGINE_ARGS,
+        "setting_provenance": dspark.GENERATION_SETTING_PROVENANCE,
         "runtime_context_limit_tokens": dspark.RUNTIME_CONTEXT_TOKENS,
         "maximum_new_tokens": dspark.MAX_NEW_TOKENS,
         "candidate_count": len(sample["candidate_labels"]["codes"]),
@@ -386,7 +517,9 @@ def _validate_run_options(
 ) -> None:
     _validate_commit(computation_commit, "computation_commit")
     _validate_commit(validation_commit, "validation_commit")
-    if output_dir.resolve() == run_dir.resolve():
+    resolved_run_dir = run_dir.resolve()
+    resolved_output_dir = output_dir.resolve()
+    if resolved_output_dir == resolved_run_dir or resolved_run_dir in resolved_output_dir.parents:
         raise ValueError("DSpark output directory must be separate from frozen E5 inputs")
 
 
@@ -411,6 +544,7 @@ def _resume_staged_dspark_run(
     computation_commit: str,
     validation_commit: str,
     frozen_e5_manifest_sha256: str,
+    run_scope: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     manifest = _read_staged_dspark_manifest(staging)
     _validate_staged_dspark_protocol(
@@ -421,8 +555,11 @@ def _resume_staged_dspark_run(
         computation_commit,
         validation_commit,
         frozen_e5_manifest_sha256,
+        run_scope,
     )
     _validate_staged_dspark_hashes(run_dir, staging, manifest)
+    metrics = _read_staged_dspark_metrics(staging)
+    _validate_staged_smoke_gate(staging, manifest, run_scope, metrics)
     ensure_publication_supported(destination.parent)
     publish_directory(staging, destination)
     return _staged_dspark_summary(destination, run_dir, staging, sample, candidates, manifest)
@@ -448,6 +585,7 @@ def _validate_staged_dspark_protocol(
     computation_commit: str,
     validation_commit: str,
     frozen_e5_manifest_sha256: str,
+    run_scope: Mapping[str, Any] | None = None,
 ) -> None:
     expected = {
         "computation_commit": computation_commit,
@@ -457,6 +595,8 @@ def _validate_staged_dspark_protocol(
         "candidate_labels": _candidate_provenance(sample, candidates),
         "frozen_e5_manifest_sha256": frozen_e5_manifest_sha256,
     }
+    if run_scope is not None:
+        expected["run_scope"] = dict(run_scope)
     if {key: manifest.get(key) for key in expected} != expected:
         raise ValueError(
             f"retained DSpark staging manifest does not match this frozen run: {staging}"
@@ -475,6 +615,101 @@ def _validate_staged_dspark_hashes(
     )
 
 
+def _read_staged_dspark_metrics(staging: Path) -> Mapping[str, Any]:
+    try:
+        metrics = json.loads((staging / METRICS_NAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"retained DSpark staging metrics are incomplete or unreadable: {staging}"
+        ) from error
+    if not isinstance(metrics, Mapping):
+        raise ValueError(f"retained DSpark staging metrics must be a JSON object: {staging}")
+    return metrics
+
+
+def _validate_staged_smoke_gate(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    run_scope: Mapping[str, Any] | None,
+    metrics: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if run_scope is None or run_scope.get("kind") != "bounded-smoke":
+        return None
+    return _validate_staged_smoke_gate_payload(staging, manifest, run_scope, metrics)
+
+
+def _validate_staged_smoke_gate_payload(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    run_scope: Mapping[str, Any],
+    metrics: Mapping[str, Any],
+) -> dict[str, Any]:
+    smoke_gate = metrics.get("smoke_gate")
+    if not isinstance(smoke_gate, Mapping):
+        raise ValueError(f"retained DSpark staging smoke gate is missing or malformed: {staging}")
+    _validate_smoke_gate_passed(smoke_gate, staging)
+    if dict(smoke_gate) != manifest.get("smoke_gate"):
+        raise ValueError(
+            f"retained DSpark staging smoke gate does not match its manifest: {staging}"
+        )
+    if smoke_gate.get("row_count") != run_scope.get("processed_row_count"):
+        raise ValueError(f"retained DSpark staging smoke gate does not match its scope: {staging}")
+    predictions = _read_staged_dspark_predictions(staging)
+    _validate_staged_smoke_prediction_identity(staging, run_scope, predictions)
+    computed_gate = _smoke_gate(predictions)
+    if dict(smoke_gate) != computed_gate:
+        raise ValueError(
+            f"retained DSpark staging smoke gate does not match staged predictions: {staging}"
+        )
+    return computed_gate
+
+
+def _validate_staged_smoke_prediction_identity(
+    staging: Path,
+    run_scope: Mapping[str, Any],
+    predictions: Sequence[Mapping[str, Any]],
+) -> None:
+    """Require retained smoke outputs to preserve their frozen sample ordering."""
+    sample_ids = [row.get("sample_id") for row in predictions]
+    expected_sample_ids = run_scope.get("processed_sample_ids")
+    if not isinstance(expected_sample_ids, list) or sample_ids != expected_sample_ids:
+        raise ValueError(f"retained DSpark staging predictions do not match smoke scope: {staging}")
+    _validate_staged_smoke_prediction_count_and_hash(staging, run_scope, predictions, sample_ids)
+
+
+def _validate_staged_smoke_prediction_count_and_hash(
+    staging: Path,
+    run_scope: Mapping[str, Any],
+    predictions: Sequence[Mapping[str, Any]],
+    sample_ids: Sequence[Any],
+) -> None:
+    if len(predictions) != run_scope.get("processed_row_count"):
+        raise ValueError(f"retained DSpark staging predictions do not match smoke scope: {staging}")
+    if _sha256_json(sample_ids) != run_scope.get("processed_sample_ids_sha256"):
+        raise ValueError(f"retained DSpark staging predictions do not match smoke scope: {staging}")
+
+
+def _read_staged_dspark_predictions(staging: Path) -> list[dict[str, Any]]:
+    """Read prediction rows used to revalidate a retained smoke transaction."""
+    try:
+        predictions = pq.read_table(staging / PREDICTIONS_NAME).to_pylist()
+    except (OSError, pa.ArrowException) as error:
+        raise ValueError(
+            f"retained DSpark staging predictions are incomplete or unreadable: {staging}"
+        ) from error
+    if not all(isinstance(row, dict) for row in predictions):
+        raise ValueError(f"retained DSpark staging predictions must contain row objects: {staging}")
+    return predictions
+
+
+def _validate_smoke_gate_passed(smoke_gate: Mapping[str, Any], staging: Path) -> None:
+    """Reject a retained smoke record that did not meet its readiness threshold."""
+    if not isinstance(smoke_gate.get("passed"), bool):
+        raise ValueError(f"retained DSpark staging smoke gate is missing or malformed: {staging}")
+    if smoke_gate.get("passed") is not True:
+        raise ValueError(f"retained DSpark staging smoke gate did not pass: {staging}")
+
+
 def _staged_dspark_summary(
     destination: Path,
     run_dir: Path,
@@ -483,12 +718,14 @@ def _staged_dspark_summary(
     candidates: Sequence[Mapping[str, str]],
     manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
-    metrics = json.loads((staging / METRICS_NAME).read_text(encoding="utf-8"))
+    metrics = _read_staged_dspark_metrics(staging)
     timings = manifest["timings_seconds"]
-    return {
+    result = {
         "run_dir": str(destination),
         "frozen_input_dir": str(run_dir),
-        "sample_count": sample["selection"]["sample_size"],
+        "sample_count": manifest.get("run_scope", {}).get(
+            "processed_row_count", sample["selection"]["sample_size"]
+        ),
         "candidate_count": len(candidates),
         "metrics": metrics["overall"],
         "generation_seconds": timings["generation_total"],
@@ -497,6 +734,11 @@ def _staged_dspark_summary(
         "predictions_sha256": sha256_file(destination / PREDICTIONS_NAME),
         "manifest_sha256": sha256_file(destination / MANIFEST_NAME),
     }
+    run_scope = manifest.get("run_scope")
+    if isinstance(run_scope, Mapping) and run_scope.get("kind") == "bounded-smoke":
+        result["run_scope"] = dict(run_scope)
+        result["smoke_gate"] = _validate_staged_smoke_gate(staging, manifest, run_scope, metrics)
+    return result
 
 
 def _validate_published_sample(

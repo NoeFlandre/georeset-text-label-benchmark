@@ -179,6 +179,10 @@ runtime is SGLang `0.5.20` with FlashInfer `0.6.18`, BF16, paired `DSPARK`
 speculative decoding, one request at a time, and at most `512` generated tokens.
 This uses the [upstream LFM2 DSpark support](https://github.com/sgl-project/sglang/pull/31041)
 and the launch settings in the [official draft card](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark).
+The official [SGLang LFM2.5 guide](https://docs.sglang.ai/cookbook/autoregressive/LiquidAI/LFM2.5)
+describes the supported serving path and warns that a generation cap can truncate
+reasoning. This pilot intentionally keeps the target model card's 512-token cap
+and gates it with a representative smoke before a full evaluation.
 DSpark is speculative decoding with a paired draft checkpoint; it is not a
 hardware device and does not add a second label model. The target remains the
 LFM2.5 checkpoint, and the pinned sampling settings determine its output.
@@ -190,12 +194,16 @@ supports `128,000` tokens. The adapter therefore pins the engine's
 `512`-token generation cap before it loads the serving engine. The
 [model-card example](https://huggingface.co/LiquidAI/LFM2.5-2.6B) uses
 temperature `0.1`, top-k `50`, repetition penalty `1.1`, and a 512-token cap;
-the adapter pins those settings. SGLang v0.5.20's per-request sampling seed is
-fixed at `42`. The EOS token `<|im_end|>` (token ID `124900`) from the [pinned
+the adapter pins those settings. The pinned template ignores
+`enable_thinking=False` and opens assistant generation with `<think>`, so the
+adapter does not claim reasoning is disabled. SGLang v0.5.20's DSpark
+acceptance path uses its engine RNG; its per-request `sampling_seed` is not
+consumed there. Requests run sequentially with `random_seed=42`, matching the
+frozen sample seed. The EOS token `<|im_end|>` (token ID `124900`) from the [pinned
 tokenizer vocabulary](https://huggingface.co/LiquidAI/LFM2.5-2.6B/blob/654f9463ce32b05d0429d76fe1f580b27d4c1ac0/tokenizer.json)
 is an explicit stop token. The adapter keeps special tokens and the stop
 marker in raw output using SGLang v0.5.20's `skip_special_tokens` and
-`no_stop_trim` controls, alongside its `sampling_seed` and `stop_token_ids`
+`no_stop_trim` controls, alongside its `stop_token_ids`
 fields ([pinned sampling API](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/sampling/sampling_params.py)).
 
 At the pinned tokenizer revision, the actual rendered chat template opens the
@@ -208,12 +216,22 @@ formats remain rows with their raw output and a parse failure reason. A
 regression test renders the exact pinned 5.4 KB template fixture without model
 weights.
 
-These decoding settings address the first run's length and repeated-span
-failure modes based on the official model-card example. They have not been
-validated on a GPU and do not establish that accuracy will improve. Preserve
-the earlier run and write any retry to a new output path, for example
-`pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2/`; the manifest records
-the complete generation settings so its results are distinguishable.
+The completed `job4184197` used 100 frozen sentences, 158 EUNIS candidates,
+temperature 0, no repetition penalty, no explicit stop token, and a 4096-token
+cap. It reached that cap on 97 rows while still reasoning; 95 repeated a
+12-word span, and none of those 97 outputs contained `</think>` or EOS. The
+other three rows yielded only `MA223`, `MA221`, and `N1A`; none matched the gold
+label. The parser rejected the unfinished reasoning and preserves those rows as
+invalid. Do not recover a code mentioned inside a reasoning trace as a final
+answer, and leave that run and its evidence unchanged.
+
+The corrected sampled settings are grounded in the pinned target's model card
+and generation configuration; they address the missing repetition control and
+EOS stop and use a smaller explicit cap. They have not yet been validated on a
+GPU and do not establish that accuracy will improve. Run the bounded smoke
+below first. Only if it passes should the full 100-row retry use a new output
+path such as `pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2/`. The
+manifest records every generation setting and its rationale.
 
 The adapter writes three files into a separate LLM run directory beside the
 frozen E5 directory: `dspark_predictions.parquet`, `dspark_metrics.json`, and
@@ -308,13 +326,29 @@ scripts/run-dspark-grid5000.sh \
   /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2
 ```
 
-Before the full 100-row retry, the cluster owner should run a short smoke on a
-few existing frozen rows using the same pinned template and generation
-settings. Check that each request ends with the expected SGLang finish reason,
-that completed output retains `<|im_end|>`, and that `</think>` is followed by
-one allowed code. The smoke is a runtime check only; keep its outputs outside
-the benchmark run path. The checked-in `run-dspark` command evaluates the
-complete frozen sample and does not resample or offer a smaller benchmark run.
+Before the full 100-row retry, run the checked-in eight-row smoke against a
+language-diverse subset of the existing frozen sample. It uses the exact same
+model, template, serving, sampling, stop, and parser settings as the full run,
+and writes to a distinct output directory through the same NFS-safe publication
+path. The command exits unsuccessfully unless at least six rows contain an
+exact candidate code after `</think>`, all six retain the pinned `<|im_end|>`
+stop, and no row is truncated. Inspect the manifest and per-row output; leave
+both the original failed run and frozen E5 input unchanged. The smoke does not
+resample or relabel the full benchmark and its metrics are not a full pilot
+result.
+
+Example bounded smoke command:
+
+```bash
+scripts/run-dspark-grid5000.sh \
+  /path/to/persistent/pilot/runs/e5-small-100-seed42 \
+  /path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-v2 \
+  --smoke
+```
+
+After that smoke passes, invoke the wrapper without `--smoke`, using a separate
+new full-run path. The script requires a clean, committed checkout so both
+manifest commit fields identify the exact runtime code.
 
 Grid'5000 documents `/home` and Group Storage as NFS mounts. The adapter checks
 the chosen persistent output parent with the no-clobber probe before GPU

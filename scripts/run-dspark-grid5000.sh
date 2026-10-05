@@ -2,16 +2,24 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output" >&2
+  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output [--smoke]" >&2
 }
 
-if [[ $# -ne 2 ]]; then
+if [[ $# -lt 2 || $# -gt 3 ]]; then
   usage
   exit 2
 fi
 
 RUN_DIR=$1
 OUTPUT_DIR=$2
+RUN_COMMAND=run-dspark
+if [[ $# -eq 3 ]]; then
+  if [[ $3 != "--smoke" ]]; then
+    usage
+    exit 2
+  fi
+  RUN_COMMAND=run-dspark-smoke
+fi
 if [[ "$RUN_DIR" != /* || "$OUTPUT_DIR" != /* ]]; then
   echo "RUN_DIR and OUTPUT_DIR must be absolute paths." >&2
   exit 2
@@ -172,8 +180,12 @@ cd "$PROJECT_ROOT"
 echo "Installing the locked DSpark runtime in job-local temporary storage."
 run_bounded uv sync --locked --no-default-groups --extra dspark --python 3.12
 run_bounded uv cache clean
-echo "Running the frozen 100-row pilot; temporary cache limit is 20 GiB."
-run_bounded uv run --locked georeset-pilot run-dspark \
+if [[ "$RUN_COMMAND" == "run-dspark-smoke" ]]; then
+  echo "Running the fixed eight-row readiness smoke; temporary cache limit is 20 GiB."
+else
+  echo "Running the frozen 100-row pilot; temporary cache limit is 20 GiB."
+fi
+run_bounded uv run --locked georeset-pilot "$RUN_COMMAND" \
   --run-dir "$RUN_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --model-cache "$HF_HOME" \
