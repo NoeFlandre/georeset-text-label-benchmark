@@ -40,6 +40,7 @@ def _fake_tools(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
         '    "?? "*) [ "$3" = "--untracked-files=no" ] && exit 0;;\n'
         "  esac\n"
         "  printf '%s' \"$PILOT_TEST_GIT_STATUS\"\n"
+        '  exit "${PILOT_TEST_GIT_STATUS_EXIT:-0}"\n'
         "else\n"
         "  printf '%s\\n' \"$PILOT_TEST_COMMIT\"\n"
         "fi\n",
@@ -78,6 +79,7 @@ def _environment(
             "PILOT_TEST_CALL_LOG": str(call_log),
             "PILOT_TEST_COMMIT": COMMIT,
             "PILOT_TEST_GIT_STATUS": "",
+            "PILOT_TEST_GIT_STATUS_EXIT": "0",
             "PILOT_TEST_HF_LOG": str(call_log.parent / "hf.log"),
             "PILOT_TEST_REAL_PYTHON": sys.executable,
             "PILOT_TEST_SMOKE_STATUS": smoke_status,
@@ -133,6 +135,29 @@ def test_direct_runbook_rejects_dirty_checkout_before_downloading_inputs(
 
     assert result.returncode != 0
     assert "clean, committed checkout" in result.stderr
+    assert not (tmp_path / "hf.log").exists()
+    assert _calls(call_log) == []
+
+
+def test_direct_runbook_rejects_failed_cleanliness_check_before_downloading_inputs(
+    tmp_path: pathlib.Path,
+) -> None:
+    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
+    bin_dir, call_log = _fake_tools(tmp_path)
+    env = _environment(bin_dir, call_log, "0")
+    env["PILOT_TEST_GIT_STATUS_EXIT"] = "128"
+
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Could not verify a clean, committed checkout" in result.stderr
     assert not (tmp_path / "hf.log").exists()
     assert _calls(call_log) == []
 
@@ -230,3 +255,57 @@ def test_grid_runbook_stops_after_failed_smoke_with_stale_passing_metrics(
     assert result.returncode != 0
     assert len(calls) == 1
     assert "--smoke" in calls[0]
+
+
+def test_grid_wrapper_rejects_failed_cleanliness_check_before_recording_head(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_root = pathlib.Path(__file__).resolve().parents[1]
+    wrapper = tmp_path / "project/scripts/run-dspark-grid5000.sh"
+    _write_executable(
+        wrapper,
+        (project_root / "scripts/run-dspark-grid5000.sh").read_text(encoding="utf-8"),
+    )
+    run_dir = tmp_path / "inputs"
+    run_dir.mkdir()
+    for name in ("frozen_sample.json", "candidate_labels.csv", "manifest.json"):
+        (run_dir / name).write_text("{}", encoding="utf-8")
+    output_dir = tmp_path / "outputs/new-run"
+    output_dir.parent.mkdir(parents=True)
+    scratch_dir = tmp_path / "scratch"
+    scratch_dir.mkdir()
+    fake_bin = tmp_path / "bin"
+    git_log = tmp_path / "git.log"
+    _write_executable(
+        fake_bin / "git",
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$*" >> "$PILOT_TEST_GIT_LOG"\n'
+        'if [[ " $* " == *" status "* ]]; then exit "${PILOT_TEST_GIT_STATUS_EXIT:-0}"; fi\n'
+        'if [[ " $* " == *" rev-parse "* ]]; then printf \'%s\\n\' "$PILOT_TEST_COMMIT"; exit 0; fi\n'
+        "exit 2\n",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "PILOT_TEST_COMMIT": COMMIT,
+            "PILOT_TEST_GIT_LOG": str(git_log),
+            "PILOT_TEST_GIT_STATUS_EXIT": "128",
+            "TMPDIR": str(scratch_dir),
+        }
+    )
+
+    result = subprocess.run(
+        [str(wrapper), str(run_dir), str(output_dir)],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    git_calls = git_log.read_text(encoding="utf-8").splitlines()
+    assert result.returncode == 2
+    assert "Could not verify a clean, committed checkout" in result.stderr
+    assert any(" status " in f" {call} " for call in git_calls)
+    assert all("rev-parse" not in call for call in git_calls)
