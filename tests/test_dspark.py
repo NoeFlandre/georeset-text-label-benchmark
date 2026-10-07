@@ -4860,10 +4860,10 @@ def test_hash_seed_blob_uses_bounded_reads_and_detects_path_replacement(
     )
     monkeypatch.setattr(dspark_runner, "MAX_CACHE_HASH_CHUNK_BYTES", 4)
 
-    byte_count, changed = dspark_runner._hash_seed_blob_in_chunks(source_blob, hashlib.sha256())
+    result = dspark_runner._hash_seed_blob_in_chunks(source_blob, hashlib.sha256())
 
-    assert byte_count == 10
-    assert changed is True
+    assert result.byte_count == 10
+    assert result.source_replaced_during_hashing is True
     assert read_sizes == [4, 4, 4, 4]
 
 
