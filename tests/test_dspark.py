@@ -3747,8 +3747,36 @@ def test_cache_seed_rolls_back_first_repository_when_second_install_fails(
     assert source_blob.read_bytes() == b"preserve source"
 
 
+def test_cache_seed_reports_rollback_cleanup_failures_and_continues_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = tmp_path / "stage"
+    target = tmp_path / "target"
+    stage.mkdir()
+    target.mkdir()
+    folder_names = ("first", "second")
+    for name in folder_names:
+        (stage / name).mkdir()
+    os.replace(stage / "first", target / "first")
+    monkeypatch.setattr(
+        dspark_runner.os,
+        "replace",
+        MagicMock(side_effect=[None, OSError("injected install failure")]),
+    )
+    cleanup = MagicMock(side_effect=PermissionError("injected cleanup failure"))
+    monkeypatch.setattr(dspark_runner.shutil, "rmtree", cleanup)
+
+    with pytest.raises(RuntimeError, match="rollback left residual paths") as error:
+        dspark_runner._install_staged_cache_folders(stage, target, ("first", "second"))
+
+    assert "injected install failure" in str(error.value)
+    assert "injected cleanup failure" in str(error.value)
+    cleanup.assert_called_once_with(target / "first")
+    assert (target / "first").is_dir()
+
+
 def test_model_cache_seed_links_only_pinned_repositories_and_preserves_source(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "verified-source" / "hub"
     target = tmp_path / "job-local" / "hub"
@@ -3757,13 +3785,43 @@ def test_model_cache_seed_links_only_pinned_repositories_and_preserves_source(
         (dspark.DRAFT_MODEL, dspark.DRAFT_REVISION),
     )
     source_entries: list[tuple[str, str, Path, bytes]] = []
+    inventory: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
     for index, (repository, revision) in enumerate(repositories):
         folder = f"models--{repository.replace('/', '--')}"
         repo_cache = source / folder
         blobs = repo_cache / "blobs"
         snapshot = repo_cache / "snapshots" / revision
-        blob_name = "a" * 64 if index == 0 else f"verified-{index}"
         payload = f"pinned cache file {index}".encode()
+        if index == 0:
+            blob_name = hashlib.sha256(payload).hexdigest()
+            blob_id = "a" * 40
+            content_algorithm = "sha256"
+            content_hash = blob_name
+            file_metadata: dict[str, Any] = {
+                "size": len(payload),
+                "blob_id": blob_id,
+                "lfs_sha256": blob_name,
+                "lfs_size": len(payload),
+            }
+            pinned_metadata = {
+                "path": "config.json",
+                **file_metadata,
+                "content_hash_algorithm": content_algorithm,
+                "content_hash": content_hash,
+            }
+        else:
+            blob_name = hashlib.sha1(f"blob {len(payload)}\0".encode() + payload).hexdigest()
+            blob_id = blob_name
+            content_algorithm = "git-sha1"
+            content_hash = blob_id
+            file_metadata = {"size": len(payload), "blob_id": blob_id}
+            pinned_metadata = {
+                "path": "config.json",
+                **file_metadata,
+                "content_hash_algorithm": content_algorithm,
+                "content_hash": content_hash,
+            }
+        inventory[(repository, revision)] = {"config.json": pinned_metadata}
         blob = blobs / blob_name
         blob.parent.mkdir(parents=True)
         if index == 1:
@@ -3778,19 +3836,17 @@ def test_model_cache_seed_links_only_pinned_repositories_and_preserves_source(
         snapshot_file.symlink_to(Path(os.path.relpath(blob, snapshot_file.parent)))
         tree = repo_cache / "trees" / f"{revision}.json"
         tree.parent.mkdir()
-        file_metadata: dict[str, Any] = {"size": len(payload), "blob_id": blob_name}
-        if index == 0:
-            file_metadata = {
-                "size": len(payload),
-                "blob_id": "git-object-id",
-                "lfs_sha256": blob_name,
-                "lfs_size": len(payload),
-            }
         tree.write_text(
             json.dumps({"format_version": 1, "files": {"config.json": file_metadata}}),
             encoding="utf-8",
         )
         source_entries.append((folder, revision, blob, payload))
+
+    monkeypatch.setattr(
+        dspark_runner,
+        "_required_pinned_cache_files",
+        lambda repository, revision: inventory[(repository, revision)],
+    )
 
     seeded = dspark_runner._seed_model_cache_from_hub_cache(source, target)
 
@@ -3814,6 +3870,18 @@ def test_model_cache_seed_links_only_pinned_repositories_and_preserves_source(
         "models--LiquidAI--LFM2.5-2.6B",
         "models--LiquidAI--LFM2.5-2.6B-DSpark",
     }
+
+
+def test_pinned_cache_inventory_covers_both_exact_model_revisions() -> None:
+    expected_counts = {
+        (dspark.TARGET_MODEL, dspark.TARGET_REVISION): 11,
+        (dspark.DRAFT_MODEL, dspark.DRAFT_REVISION): 5,
+    }
+
+    for (repository, revision), expected_count in expected_counts.items():
+        files = dspark_runner._required_pinned_cache_files(repository, revision)
+        assert len(files) == expected_count
+        assert all(dspark_runner._valid_inventory_file_metadata(item) for item in files.values())
 
 
 def test_model_cache_seed_stages_inside_writable_cache(
@@ -3859,7 +3927,7 @@ def test_model_cache_seed_fails_closed_on_incomplete_source_and_preserves_it(
         if path.is_file() and not path.is_symlink()
     }
 
-    with pytest.raises(RuntimeError, match="pinned model cache seed is incomplete"):
+    with pytest.raises(RuntimeError, match="does not match the pinned file inventory"):
         dspark_runner._seed_model_cache_from_hub_cache(source, target)
 
     after = {
@@ -4208,11 +4276,15 @@ def test_seed_snapshot_entry_errors_retain_model_identity(
 
     blob_targets: dict[str, Path] = {}
     if failure not in {"unsafe-name", "invalid-metadata", "missing-link"}:
-        source_blob = source_blobs / "empty"
+        source_blob_name = "empty"
+        if failure == "collision":
+            source_blob_name = hashlib.sha1(b"blob 0\0").hexdigest()
+            metadata = {"size": 0, "blob_id": source_blob_name}
+        source_blob = source_blobs / source_blob_name
         source_blob.write_bytes(b"")
         (source_snapshot / "config.json").symlink_to(source_blob)
     if failure == "collision":
-        blob_targets["empty"] = tmp_path / "other" / "empty"
+        blob_targets[source_blob_name] = tmp_path / "other" / source_blob_name
     with pytest.raises(RuntimeError) as error:
         dspark_runner._seed_snapshot_entry(
             file_name,
@@ -4238,8 +4310,10 @@ def test_seed_snapshot_entry_supports_nested_reused_blob_paths(tmp_path: Path) -
     staged_snapshot = tmp_path / "stage" / "snapshots" / revision
     for directory in (source_blobs, source_snapshot, staged_blobs, staged_snapshot):
         directory.mkdir(parents=True)
-    source_blob = source_blobs / "shared"
-    source_blob.write_bytes(b"shared")
+    payload = b"shared"
+    blob_name = hashlib.sha1(f"blob {len(payload)}\0".encode() + payload).hexdigest()
+    source_blob = source_blobs / blob_name
+    source_blob.write_bytes(payload)
     (source_snapshot / "nested/deeper").mkdir(parents=True)
     for file_name in ("nested/deeper/config-a.json", "nested/deeper/config-b.json"):
         (source_snapshot / file_name).symlink_to(
@@ -4250,7 +4324,7 @@ def test_seed_snapshot_entry_supports_nested_reused_blob_paths(tmp_path: Path) -
     for file_name in ("nested/deeper/config-a.json", "nested/deeper/config-b.json"):
         dspark_runner._seed_snapshot_entry(
             file_name,
-            {"size": 6, "blob_id": "shared"},
+            {"size": len(payload), "blob_id": blob_name},
             source_snapshot,
             source_blobs,
             staged_blobs,
@@ -4261,9 +4335,9 @@ def test_seed_snapshot_entry_supports_nested_reused_blob_paths(tmp_path: Path) -
         )
 
     assert len(blob_targets) == 1
-    assert (staged_blobs / "shared").resolve() == source_blob.resolve()
-    assert (staged_snapshot / "nested/deeper/config-a.json").read_bytes() == b"shared"
-    assert (staged_snapshot / "nested/deeper/config-b.json").read_bytes() == b"shared"
+    assert (staged_blobs / blob_name).resolve() == source_blob.resolve()
+    assert (staged_snapshot / "nested/deeper/config-a.json").read_bytes() == payload
+    assert (staged_snapshot / "nested/deeper/config-b.json").read_bytes() == payload
 
 
 @pytest.mark.parametrize("link_target", ["regular", "dangling", "outside"])

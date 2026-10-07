@@ -117,6 +117,19 @@ _runner_measure_directory_bytes() {
   return 1
 }
 
+runner_check_directory_limit() {
+  local path=$1 max_bytes=$2 description=$3 size_limit_label=$4 bytes
+  if ! bytes=$(_runner_measure_directory_bytes "$path"); then
+    echo "Could not measure $description after publication; published files remain at $path. Verify the output manifest and checksums before rerunning." >&2
+    return 1
+  fi
+  if ((bytes >= max_bytes)); then
+    echo "$description reached $size_limit_label; expected less than $size_limit_label." >&2
+    return 1
+  fi
+  printf '%s' "$bytes"
+}
+
 runner_stop() {
   local original_pid=${RUNNER_PID:-} stop_status=0
   if [[ -z "$original_pid" && -z "${RUNNER_PGID:-}" ]]; then

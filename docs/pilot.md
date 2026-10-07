@@ -286,14 +286,14 @@ is supplied with `--model-cache-seed`.
 The `--model-cache-seed` value is the read-only HF Hub cache root containing
 `models--LiquidAI--LFM2.5-2.6B` and
 `models--LiquidAI--LFM2.5-2.6B-DSpark`. The runner requires the exact pinned
-snapshot revisions and complete, bounded Hub tree metadata. It checks Hub blob
-names and declared sizes, copies only tree metadata, and links the job-local
-snapshot entries to source blob entries; it does not copy weights or modify
-the source cache. Offline Hub snapshot resolution validates the staged
-metadata. This assumes a trusted HF-managed cache whose blob bytes match their
-content-addressed names; the runner does not re-hash model payloads. The
-manifest records the source root, both repository revisions, and seeding
-method.
+snapshot revisions and complete, bounded Hub tree metadata. It compares the
+cached file set and Hub identities with the package's source-controlled
+`pinned_cache_files.json` inventory, then hashes every source blob in bounded
+chunks using its pinned Git SHA-1 or LFS SHA-256 digest. It copies only tree
+metadata and links the job-local snapshot entries to verified source blobs; it
+does not copy weights or modify the source cache. Offline Hub snapshot
+resolution validates the staged metadata. The manifest records the source
+root, both repository revisions, and seeding method.
 
 ```bash
 PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926
@@ -409,7 +409,12 @@ runtime caches. A monitor stops the run if job-local temporary use exceeds
 20 GiB and deletes only the temporary directory it created. The script spends
 at most 55 minutes on environment installation and inference to leave time
 inside the one-hour allocation for cleanup. The persistent prediction,
-metrics, and manifest directory is checked to remain below 1 GiB.
+metrics, and manifest directory is checked to remain below 1 GiB. The wrapper
+retries that size scan up to five times to tolerate a transient NFS error. A
+size at or above 1 GiB remains a visible failure. If all scans fail, the
+published directory is kept and the wrapper says to verify the manifest and
+file checksums before any retry; do not submit a duplicate run or overwrite
+that output path.
 
 Before installing SGLang, the wrapper loads the Grid'5000 Lmod setup and the
 Rennes modules `nvidia-driver-libs/580`, `cuda-toolkit/13.0.2`, and

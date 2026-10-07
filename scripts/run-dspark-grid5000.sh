@@ -231,9 +231,6 @@ if [[ -n "$MODEL_CACHE_SEED" ]]; then
 fi
 run_bounded uv run --locked georeset-pilot "$RUN_COMMAND" "${DS_PILOT_ARGS[@]}"
 
-OUTPUT_BYTES=$(du -sb "$OUTPUT_DIR" | awk '{print $1}')
-if (( OUTPUT_BYTES >= MAX_OUTPUT_BYTES )); then
-  echo "Persistent evaluation outputs reached 1 GiB; expected less than 1 GiB." >&2
-  exit 1
-fi
+OUTPUT_BYTES=$(runner_check_directory_limit "$OUTPUT_DIR" "$MAX_OUTPUT_BYTES" \
+  "Persistent evaluation outputs" "1 GiB")
 echo "Run complete: $OUTPUT_BYTES persistent output bytes at $OUTPUT_DIR"

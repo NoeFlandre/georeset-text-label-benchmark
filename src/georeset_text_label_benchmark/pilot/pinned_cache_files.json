@@ -1,0 +1,146 @@
+{
+  "format_version": 1,
+  "repositories": [
+    {
+      "files": [
+        {
+          "blob_id": "52373fe24473b1aa44333d318f578ae6bf04b49b",
+          "content_hash": "52373fe24473b1aa44333d318f578ae6bf04b49b",
+          "content_hash_algorithm": "git-sha1",
+          "path": ".gitattributes",
+          "size": 1570
+        },
+        {
+          "blob_id": "25e731c697c4fe4c52ee654cedf7106a827748d2",
+          "content_hash": "25e731c697c4fe4c52ee654cedf7106a827748d2",
+          "content_hash_algorithm": "git-sha1",
+          "path": "LICENSE",
+          "size": 10574
+        },
+        {
+          "blob_id": "7423d1953b058ba00773bcf939840f584ce8c0f0",
+          "content_hash": "7423d1953b058ba00773bcf939840f584ce8c0f0",
+          "content_hash_algorithm": "git-sha1",
+          "path": "README.md",
+          "size": 18337
+        },
+        {
+          "blob_id": "d63583bce992413df713a04cc14b6a3bfe31617a",
+          "content_hash": "d63583bce992413df713a04cc14b6a3bfe31617a",
+          "content_hash_algorithm": "git-sha1",
+          "path": "chat_template.jinja",
+          "size": 5443
+        },
+        {
+          "blob_id": "71bdf63d60a624e2e0b3c966a8cd08da75df0ac0",
+          "content_hash": "71bdf63d60a624e2e0b3c966a8cd08da75df0ac0",
+          "content_hash_algorithm": "git-sha1",
+          "path": "config.json",
+          "size": 1467
+        },
+        {
+          "blob_id": "f7fa1ba9c1615d195965fc239520f209fc4b6617",
+          "content_hash": "f7fa1ba9c1615d195965fc239520f209fc4b6617",
+          "content_hash_algorithm": "git-sha1",
+          "path": "generation_config.json",
+          "size": 327
+        },
+        {
+          "blob_id": "56dbb9e55e6af92fd691c0812e9689efe54aac3b",
+          "content_hash": "05be188e6570a7642b4690545ab22ebf4d0a6068775dd776a452eebf738854cc",
+          "content_hash_algorithm": "sha256",
+          "lfs_sha256": "05be188e6570a7642b4690545ab22ebf4d0a6068775dd776a452eebf738854cc",
+          "lfs_size": 5329406264,
+          "path": "model-00001-of-00002.safetensors",
+          "size": 5329406264
+        },
+        {
+          "blob_id": "7567ceac245fa65225e4172cc64a63004f2f5646",
+          "content_hash": "532f803a9e6f127adc124d977503b438d8cc9c18f96e0862bf6835e38867bca8",
+          "content_hash_algorithm": "sha256",
+          "lfs_sha256": "532f803a9e6f127adc124d977503b438d8cc9c18f96e0862bf6835e38867bca8",
+          "lfs_size": 65021192,
+          "path": "model-00002-of-00002.safetensors",
+          "size": 65021192
+        },
+        {
+          "blob_id": "3d927a617f885785479c530a003346d76e5fd5a9",
+          "content_hash": "3d927a617f885785479c530a003346d76e5fd5a9",
+          "content_hash_algorithm": "git-sha1",
+          "path": "model.safetensors.index.json",
+          "size": 21425
+        },
+        {
+          "blob_id": "caab3a0ae45d59a9fe42fcd3b7e7c64011b55d13",
+          "content_hash": "695be7802a0e4b8a81048f0ff5ebb7fc811a0ba5a6be63dbb24deb5a81096f41",
+          "content_hash_algorithm": "sha256",
+          "lfs_sha256": "695be7802a0e4b8a81048f0ff5ebb7fc811a0ba5a6be63dbb24deb5a81096f41",
+          "lfs_size": 17905598,
+          "path": "tokenizer.json",
+          "size": 17905598
+        },
+        {
+          "blob_id": "e3eefcd570bd438293cf1e1819c016077d5aa842",
+          "content_hash": "e3eefcd570bd438293cf1e1819c016077d5aa842",
+          "content_hash_algorithm": "git-sha1",
+          "path": "tokenizer_config.json",
+          "size": 363
+        }
+      ],
+      "repository": "LiquidAI/LFM2.5-2.6B",
+      "revision": "654f9463ce32b05d0429d76fe1f580b27d4c1ac0"
+    },
+    {
+      "files": [
+        {
+          "blob_id": "a6344aac8c09253b3b630fb776ae94478aa0275b",
+          "content_hash": "a6344aac8c09253b3b630fb776ae94478aa0275b",
+          "content_hash_algorithm": "git-sha1",
+          "path": ".gitattributes",
+          "size": 1519
+        },
+        {
+          "blob_id": "272d23491019471e6776d23ae995f41b164ea34c",
+          "content_hash": "272d23491019471e6776d23ae995f41b164ea34c",
+          "content_hash_algorithm": "git-sha1",
+          "path": "LICENSE",
+          "size": 10572
+        },
+        {
+          "blob_id": "41ee04262a13080348d268829645e967887bcbe3",
+          "content_hash": "41ee04262a13080348d268829645e967887bcbe3",
+          "content_hash_algorithm": "git-sha1",
+          "path": "README.md",
+          "size": 5444
+        },
+        {
+          "blob_id": "e2ec1894ce65e7b5543e31a77e4abde5be8cf9bb",
+          "content_hash": "e2ec1894ce65e7b5543e31a77e4abde5be8cf9bb",
+          "content_hash_algorithm": "git-sha1",
+          "path": "config.json",
+          "size": 830
+        },
+        {
+          "blob_id": "10a208d90c33c3e05e29f2fb0ce00c8c80aaae86",
+          "content_hash": "a464fec8d5cd06042ffb96b4da8cbb9d3222684901bae6830685c8464a536044",
+          "content_hash_algorithm": "sha256",
+          "lfs_sha256": "a464fec8d5cd06042ffb96b4da8cbb9d3222684901bae6830685c8464a536044",
+          "lfs_size": 655421522,
+          "path": "model.safetensors",
+          "size": 655421522
+        }
+      ],
+      "repository": "LiquidAI/LFM2.5-2.6B-DSpark",
+      "revision": "458cedab07d0f7b2b05700c77e1aa463d43d6f04"
+    }
+  ],
+  "source": {
+    "authentication": "none",
+    "endpoint": "Hugging Face Hub public model revision API with blobs=true",
+    "response_sha256": {
+      "LiquidAI/LFM2.5-2.6B-DSpark@458cedab07d0f7b2b05700c77e1aa463d43d6f04": "c8ce4238abc03480ad5dc4fe4bb162cfbca19055dc85a85a42470833eb3b956f",
+      "LiquidAI/LFM2.5-2.6B@654f9463ce32b05d0429d76fe1f580b27d4c1ac0": "e26835691ac92847c884c2efeebc5894f4577797ce8c63dc2279611077132881"
+    },
+    "retrieved_at": "2026-10-07T11:42:25+00:00"
+  }
+}
