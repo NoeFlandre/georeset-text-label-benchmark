@@ -112,10 +112,12 @@ exec "$REAL_PS" "$@"
 set -u
 path=
 for arg in "$@"; do path=$arg; done
+printf x >> "$DU_COUNT"
 case "${DU_MODE:-normal}" in
   fail-once)
     if [[ ! -e "$DU_STATE" ]]; then
       : > "$DU_STATE"
+      printf '123\\t%s\\n' "$path"
       echo 'du: fts_read failed: temporary/python: No such file or directory' >&2
       exit 1
     fi
@@ -130,7 +132,7 @@ case "${DU_MODE:-normal}" in
     exit 0
     ;;
 esac
-exec "$REAL_DU" "$@"
+printf '%s\\t%s\\n' "${DU_BYTES:-0}" "$path"
 """,
         encoding="utf-8",
     )
@@ -146,6 +148,7 @@ exec "$REAL_DU" "$@"
             "DU_MODE": du_mode,
             "PS_STATE": str(tmp_path / "ps-state"),
             "DU_STATE": str(tmp_path / "du-state"),
+            "DU_COUNT": str(tmp_path / "du-count"),
             "PS_INJECTION_LOG": str(tmp_path / "ps-injection.log"),
             "RUNNER_SIGNAL_LOG": str(tmp_path / "signals.log"),
         }
@@ -215,6 +218,86 @@ printf '%s' "$status" > "{status_file}"
     signals = Path(environment["RUNNER_SIGNAL_LOG"]).read_text(encoding="utf-8")
     assert "-TERM " in signals
     assert "SHARED" not in signals
+
+
+def test_persistent_output_scan_retries_after_publication_and_keeps_completed_output(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "published"
+    output_dir.mkdir()
+    manifest = output_dir / "dspark_manifest.json"
+    manifest.write_text("complete", encoding="utf-8")
+    shell, environment = _driver(
+        tmp_path,
+        body=(
+            'OUTPUT_BYTES=$(runner_check_directory_limit "$OUTPUT_DIR" "$MAX_OUTPUT_BYTES" '
+            '"Persistent evaluation outputs" "1 GiB")\n'
+            'printf "%s" "$OUTPUT_BYTES"'
+        ),
+        du_mode="fail-once",
+    )
+    environment["OUTPUT_DIR"] = str(output_dir)
+    environment["MAX_OUTPUT_BYTES"] = str(1024**3)
+    environment["DU_BYTES"] = str(1024**3 - 1)
+
+    result = _run_driver(shell, environment)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(1024**3 - 1)
+    assert len(Path(environment["DU_COUNT"]).read_text(encoding="utf-8")) == 2
+    assert manifest.read_text(encoding="utf-8") == "complete"
+
+
+def test_persistent_output_scan_failure_stays_visible_and_preserves_manifest(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "published"
+    output_dir.mkdir()
+    manifest = output_dir / "dspark_manifest.json"
+    manifest.write_text("complete", encoding="utf-8")
+    shell, environment = _driver(
+        tmp_path,
+        body=(
+            'OUTPUT_BYTES=$(runner_check_directory_limit "$OUTPUT_DIR" "$MAX_OUTPUT_BYTES" '
+            '"Persistent evaluation outputs" "1 GiB")'
+        ),
+        du_mode="always-fail",
+    )
+    environment["OUTPUT_DIR"] = str(output_dir)
+    environment["MAX_OUTPUT_BYTES"] = str(1024**3)
+
+    result = _run_driver(shell, environment)
+
+    assert result.returncode != 0
+    assert len(Path(environment["DU_STATE"]).read_text(encoding="utf-8")) == 5
+    assert "Could not measure Persistent evaluation outputs" in result.stderr
+    assert "published files remain" in result.stderr
+    assert manifest.read_text(encoding="utf-8") == "complete"
+
+
+def test_persistent_output_limit_remains_a_visible_failure(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "published"
+    output_dir.mkdir()
+    manifest = output_dir / "dspark_manifest.json"
+    manifest.write_text("complete", encoding="utf-8")
+    shell, environment = _driver(
+        tmp_path,
+        body=(
+            'OUTPUT_BYTES=$(runner_check_directory_limit "$OUTPUT_DIR" "$MAX_OUTPUT_BYTES" '
+            '"Persistent evaluation outputs" "1 GiB")'
+        ),
+    )
+    environment["OUTPUT_DIR"] = str(output_dir)
+    environment["MAX_OUTPUT_BYTES"] = str(1024**3)
+    environment["DU_BYTES"] = str(1024**3)
+
+    result = _run_driver(shell, environment)
+
+    assert result.returncode != 0
+    assert "Persistent evaluation outputs reached 1 GiB" in result.stderr
+    assert manifest.read_text(encoding="utf-8") == "complete"
 
 
 def _run_driver(

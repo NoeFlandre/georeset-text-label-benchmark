@@ -3620,6 +3620,133 @@ def test_cache_seed_rejects_same_size_blob_with_wrong_identity(tmp_path: Path) -
         )
 
 
+@pytest.mark.parametrize("content_identity", ["git", "lfs"])
+def test_cache_seed_rejects_same_size_blob_with_corrupt_content(
+    tmp_path: Path, content_identity: str
+) -> None:
+    blobs = tmp_path / "repo" / "blobs"
+    snapshot = tmp_path / "repo" / "snapshots" / dspark.TARGET_REVISION
+    staged_blobs = tmp_path / "stage" / "blobs"
+    staged_snapshot = tmp_path / "stage" / "snapshots" / dspark.TARGET_REVISION
+    for directory in (blobs, snapshot, staged_blobs, staged_snapshot):
+        directory.mkdir(parents=True)
+    expected_payload = b"trusted pinned bytes"
+    corrupt_payload = b"corrupt pinned bytes"
+    assert len(corrupt_payload) == len(expected_payload)
+    if content_identity == "git":
+        expected_blob_name = hashlib.sha1(
+            f"blob {len(expected_payload)}\0".encode() + expected_payload
+        ).hexdigest()
+        metadata = {"size": len(expected_payload), "blob_id": expected_blob_name}
+    else:
+        expected_blob_name = hashlib.sha256(expected_payload).hexdigest()
+        metadata = {
+            "size": len(expected_payload),
+            "blob_id": "a" * 40,
+            "lfs_sha256": expected_blob_name,
+            "lfs_size": len(expected_payload),
+        }
+    source_blob = blobs / expected_blob_name
+    source_blob.write_bytes(corrupt_payload)
+    (snapshot / "config.json").symlink_to(Path(os.path.relpath(source_blob, snapshot)))
+
+    with pytest.raises(RuntimeError, match="content digest mismatch"):
+        dspark_runner._seed_snapshot_entry(
+            "config.json",
+            metadata,
+            snapshot,
+            blobs,
+            staged_blobs,
+            staged_snapshot,
+            {},
+            dspark.TARGET_MODEL,
+            dspark.TARGET_REVISION,
+        )
+
+
+def test_cache_seed_rejects_tree_missing_a_required_pinned_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    required: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    for repository, revision in dspark_runner._pinned_cache_repositories():
+        folder = f"models--{repository.replace('/', '--')}"
+        repo_cache = source / folder
+        blobs = repo_cache / "blobs"
+        snapshot = repo_cache / "snapshots" / revision
+        snapshot.mkdir(parents=True)
+        payload = b"present pinned file"
+        blob_name = hashlib.sha1(f"blob {len(payload)}\0".encode() + payload).hexdigest()
+        blob = blobs / blob_name
+        blobs.mkdir()
+        blob.write_bytes(payload)
+        (snapshot / "config.json").symlink_to(Path(os.path.relpath(blob, snapshot)))
+        present = {"size": len(payload), "blob_id": blob_name}
+        absent_payload = b"required but absent"
+        absent_blob = hashlib.sha1(
+            f"blob {len(absent_payload)}\0".encode() + absent_payload
+        ).hexdigest()
+        required[(repository, revision)] = {
+            "config.json": present,
+            "required.json": {"size": len(absent_payload), "blob_id": absent_blob},
+        }
+        tree = repo_cache / "trees" / f"{revision}.json"
+        tree.parent.mkdir()
+        tree.write_text(
+            json.dumps({"format_version": 1, "files": {"config.json": present}}),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        dspark_runner,
+        "_required_pinned_cache_files",
+        lambda repository, revision: required[(repository, revision)],
+        raising=False,
+    )
+    monkeypatch.setattr(dspark_runner, "_validate_staged_repository", lambda *_args: None)
+
+    with pytest.raises(RuntimeError, match="does not match the pinned file inventory"):
+        dspark_runner._seed_model_cache_from_hub_cache(source, target)
+
+    assert not target.exists() or not any(target.iterdir())
+
+
+def test_cache_seed_rolls_back_first_repository_when_second_install_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = tmp_path / "stage"
+    target = tmp_path / "target"
+    stage.mkdir()
+    target.mkdir()
+    target_names = dspark_runner._pinned_cache_folder_names(
+        dspark_runner._pinned_cache_repositories()
+    )
+    source_blob = tmp_path / "source-model-weights"
+    source_blob.write_bytes(b"preserve source")
+    for name in target_names:
+        folder = stage / name
+        folder.mkdir()
+        (folder / "source-link").symlink_to(source_blob)
+    unrelated = target / "unrelated-cache-entry"
+    unrelated.write_text("preserve target", encoding="utf-8")
+    original_replace = os.replace
+
+    def fail_second_install(source_path: Path, target_path: Path) -> None:
+        if Path(source_path) == stage / target_names[1]:
+            raise OSError("injected second model cache install failure")
+        original_replace(source_path, target_path)
+
+    monkeypatch.setattr(dspark_runner.os, "replace", fail_second_install)
+
+    with pytest.raises(OSError, match="injected second model cache install failure"):
+        dspark_runner._install_staged_cache_folders(stage, target, target_names)
+
+    assert not (target / target_names[0]).exists()
+    assert not (target / target_names[1]).exists()
+    assert unrelated.read_text(encoding="utf-8") == "preserve target"
+    assert source_blob.read_bytes() == b"preserve source"
+
+
 def test_model_cache_seed_links_only_pinned_repositories_and_preserves_source(
     tmp_path: Path,
 ) -> None:
