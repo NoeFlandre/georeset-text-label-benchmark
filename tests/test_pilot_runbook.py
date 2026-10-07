@@ -42,6 +42,13 @@ def _fake_tools(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
         "  printf '%s' \"$PILOT_TEST_GIT_STATUS\"\n"
         '  exit "${PILOT_TEST_GIT_STATUS_EXIT:-0}"\n'
         "else\n"
+        '  if [ -n "${PILOT_TEST_COMMIT_SEQUENCE_FILE:-}" ]; then\n'
+        '    count=$(cat "${PILOT_TEST_COMMIT_SEQUENCE_FILE}.count" 2>/dev/null || printf 0)\n'
+        "    count=$((count + 1))\n"
+        '    printf \'%s\' "$count" > "${PILOT_TEST_COMMIT_SEQUENCE_FILE}.count"\n'
+        '    sed -n "${count}p" "$PILOT_TEST_COMMIT_SEQUENCE_FILE"\n'
+        "    exit 0\n"
+        "  fi\n"
         "  printf '%s\\n' \"$PILOT_TEST_COMMIT\"\n"
         "fi\n",
     )
@@ -186,6 +193,38 @@ def test_direct_runbook_stops_after_failed_smoke_with_stale_passing_metrics(
     assert "run-dspark-smoke" in calls[0]
 
 
+def test_direct_runbook_stops_if_checkout_changes_after_smoke(
+    tmp_path: pathlib.Path,
+) -> None:
+    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
+    bin_dir, call_log = _fake_tools(tmp_path)
+    smoke_out = (
+        tmp_path
+        / "artifacts/source/pilot/runs"
+        / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
+    )
+    _write_passing_smoke(smoke_out)
+    commit_sequence = tmp_path / "commits.txt"
+    commit_sequence.write_text(f"{COMMIT}\n{'b' * 40}\n", encoding="utf-8")
+    env = _environment(bin_dir, call_log, "0")
+    env["PILOT_TEST_COMMIT_SEQUENCE_FILE"] = str(commit_sequence)
+
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _calls(call_log)
+    assert result.returncode != 0
+    assert "checkout changed after the smoke" in result.stderr
+    assert len(calls) == 1
+    assert "run-dspark-smoke" in calls[0]
+
+
 def test_direct_runbook_uses_distinct_cache_roots_and_ignores_inherited_cache_paths(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -309,3 +348,50 @@ def test_grid_wrapper_rejects_failed_cleanliness_check_before_recording_head(
     assert "Could not verify a clean, committed checkout" in result.stderr
     assert any(" status " in f" {call} " for call in git_calls)
     assert all("rev-parse" not in call for call in git_calls)
+
+
+def test_grid_wrapper_rejects_checkout_commit_mismatch_before_runtime(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_root = pathlib.Path(__file__).resolve().parents[1]
+    wrapper = tmp_path / "project/scripts/run-dspark-grid5000.sh"
+    _write_executable(
+        wrapper,
+        (project_root / "scripts/run-dspark-grid5000.sh").read_text(encoding="utf-8"),
+    )
+    run_dir = tmp_path / "inputs"
+    run_dir.mkdir()
+    for name in ("frozen_sample.json", "candidate_labels.csv", "manifest.json"):
+        (run_dir / name).write_text("{}", encoding="utf-8")
+    output_dir = tmp_path / "outputs/new-run"
+    output_dir.parent.mkdir(parents=True)
+    scratch_dir = tmp_path / "scratch"
+    scratch_dir.mkdir()
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "git",
+        "#!/usr/bin/env bash\n"
+        'if [[ " $* " == *" status "* ]]; then exit 0; fi\n'
+        'if [[ " $* " == *" rev-parse "* ]]; then printf \'%s\\n\' "$PILOT_TEST_COMMIT"; exit 0; fi\n'
+        "exit 2\n",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "PILOT_TEST_COMMIT": COMMIT,
+            "TMPDIR": str(scratch_dir),
+        }
+    )
+
+    result = subprocess.run(
+        [str(wrapper), str(run_dir), str(output_dir), "--expected-commit", "b" * 40],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "does not match expected commit" in result.stderr
