@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 
 DOCS = Path(__file__).resolve().parents[1] / "docs" / "pilot.md"
@@ -150,7 +150,7 @@ def test_direct_runbook_uses_distinct_cache_roots_and_ignores_inherited_cache_pa
 def test_grid_runbook_stops_after_failed_smoke_with_stale_passing_metrics(
     tmp_path: Path,
 ) -> None:
-    blocks = _bash_blocks_after("### Grid’5000 one-GPU execution")
+    blocks = _bash_blocks_after("### Grid" + chr(0x2019) + "5000 one-GPU execution")
     snippet = "\n".join(blocks[:2]).replace("/path/to/persistent", str(tmp_path))
     bin_dir, call_log = _fake_tools(tmp_path)
     wrapper = tmp_path / "scripts/run-dspark-grid5000.sh"
