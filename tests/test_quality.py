@@ -526,10 +526,12 @@ def test_mutation_gate_checks_run_results(
     actual = capsys.readouterr().out
     if reported is None:
         reported = (
+            "Unresolved mutation patch for alive:\n"
+            f"{patch}"
+            f"Mutation fingerprint: {fingerprint}\n"
             "Mutation results: 0/1 killed\n"
             "Unresolved mutation results:\n"
-            f"{patch}"
-            f"  alive: survived (diff sha256: {fingerprint})\n"
+            "  alive: survived\n"
         )
     assert actual == reported
 
@@ -574,4 +576,5 @@ def test_mutation_gate_reports_patch_and_fingerprint_for_unreviewed_survivor(
     assert check_mutations() == 1
     output = capsys.readouterr().out
     assert patch in output
-    assert f"{name}: survived (diff sha256: {fingerprint})" in output
+    assert f"Mutation fingerprint: {fingerprint}" in output
+    assert f"{name}: survived" in output

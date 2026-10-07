@@ -498,18 +498,6 @@ def _equivalent_survivors(results: dict[str, str], fingerprints: Mapping[str, st
     )
 
 
-def _format_failure(
-    failure: str, fingerprints: Mapping[str, str], patches: Mapping[str, str] | None
-) -> str:
-    name, status = failure.split(": ", 1)
-    patch = patches.get(name, "") if status == "survived" and patches is not None else ""
-    if patch and not patch.endswith("\n"):
-        patch += "\n"
-    if status == "survived" and name in fingerprints:
-        failure = f"{failure} (diff sha256: {fingerprints[name]})"
-    return f"{patch}  {failure}\n"
-
-
 def _read_results() -> dict[str, str] | None:
     completed = subprocess.run(
         ["mutmut", "results", "--all=true"], capture_output=True, text=True, check=False
@@ -542,16 +530,16 @@ def _read_mutation_fingerprint(name: str) -> str:
     return _mutation_fingerprint(_read_mutation_patch(name), name)
 
 
-def _read_mutation_fingerprints(
-    results: Mapping[str, str], patches: dict[str, str] | None = None
-) -> dict[str, str]:
+def _read_mutation_fingerprints(results: Mapping[str, str]) -> dict[str, str]:
     fingerprints = {}
     for name in _survivor_names(results):
         patch = _read_mutation_patch(name)
         fingerprint = _mutation_fingerprint(patch, name)
         fingerprints[name] = fingerprint
-        if patches is not None:
-            patches[name] = patch
+        if not _matches_reviewed_fingerprint(name, fingerprint):
+            print(f"Unresolved mutation patch for {name}:")
+            print(patch, end="" if patch.endswith("\n") else "\n")
+            print(f"Mutation fingerprint: {fingerprint}")
     return fingerprints
 
 
@@ -571,7 +559,7 @@ def _report_results(
     if failures:
         print("Unresolved mutation results:")
         for failure in failures:
-            print(_format_failure(failure, fingerprints, patches), end="")
+            print(f"  {failure}")
         return 1
     return 0
 
@@ -580,10 +568,9 @@ def main() -> int:
     results = _read_results()
     if results is None:
         return 1
-    patches = {}
     try:
-        fingerprints = _read_mutation_fingerprints(results, patches)
+        fingerprints = _read_mutation_fingerprints(results)
     except ValueError as error:
         print(str(error))
         return 1
-    return _report_results(results, fingerprints, patches)
+    return _report_results(results, fingerprints)
