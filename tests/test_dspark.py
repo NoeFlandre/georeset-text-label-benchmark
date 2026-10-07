@@ -3884,6 +3884,201 @@ def test_pinned_cache_inventory_covers_both_exact_model_revisions() -> None:
         assert all(dspark_runner._valid_inventory_file_metadata(item) for item in files.values())
 
 
+@pytest.mark.parametrize(
+    "document",
+    [
+        b"{",
+        b"[]",
+        b'{"format_version":0,"repositories":[]}',
+        b'{"format_version":1,"repositories":{}}',
+        b'{"format_version":1,"repositories":[null]}',
+    ],
+)
+def test_pinned_cache_inventory_rejects_invalid_documents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, document: bytes
+) -> None:
+    module_file = tmp_path / "dspark_runner.py"
+    module_file.touch()
+    inventory = tmp_path / "pinned_cache_files.json"
+    inventory.write_bytes(document)
+    monkeypatch.setattr(dspark_runner, "__file__", str(module_file))
+
+    with pytest.raises(RuntimeError, match="pinned cache inventory is missing or invalid"):
+        dspark_runner._read_pinned_cache_inventory()
+
+
+def test_pinned_cache_inventory_rejects_missing_and_oversized_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_file = tmp_path / "dspark_runner.py"
+    module_file.touch()
+    monkeypatch.setattr(dspark_runner, "__file__", str(module_file))
+
+    with pytest.raises(RuntimeError, match="pinned cache inventory is missing or invalid"):
+        dspark_runner._read_pinned_cache_inventory()
+
+    (tmp_path / "pinned_cache_files.json").write_bytes(b"12345")
+    monkeypatch.setattr(dspark_runner, "MAX_PINNED_CACHE_INVENTORY_BYTES", 4)
+    with pytest.raises(RuntimeError, match="pinned cache inventory exceeds its size bound"):
+        dspark_runner._read_pinned_cache_inventory()
+
+
+def test_required_pinned_cache_inventory_rejects_unknown_revision() -> None:
+    with pytest.raises(RuntimeError, match="has no unique entry"):
+        dspark_runner._required_pinned_cache_files("unknown/model", "0" * 40)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {
+            "size": True,
+            "blob_id": "a" * 40,
+            "content_hash_algorithm": "git-sha1",
+            "content_hash": "a" * 40,
+        },
+        {"size": 1, "blob_id": "bad", "content_hash_algorithm": "git-sha1", "content_hash": "bad"},
+        {
+            "size": 1,
+            "blob_id": "a" * 40,
+            "content_hash_algorithm": "git-sha1",
+            "content_hash": "b" * 40,
+        },
+        {
+            "size": 1,
+            "blob_id": "a" * 40,
+            "content_hash_algorithm": "git-sha1",
+            "content_hash": "a" * 40,
+            "lfs_sha256": "b" * 64,
+        },
+        {
+            "size": 1,
+            "blob_id": "a" * 40,
+            "content_hash_algorithm": "git-sha1",
+            "content_hash": "a" * 40,
+            "lfs_size": 1,
+        },
+        {
+            "size": 1,
+            "blob_id": "a" * 40,
+            "content_hash_algorithm": "sha256",
+            "content_hash": "bad",
+            "lfs_sha256": "bad",
+            "lfs_size": 1,
+        },
+        {
+            "size": 1,
+            "blob_id": "a" * 40,
+            "content_hash_algorithm": "sha256",
+            "content_hash": "b" * 64,
+            "lfs_sha256": "c" * 64,
+            "lfs_size": 1,
+        },
+        {
+            "size": 1,
+            "blob_id": "a" * 40,
+            "content_hash_algorithm": "sha256",
+            "content_hash": "b" * 64,
+            "lfs_sha256": "b" * 64,
+            "lfs_size": 2,
+        },
+        {"size": 1, "blob_id": "a" * 40, "content_hash_algorithm": "md5", "content_hash": "b" * 32},
+    ],
+)
+def test_pinned_cache_inventory_rejects_invalid_file_identities(metadata: dict[str, Any]) -> None:
+    assert not dspark_runner._valid_inventory_file_metadata(metadata)
+
+
+def test_pinned_cache_inventory_accepts_git_and_lfs_file_identities() -> None:
+    git_blob = "a" * 40
+    lfs_hash = "b" * 64
+    assert dspark_runner._valid_inventory_file_metadata(
+        {
+            "size": 3,
+            "blob_id": git_blob,
+            "content_hash_algorithm": "git-sha1",
+            "content_hash": git_blob,
+        }
+    )
+    assert dspark_runner._valid_inventory_file_metadata(
+        {
+            "size": 3,
+            "blob_id": "c" * 40,
+            "content_hash_algorithm": "sha256",
+            "content_hash": lfs_hash,
+            "lfs_sha256": lfs_hash,
+            "lfs_size": 3,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        (None, False),
+        ({"size": 4, "blob_id": "a" * 40}, False),
+        ({"size": 3, "blob_id": "a" * 40, "lfs_sha256": "c" * 64}, False),
+        ({"size": 3, "blob_id": "a" * 40, "lfs_sha256": "b" * 64}, True),
+        ({"size": 3, "blob_id": "a" * 40, "lfs_sha256": "b" * 64, "lfs_size": 3}, True),
+        ({"size": 3, "blob_id": "a" * 40, "lfs_sha256": "b" * 64, "lfs_size": 4}, False),
+    ],
+)
+def test_cache_file_metadata_matches_pinned_identity(actual: Any, expected: bool) -> None:
+    required = {"size": 3, "blob_id": "a" * 40, "lfs_sha256": "b" * 64, "lfs_size": 3}
+    assert dspark_runner._cache_file_metadata_matches(actual, required) is expected
+
+
+def test_cache_file_metadata_matches_when_git_blob_has_no_lfs_fields() -> None:
+    actual = {"size": 3, "blob_id": "a" * 40}
+    required = {"size": 3, "blob_id": "a" * 40}
+    assert dspark_runner._cache_file_metadata_matches(actual, required)
+
+
+def test_seed_content_digest_selects_pinned_tree_and_lfs_identities() -> None:
+    assert dspark_runner._seed_content_digest(
+        {"blob_id": "a" * 40}, None, dspark.TARGET_MODEL, dspark.TARGET_REVISION
+    ) == ("git-sha1", "a" * 40)
+    assert dspark_runner._seed_content_digest(
+        {"lfs_sha256": "b" * 64}, None, dspark.TARGET_MODEL, dspark.TARGET_REVISION
+    ) == ("sha256", "b" * 64)
+    assert dspark_runner._seed_content_digest(
+        {"blob_id": "a" * 40},
+        {"content_hash_algorithm": "sha256", "content_hash": "b" * 64},
+        dspark.TARGET_MODEL,
+        dspark.TARGET_REVISION,
+    ) == ("sha256", "b" * 64)
+
+
+def test_seed_content_digest_rejects_invalid_pinned_hash() -> None:
+    with pytest.raises(RuntimeError, match="invalid digest metadata"):
+        dspark_runner._seed_content_digest(
+            {"blob_id": "a" * 40},
+            {"content_hash_algorithm": "md5", "content_hash": "bad"},
+            dspark.TARGET_MODEL,
+            dspark.TARGET_REVISION,
+        )
+
+
+def test_verify_seed_blob_content_reports_read_and_size_changes(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-blob"
+    with pytest.raises(RuntimeError, match="is incomplete"):
+        dspark_runner._verify_seed_blob_content(
+            missing, 1, "sha256", "a" * 64, dspark.TARGET_MODEL, dspark.TARGET_REVISION
+        )
+
+    blob = tmp_path / "blob"
+    blob.write_bytes(b"short")
+    with pytest.raises(RuntimeError, match="changed while hashing"):
+        dspark_runner._verify_seed_blob_content(
+            blob,
+            6,
+            "sha256",
+            hashlib.sha256(b"short").hexdigest(),
+            dspark.TARGET_MODEL,
+            dspark.TARGET_REVISION,
+        )
+
+
 def test_model_cache_seed_stages_inside_writable_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4192,7 +4387,10 @@ def test_cache_seed_rejects_tree_metadata_larger_than_the_bound(
         dspark_runner._read_bounded_cache_tree(tree, dspark.TARGET_MODEL, dspark.TARGET_REVISION)
 
 
-@pytest.mark.parametrize("file_name", [None, "", r"bad\\name", "/absolute", ".", "../escape"])
+@pytest.mark.parametrize(
+    "file_name",
+    [None, "", r"bad\\name", "/absolute", ".", "../escape", "./config.json", "nested//config.json"],
+)
 def test_cache_seed_rejects_unsafe_tree_paths(file_name: Any) -> None:
     with pytest.raises(RuntimeError, match="invalid tree metadata"):
         dspark_runner._pinned_snapshot_relative_path(

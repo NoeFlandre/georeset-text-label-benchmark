@@ -1193,21 +1193,35 @@ def _read_pinned_cache_inventory() -> list[dict[str, Any]]:
     """Read and validate the bounded package inventory document."""
     inventory_path = Path(__file__).with_name("pinned_cache_files.json")
     try:
-        with inventory_path.open("rb") as stream:
-            data = stream.read(MAX_PINNED_CACHE_INVENTORY_BYTES + 1)
-        if len(data) > MAX_PINNED_CACHE_INVENTORY_BYTES:
-            raise RuntimeError("pinned cache inventory exceeds its size bound")
+        data = _read_bounded_pinned_cache_inventory(inventory_path)
         inventory = json.loads(data)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
         raise RuntimeError("pinned cache inventory is missing or invalid") from error
+    return _pinned_cache_inventory_repositories(inventory)
+
+
+def _read_bounded_pinned_cache_inventory(inventory_path: Path) -> bytes:
+    """Read only the configured maximum plus one byte from the inventory file."""
+    with inventory_path.open("rb") as stream:
+        data = stream.read(MAX_PINNED_CACHE_INVENTORY_BYTES + 1)
+    if len(data) > MAX_PINNED_CACHE_INVENTORY_BYTES:
+        raise RuntimeError("pinned cache inventory exceeds its size bound")
+    return data
+
+
+def _pinned_cache_inventory_repositories(inventory: Any) -> list[dict[str, Any]]:
+    """Validate the package inventory envelope and repository records."""
     if not isinstance(inventory, dict) or inventory.get("format_version") != 1:
         raise RuntimeError("pinned cache inventory is missing or invalid")
     repositories = inventory.get("repositories")
-    if not isinstance(repositories, list) or not all(
-        isinstance(item, dict) for item in repositories
-    ):
+    if not _is_pinned_cache_repository_list(repositories):
         raise RuntimeError("pinned cache inventory is missing or invalid")
     return repositories
+
+
+def _is_pinned_cache_repository_list(value: Any) -> TypeGuard[list[dict[str, Any]]]:
+    """Return whether the decoded inventory contains only repository records."""
+    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
 
 
 def _pinned_inventory_file_map(
@@ -1247,19 +1261,37 @@ def _valid_inventory_file_metadata(metadata: Mapping[str, Any]) -> bool:
     if not _valid_hub_blob_size(size) or not _valid_hex_digest(blob_id, 40):
         return False
     if algorithm == "git-sha1":
-        return (
-            _valid_hex_digest(content_hash, 40)
-            and content_hash == blob_id
-            and "lfs_sha256" not in metadata
-            and "lfs_size" not in metadata
-        )
+        return _valid_git_inventory_file_content(metadata, blob_id, content_hash)
     if algorithm == "sha256":
-        return (
-            _valid_hex_digest(content_hash, 64)
-            and metadata.get("lfs_sha256") == content_hash
-            and metadata.get("lfs_size") == size
-        )
+        return _valid_lfs_inventory_file_content(metadata, size, content_hash)
     return False
+
+
+def _valid_git_inventory_file_content(
+    metadata: Mapping[str, Any], blob_id: Any, content_hash: Any
+) -> bool:
+    """Validate ordinary Git blob identity and reject LFS-only fields."""
+    return all(
+        (
+            _valid_hex_digest(content_hash, 40),
+            content_hash == blob_id,
+            "lfs_sha256" not in metadata,
+            "lfs_size" not in metadata,
+        )
+    )
+
+
+def _valid_lfs_inventory_file_content(
+    metadata: Mapping[str, Any], size: Any, content_hash: Any
+) -> bool:
+    """Validate a pinned LFS SHA256 and byte-size identity."""
+    return all(
+        (
+            _valid_hex_digest(content_hash, 64),
+            metadata.get("lfs_sha256") == content_hash,
+            metadata.get("lfs_size") == size,
+        )
+    )
 
 
 def _valid_hex_digest(value: Any, length: int) -> TypeGuard[str]:
@@ -1295,11 +1327,13 @@ def _cache_file_metadata_matches(actual: Any, required: Mapping[str, Any]) -> bo
     """Compare Hub tree identity and optional LFS size with the pinned inventory."""
     if not _valid_hub_file_metadata(actual):
         return False
-    return (
-        actual.get("size") == required["size"]
-        and actual.get("blob_id") == required["blob_id"]
-        and actual.get("lfs_sha256") == required.get("lfs_sha256")
-        and ("lfs_size" not in actual or actual.get("lfs_size") == required.get("lfs_size"))
+    return all(
+        (
+            actual.get("size") == required["size"],
+            actual.get("blob_id") == required["blob_id"],
+            actual.get("lfs_sha256") == required.get("lfs_sha256"),
+            "lfs_size" not in actual or actual.get("lfs_size") == required.get("lfs_size"),
+        )
     )
 
 
@@ -1314,18 +1348,21 @@ def _seed_content_digest(
     algorithm = metadata.get("content_hash_algorithm")
     expected_digest = metadata.get("content_hash")
     if algorithm is None:
-        if metadata.get("lfs_sha256") is not None:
-            algorithm = "sha256"
-            expected_digest = metadata.get("lfs_sha256")
-        else:
-            algorithm = "git-sha1"
-            expected_digest = metadata.get("blob_id")
-    digest_length = 64 if algorithm == "sha256" else 40 if algorithm == "git-sha1" else 0
-    if not digest_length or not _valid_hex_digest(expected_digest, digest_length):
+        algorithm, expected_digest = _tree_seed_content_digest(metadata)
+    digest_length = {"sha256": 64, "git-sha1": 40}.get(algorithm, 0)
+    if digest_length == 0 or not _valid_hex_digest(expected_digest, digest_length):
         raise RuntimeError(
             f"pinned model cache seed has invalid digest metadata for {repository}@{revision}"
         )
     return algorithm, expected_digest
+
+
+def _tree_seed_content_digest(metadata: Mapping[str, Any]) -> tuple[str, Any]:
+    """Select the digest represented in Hub tree metadata when no pin is supplied."""
+    lfs_sha256 = metadata.get("lfs_sha256")
+    if lfs_sha256 is not None:
+        return "sha256", lfs_sha256
+    return "git-sha1", metadata.get("blob_id")
 
 
 def _check_seed_blob_collision(
@@ -1351,9 +1388,7 @@ def _verify_seed_blob_content(
     revision: str,
 ) -> None:
     """Hash a source file in bounded chunks and detect size or identity changes."""
-    digest = hashlib.sha256() if algorithm == "sha256" else hashlib.sha1()
-    if algorithm == "git-sha1":
-        digest.update(f"blob {expected_size}\0".encode("ascii"))
+    digest = _new_seed_content_hasher(algorithm, expected_size)
     try:
         byte_count, changed = _hash_seed_blob_in_chunks(source_blob, digest)
     except OSError as error:
@@ -1368,6 +1403,14 @@ def _verify_seed_blob_content(
         raise RuntimeError(
             f"pinned model cache seed content digest mismatch for {repository}@{revision}"
         )
+
+
+def _new_seed_content_hasher(algorithm: str, expected_size: int) -> Any:
+    """Create the raw LFS hasher or Git object hasher with its size header."""
+    digest = hashlib.sha256() if algorithm == "sha256" else hashlib.sha1()
+    if algorithm == "git-sha1":
+        digest.update(f"blob {expected_size}\0".encode("ascii"))
+    return digest
 
 
 def _hash_seed_blob_in_chunks(source_blob: Path, digest: Any) -> tuple[int, bool]:
@@ -1454,11 +1497,13 @@ def _pinned_snapshot_relative_path(file_name: Any, repository: str, revision: st
 
 def _valid_hub_snapshot_name(file_name: str, path: PurePosixPath) -> bool:
     """Return whether a Hub filename is a safe relative POSIX path."""
-    return (
-        bool(file_name)
-        and "\\" not in file_name
-        and str(path) == file_name
-        and _valid_hub_snapshot_parts(path)
+    return all(
+        (
+            bool(file_name),
+            "\\" not in file_name,
+            str(path) == file_name,
+            _valid_hub_snapshot_parts(path),
+        )
     )
 
 
