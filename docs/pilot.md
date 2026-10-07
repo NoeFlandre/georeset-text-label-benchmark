@@ -309,22 +309,26 @@ hf download NoeFlandre/georeset-text-label-benchmark \
   --repo-type dataset --revision "$PILOT_REVISION" --local-dir artifacts/source
 RUN_DIR=artifacts/source/pilot/runs/e5-small-100-seed42
 COMMIT_SHA=$(git rev-parse HEAD)
+PILOT_ATTEMPT_ID=$(python -c 'import uuid; print(uuid.uuid4().hex)')
 HF_HUB_CACHE_SEED=/path/to/trusted/hf-hub-cache
-SMOKE_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA"
-JOB_LOCAL_CACHE_ROOT="${TMPDIR:?set TMPDIR to allocation-local scratch}/georeset-dspark-$COMMIT_SHA"
+SMOKE_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA-$PILOT_ATTEMPT_ID"
+JOB_LOCAL_CACHE_ROOT="${TMPDIR:?set TMPDIR to allocation-local scratch}/georeset-dspark-$COMMIT_SHA-$PILOT_ATTEMPT_ID"
 SMOKE_CACHE="$JOB_LOCAL_CACHE_ROOT/smoke"
 FULL_CACHE="$JOB_LOCAL_CACHE_ROOT/full"
-uv run georeset-pilot run-dspark-smoke \
+if ! env -u HF_HOME -u HF_HUB_CACHE uv run georeset-pilot run-dspark-smoke \
   --run-dir "$RUN_DIR" \
   --output-dir "$SMOKE_OUT" \
   --model-cache "$SMOKE_CACHE" \
   --model-cache-seed "$HF_HUB_CACHE_SEED" \
   --computation-commit "$COMMIT_SHA" \
-  --validation-commit "$COMMIT_SHA"
-FULL_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA"
+  --validation-commit "$COMMIT_SHA"; then
+  echo "Smoke command failed; do not start the full pilot." >&2
+  exit 1
+fi
+FULL_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA-$PILOT_ATTEMPT_ID"
 if python -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
   "$SMOKE_OUT/dspark_metrics.json"; then
-  uv run georeset-pilot run-dspark \
+  env -u HF_HOME -u HF_HUB_CACHE uv run georeset-pilot run-dspark \
     --run-dir "$RUN_DIR" \
     --output-dir "$FULL_OUT" \
     --model-cache "$FULL_CACHE" \
@@ -355,19 +359,27 @@ script does not submit jobs or contact a scheduler. The existing Grid'5000
 executor uses an A40 with CUDA 13 and driver 580; it meets the adapter's
 16-GiB / compute-capability-8.0 admission gate.
 
-Provide absolute paths to the already-published frozen input directory and a
-new output directory on persistent storage. The persistent output parent must
-already exist and be writable. For example, after the authorized owner has
-placed the code and input files on the cluster:
+Run both code blocks in the same shell so they use the same commit and attempt
+ID. The attempt ID gives each smoke run a new output path, so a previous
+passing metrics file cannot satisfy the current run's gate. Provide absolute
+paths to the already-published frozen input directory and a new output
+directory on persistent storage. The persistent output parent must already
+exist and be writable. For example, after the authorized owner has placed the
+code and input files on the cluster:
 
 ```bash
 COMMIT_SHA=$(git rev-parse HEAD)
+PILOT_ATTEMPT_ID=$(python -c 'import uuid; print(uuid.uuid4().hex)')
 HF_HUB_CACHE_SEED=/path/to/trusted/hf-hub-cache
-scripts/run-dspark-grid5000.sh \
+SMOKE_OUT="/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA-$PILOT_ATTEMPT_ID"
+if ! scripts/run-dspark-grid5000.sh \
   /path/to/persistent/pilot/runs/e5-small-100-seed42 \
-  "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA" \
+  "$SMOKE_OUT" \
   --smoke \
-  --model-cache-seed "$HF_HUB_CACHE_SEED"
+  --model-cache-seed "$HF_HUB_CACHE_SEED"; then
+  echo "Smoke command failed; do not start the full pilot." >&2
+  exit 1
+fi
 ```
 
 Before the full 100-row retry, run the checked-in eight-row smoke against a
@@ -387,12 +399,14 @@ committed checkout so both manifest commit fields identify the exact runtime
 code.
 
 ```bash
-SMOKE_OUT="/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA"
+: "${COMMIT_SHA:?run the smoke setup in this shell first}"
+: "${PILOT_ATTEMPT_ID:?run the smoke setup in this shell first}"
+: "${SMOKE_OUT:?run the smoke setup in this shell first}"
 if python3 -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
   "$SMOKE_OUT/dspark_metrics.json"; then
   scripts/run-dspark-grid5000.sh \
     /path/to/persistent/pilot/runs/e5-small-100-seed42 \
-    "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA" \
+    "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA-$PILOT_ATTEMPT_ID" \
     --model-cache-seed "$HF_HUB_CACHE_SEED"
 else
   echo "Smoke gate failed; do not start the full pilot." >&2
