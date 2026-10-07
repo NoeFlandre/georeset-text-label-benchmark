@@ -2487,13 +2487,15 @@ def test_model_download_is_pinned_and_inventory_requires_every_file(
 def test_cli_parser_help_is_stable_and_defaults_are_pinned() -> None:
     parser = cli._parser()
     assert parser.format_help() == (
-        "usage: georeset-pilot [-h] {freeze,run,run-dspark} ...\n\n"
+        "usage: georeset-pilot [-h] {freeze,run,run-dspark,run-dspark-smoke} ...\n\n"
         "positional arguments:\n"
-        "  {freeze,run,run-dspark}\n"
+        "  {freeze,run,run-dspark,run-dspark-smoke}\n"
         "    freeze              freeze selected rows before inference\n"
         "    run                 run frozen zero-shot candidate ranking\n"
         "    run-dspark          predict one EUNIS code per row with pinned LFM2.5 +\n"
-        "                        DSpark\n\n"
+        "                        DSpark\n"
+        "    run-dspark-smoke    run a bounded eight-row LFM2.5 + DSpark readiness\n"
+        "                        smoke\n\n"
         "options:\n"
         "  -h, --help            show this help message and exit\n"
     )

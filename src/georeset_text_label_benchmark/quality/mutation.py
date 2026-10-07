@@ -23,6 +23,10 @@ EQUIVALENT_RATIONALES = {
         "json.dumps treats ensure_ascii=None as false, so CLI results have identical "
         "Unicode serialization to ensure_ascii=False."
     ),
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_17": (
+        "json.dumps treats ensure_ascii=None as false, so CLI results have identical "
+        "Unicode serialization to ensure_ascii=False."
+    ),
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_22": (
         "build_prompt constructs codes by iterating the same candidate sequence immediately "
         "before this zip, so both iterables always have equal lengths; strict=None cannot "
@@ -65,6 +69,10 @@ EQUIVALENT_RATIONALES = {
         "Python resolves utf-8 and UTF-8 to the same codec when reading the manifest JSON."
     ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": (
+        "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
+        "test checks that the emitted metadata reports ZSTD."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_140": (
         "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
         "test checks that the emitted metadata reports ZSTD."
     ),
@@ -296,6 +304,7 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.join.x__validate_text_hash__mutmut_18": "c3b9b40fd4e77b6cd037e55b3e755087df8532ce6d1909c311c01dba11913cf5",
     "georeset_text_label_benchmark.join.x__verify_sentence_hash__mutmut_6": "897e9d2066e18847fa513aba786d30d3400d297aa6e0bfd89ae586daeff87be4",
     "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": "e317e803cb4a0b9adac8aa69a4db7090b923ebd5e75956ec4f7bf73e013419f4",
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_17": "fbd9a3a182d4af3531d16921fd819b6a0f11ed3f0e18a0b01cb7d86dcffb9f14",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_22": "66e4967360377605713309559bad5ba7744f86f6543608975a63392e55aabee5",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_25": "63f0450d9da1af7695b5194c67202188a4a6056fdeba50bbf62728ff0e4f2ec9",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_26": "70760f50df9058bf4d75191b5da89c349db7d913da18cb8f90105be5370ec6ed",
@@ -306,6 +315,7 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": "f567c307849498199c56c0b5b5fd47aa914f613e516c8618e0451837e9194c56",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": "5ad66d9af22bf0a6d8490a046db51195f17c4466a78e7b5968f6818cc2db273f",
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": "e045243688cc4d3e63a821de04a801070bb4f6649ff06a58de31dbcd927cc354",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_140": "ade27ff44bf497cf2c7beac3cb6b21c902f7e33da3797d4a266b22487367a016",
     "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": "6df3a896f6cea2f72dd0eab8273ac2447f1f8ad7219bc656d651e728ec548f6a",
     "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_46": "762fcd4391bf4f011b03d439abcd817c23b83fdbc386a50c5b090ce5363bf529",
     "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_49": "52e595bb1289043f8ddb669f2998e8ad247382744d3a255ce445a728f3a32d84",

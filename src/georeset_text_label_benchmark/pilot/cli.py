@@ -6,6 +6,7 @@ import argparse
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from georeset_text_label_benchmark.pilot.dspark_runner import run_dspark_pilot
 from georeset_text_label_benchmark.pilot.protocol import (
@@ -49,37 +50,63 @@ def _parser() -> argparse.ArgumentParser:
     dspark.add_argument("--model-cache", type=Path, default=Path(".cache/model-dspark"))
     dspark.add_argument("--computation-commit", required=True)
     dspark.add_argument("--validation-commit", required=True)
+    smoke = commands.add_parser(
+        "run-dspark-smoke", help="run a bounded eight-row LFM2.5 + DSpark readiness smoke"
+    )
+    smoke.add_argument("--run-dir", type=Path, default=Path("artifacts/e5-small-100-seed42"))
+    smoke.add_argument("--output-dir", type=Path, required=True)
+    smoke.add_argument("--model-cache", type=Path, default=Path(".cache/model-dspark"))
+    smoke.add_argument("--computation-commit", required=True)
+    smoke.add_argument("--validation-commit", required=True)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "freeze":
-        result = freeze_sample(
-            args.source_parquet,
-            args.candidate_csv,
-            args.output_dir,
-            expected_source_sha256=OVERLAP_PARQUET_SHA256,
-            source_revision=OVERLAP_REVISION,
-            size=args.sample_size,
-            seed=args.seed,
-        )
+        result = _freeze_sample_command(args)
     elif args.command == "run":
-        result = run_pilot(
-            args.run_dir,
-            args.model_cache,
-            computation_commit=args.computation_commit,
-            validation_commit=args.validation_commit,
-            batch_size=args.batch_size,
-            max_length=args.max_length,
-        )
+        result = _run_e5_command(args)
     else:
-        result = run_dspark_pilot(
-            args.run_dir,
-            output_dir=args.output_dir,
-            model_cache_dir=args.model_cache,
-            computation_commit=args.computation_commit,
-            validation_commit=args.validation_commit,
-        )
+        result = _run_dspark_command(args)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    if args.command == "run-dspark-smoke" and not result["smoke_gate"]["passed"]:
+        return 1
     return 0
+
+
+def _freeze_sample_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Freeze the requested source rows before inference."""
+    return freeze_sample(
+        args.source_parquet,
+        args.candidate_csv,
+        args.output_dir,
+        expected_source_sha256=OVERLAP_PARQUET_SHA256,
+        source_revision=OVERLAP_REVISION,
+        size=args.sample_size,
+        seed=args.seed,
+    )
+
+
+def _run_e5_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Run the frozen E5 ranking pilot."""
+    return run_pilot(
+        args.run_dir,
+        args.model_cache,
+        computation_commit=args.computation_commit,
+        validation_commit=args.validation_commit,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
+    )
+
+
+def _run_dspark_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Run the DSpark pilot or bounded smoke for the selected subcommand."""
+    return run_dspark_pilot(
+        args.run_dir,
+        output_dir=args.output_dir,
+        model_cache_dir=args.model_cache,
+        computation_commit=args.computation_commit,
+        validation_commit=args.validation_commit,
+        smoke=args.command == "run-dspark-smoke",
+    )
