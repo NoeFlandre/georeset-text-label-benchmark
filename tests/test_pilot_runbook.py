@@ -67,7 +67,6 @@ def _environment(
             "PILOT_TEST_REAL_PYTHON": sys.executable,
             "PILOT_TEST_SMOKE_STATUS": smoke_status,
             "TMPDIR": str(call_log.parent),
-            "TMPDIR": str(call_log.parent),
             "HF_HOME": "/inherited/hf-home",
             "HF_HUB_CACHE": "/inherited/hf-hub-cache",
         }
