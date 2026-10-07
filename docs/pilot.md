@@ -304,7 +304,11 @@ Run this direct example from a clean, committed checkout. It records `HEAD` in
 the run manifest and does not account for uncommitted checkout changes.
 
 ```bash
-if [[ -n "$(git status --porcelain)" ]]; then
+if ! CHECKOUT_STATUS=$(git status --porcelain); then
+  echo "Could not verify a clean, committed checkout." >&2
+  exit 1
+fi
+if [[ -n "$CHECKOUT_STATUS" ]]; then
   echo "Pilot requires a clean, committed checkout." >&2
   exit 1
 fi

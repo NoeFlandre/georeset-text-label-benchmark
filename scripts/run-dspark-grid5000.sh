@@ -65,7 +65,11 @@ if [[ -e "$OUTPUT_DIR" ]]; then
 fi
 
 PROJECT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-if [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=normal)" ]]; then
+if ! CHECKOUT_STATUS=$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=normal); then
+  echo "Could not verify a clean, committed checkout." >&2
+  exit 2
+fi
+if [[ -n "$CHECKOUT_STATUS" ]]; then
   echo "Use a clean, committed checkout so the run manifest identifies the executed code." >&2
   exit 2
 fi
