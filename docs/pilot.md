@@ -289,11 +289,12 @@ The `--model-cache-seed` value is the read-only HF Hub cache root containing
 snapshot revisions and complete, bounded Hub tree metadata. It compares the
 cached file set and Hub identities with the package's source-controlled
 `pinned_cache_files.json` inventory, then hashes every source blob in bounded
-chunks using its pinned Git SHA-1 or LFS SHA-256 digest. It copies only tree
-metadata and links the job-local snapshot entries to verified source blobs; it
-does not copy weights or modify the source cache. Offline Hub snapshot
-resolution validates the staged metadata. The manifest records the source
-root, both repository revisions, and seeding method.
+chunks using its pinned Git SHA-1 or LFS SHA-256 digest. It copies the tree
+metadata and each unique pinned blob into the job-local cache, then verifies
+the copied bytes against the pinned size and digest. Snapshot links resolve to
+those local blobs, so the seeded cache does not depend on the source cache.
+The source cache remains unchanged. The manifest records the source root, both
+repository revisions, and seeding method.
 
 ```bash
 PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926

@@ -1158,7 +1158,16 @@ def _seed_snapshot_entry(
         source_blob, expected_size, digest_algorithm, expected_digest, repository, revision
     )
     staged_blob = staged_blobs / source_blob.name
-    _link_seed_blob(staged_blob, source_blob, blob_targets, repository, revision)
+    _copy_seed_blob(
+        staged_blob,
+        source_blob,
+        blob_targets,
+        expected_size,
+        digest_algorithm,
+        expected_digest,
+        repository,
+        revision,
+    )
     staged_file = staged_snapshot.joinpath(*relative.parts)
     staged_file.parent.mkdir(parents=True, exist_ok=True)
     staged_file.symlink_to(os.path.relpath(staged_blob, staged_file.parent))
@@ -1382,6 +1391,7 @@ def _new_seed_content_hasher(algorithm: str, expected_size: int) -> Any:
     """Create the raw LFS hasher or Git object hasher with its size header."""
     digest = hashlib.sha256() if algorithm == "sha256" else hashlib.sha1()
     if algorithm == "git-sha1":
+        # Git hashes include the object type and byte count before the file data.
         digest.update(f"blob {expected_size}\0".encode("ascii"))
     return digest
 
@@ -1396,6 +1406,7 @@ def _hash_seed_blob_in_chunks(source_blob: Path, digest: Any) -> tuple[int, bool
             byte_count += len(chunk)
         after_open = os.fstat(stream.fileno())
     after_path = source_blob.stat()
+    # Compare path and open-file identities to detect replacements during hashing.
     identity_before = _file_identity(before_path)
     changed = any(
         _file_identity(current) != identity_before
@@ -1532,21 +1543,24 @@ def _source_blob_for_snapshot(
     return source_blob
 
 
-def _link_seed_blob(
+def _copy_seed_blob(
     staged_blob: Path,
     source_blob: Path,
     blob_targets: dict[str, Path],
+    expected_size: int,
+    digest_algorithm: str,
+    expected_digest: str,
     repository: str,
     revision: str,
 ) -> None:
-    previous = blob_targets.get(source_blob.name)
-    if previous is not None and previous != source_blob:
-        raise RuntimeError(
-            f"pinned model cache seed has conflicting blob names for {repository}@{revision}"
-        )
-    if previous is None:
-        staged_blob.symlink_to(source_blob)
-        blob_targets[source_blob.name] = source_blob
+    if source_blob.name in blob_targets:
+        return
+    with source_blob.open("rb") as source, staged_blob.open("xb") as staged:
+        shutil.copyfileobj(source, staged, length=MAX_CACHE_HASH_CHUNK_BYTES)
+    _verify_seed_blob_content(
+        staged_blob, expected_size, digest_algorithm, expected_digest, repository, revision
+    )
+    blob_targets[source_blob.name] = source_blob
 
 
 def _validate_staged_repository(cache: Path, repository: str, revision: str) -> None:
@@ -1579,7 +1593,7 @@ def _cache_seed_provenance(source_hub_cache: Path | None) -> dict[str, Any] | No
             {"repository": dspark.TARGET_MODEL, "revision": dspark.TARGET_REVISION},
             {"repository": dspark.DRAFT_MODEL, "revision": dspark.DRAFT_REVISION},
         ],
-        "method": "copy tree metadata; link Hub-named source blobs (trusted cache bytes)",
+        "method": "copy tree metadata; verify and copy pinned blobs; link snapshots to job-local blobs",
     }
 
 

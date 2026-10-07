@@ -3443,7 +3443,7 @@ def test_smoke_runner_generates_only_eight_rows_and_keeps_inputs_untouched(
             {"repository": dspark.TARGET_MODEL, "revision": dspark.TARGET_REVISION},
             {"repository": dspark.DRAFT_MODEL, "revision": dspark.DRAFT_REVISION},
         ],
-        "method": "copy tree metadata; link Hub-named source blobs (trusted cache bytes)",
+        "method": "copy tree metadata; verify and copy pinned blobs; link snapshots to job-local blobs",
     }
     assert manifest["timings_seconds"]["generation_includes_sequential_requests"] == 8
     assert (
@@ -3847,10 +3847,15 @@ def test_model_cache_seed_copies_only_pinned_blobs_and_survives_source_removal(
         "_required_pinned_cache_files",
         lambda repository, revision: inventory[(repository, revision)],
     )
+    copy_fileobj = MagicMock(wraps=shutil.copyfileobj)
+    monkeypatch.setattr(dspark_runner.shutil, "copyfileobj", copy_fileobj)
 
     seeded = dspark_runner._seed_model_cache_from_hub_cache(source, target)
 
     assert seeded == [dspark.TARGET_REVISION, dspark.DRAFT_REVISION]
+    assert [call.kwargs["length"] for call in copy_fileobj.call_args_list] == [
+        dspark_runner.MAX_CACHE_HASH_CHUNK_BYTES
+    ] * len(source_entries)
     for folder, revision, source_blob, payload in source_entries:
         repo_cache = target / folder
         seeded_blob = repo_cache / "blobs" / source_blob.name
