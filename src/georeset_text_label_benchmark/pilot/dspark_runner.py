@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path, PurePosixPath
 from time import perf_counter
-from typing import Any, TypeGuard
+from typing import Any, NamedTuple, TypeGuard
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -1372,12 +1372,12 @@ def _verify_seed_blob_content(
 ) -> None:
     digest = _new_seed_content_hasher(algorithm, expected_size)
     try:
-        byte_count, changed = _hash_seed_blob_in_chunks(source_blob, digest)
+        hash_result = _hash_seed_blob_in_chunks(source_blob, digest)
     except OSError as error:
         raise RuntimeError(
             f"pinned model cache seed is incomplete for {repository}@{revision}"
         ) from error
-    if byte_count != expected_size or changed:
+    if hash_result.byte_count != expected_size or hash_result.source_replaced_during_hashing:
         raise RuntimeError(
             f"pinned model cache seed changed while hashing for {repository}@{revision}"
         )
@@ -1388,7 +1388,6 @@ def _verify_seed_blob_content(
 
 
 def _new_seed_content_hasher(algorithm: str, expected_size: int) -> Any:
-    """Create the raw LFS hasher or Git object hasher with its size header."""
     digest = hashlib.sha256() if algorithm == "sha256" else hashlib.sha1()
     if algorithm == "git-sha1":
         # Git hashes include the object type and byte count before the file data.
@@ -1396,7 +1395,12 @@ def _new_seed_content_hasher(algorithm: str, expected_size: int) -> Any:
     return digest
 
 
-def _hash_seed_blob_in_chunks(source_blob: Path, digest: Any) -> tuple[int, bool]:
+class _SeedBlobHashResult(NamedTuple):
+    byte_count: int
+    source_replaced_during_hashing: bool
+
+
+def _hash_seed_blob_in_chunks(source_blob: Path, digest: Any) -> _SeedBlobHashResult:
     before_path = source_blob.stat()
     byte_count = 0
     with source_blob.open("rb") as stream:
@@ -1406,13 +1410,12 @@ def _hash_seed_blob_in_chunks(source_blob: Path, digest: Any) -> tuple[int, bool
             byte_count += len(chunk)
         after_open = os.fstat(stream.fileno())
     after_path = source_blob.stat()
-    # Compare path and open-file identities to detect replacements during hashing.
     identity_before = _file_identity(before_path)
-    changed = any(
+    source_replaced_during_hashing = any(
         _file_identity(current) != identity_before
         for current in (before_open, after_open, after_path)
     )
-    return byte_count, changed
+    return _SeedBlobHashResult(byte_count, source_replaced_during_hashing)
 
 
 def _file_identity(stat_result: os.stat_result) -> tuple[int, int, int, int, int]:

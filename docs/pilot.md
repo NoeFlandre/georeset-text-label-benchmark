@@ -296,6 +296,10 @@ those local blobs, so the seeded cache does not depend on the source cache.
 The source cache remains unchanged. The manifest records the source root, both
 repository revisions, and seeding method.
 
+Run the smoke and full inference commands only inside an eligible Grid’5000
+GPU allocation. Set `TMPDIR` to that allocation's job-local scratch and use a
+fresh cache directory for each command, as below.
+
 ```bash
 PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926
 hf download NoeFlandre/georeset-text-label-benchmark \
@@ -307,10 +311,13 @@ RUN_DIR=artifacts/source/pilot/runs/e5-small-100-seed42
 COMMIT_SHA=$(git rev-parse HEAD)
 HF_HUB_CACHE_SEED=/path/to/trusted/hf-hub-cache
 SMOKE_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA"
+JOB_LOCAL_CACHE_ROOT="${TMPDIR:?set TMPDIR to allocation-local scratch}/georeset-dspark-$COMMIT_SHA"
+SMOKE_CACHE="$JOB_LOCAL_CACHE_ROOT/smoke"
+FULL_CACHE="$JOB_LOCAL_CACHE_ROOT/full"
 uv run georeset-pilot run-dspark-smoke \
   --run-dir "$RUN_DIR" \
   --output-dir "$SMOKE_OUT" \
-  --model-cache .cache/model-dspark \
+  --model-cache "$SMOKE_CACHE" \
   --model-cache-seed "$HF_HUB_CACHE_SEED" \
   --computation-commit "$COMMIT_SHA" \
   --validation-commit "$COMMIT_SHA"
@@ -320,7 +327,7 @@ if python -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8
   uv run georeset-pilot run-dspark \
     --run-dir "$RUN_DIR" \
     --output-dir "$FULL_OUT" \
-    --model-cache .cache/model-dspark \
+    --model-cache "$FULL_CACHE" \
     --model-cache-seed "$HF_HUB_CACHE_SEED" \
     --computation-commit "$COMMIT_SHA" \
     --validation-commit "$COMMIT_SHA"
