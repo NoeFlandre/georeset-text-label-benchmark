@@ -1001,7 +1001,6 @@ def _prepare_model_cache(model_cache_dir: Path) -> Path:
 
 
 def _seed_model_cache_from_hub_cache(source_hub_cache: Path, target_hub_cache: Path) -> list[str]:
-    """Seed pinned Hub snapshots from a trusted cache without copying model weights."""
     source, target = _validate_model_cache_seed_roots(source_hub_cache, target_hub_cache)
     if not source.is_dir():
         raise RuntimeError(f"model cache seed is not a readable Hub cache directory: {source}")
@@ -1023,7 +1022,6 @@ def _seed_model_cache_from_hub_cache(source_hub_cache: Path, target_hub_cache: P
 
 
 def _validate_model_cache_seed_roots(source: Path, target: Path) -> tuple[Path, Path]:
-    """Resolve cache roots and forbid either cache from nesting inside the other."""
     source_root = source.expanduser().resolve()
     target_root = target.expanduser().resolve()
     if (
@@ -1036,7 +1034,6 @@ def _validate_model_cache_seed_roots(source: Path, target: Path) -> tuple[Path, 
 
 
 def _pinned_cache_repositories() -> tuple[tuple[str, str], ...]:
-    """List only the exact model and draft repositories supported by this runner."""
     return (
         (dspark.TARGET_MODEL, dspark.TARGET_REVISION),
         (dspark.DRAFT_MODEL, dspark.DRAFT_REVISION),
@@ -1044,14 +1041,12 @@ def _pinned_cache_repositories() -> tuple[tuple[str, str], ...]:
 
 
 def _pinned_cache_folder_names(repositories: Sequence[tuple[str, str]]) -> tuple[str, ...]:
-    """Map pinned repository IDs to their Hub cache folder names."""
     return tuple(
         f"models--{repository.replace('/', '--')}" for repository, _revision in repositories
     )
 
 
 def _cache_folder_collisions(target: Path, folder_names: Sequence[str]) -> list[str]:
-    """Find pinned cache folders that would overwrite existing job-local data."""
     collisions = []
     for name in folder_names:
         candidate = target / name
@@ -1063,14 +1058,12 @@ def _cache_folder_collisions(target: Path, folder_names: Sequence[str]) -> list[
 def _stage_pinned_repositories(
     source: Path, stage: Path, repositories: Sequence[tuple[str, str]]
 ) -> None:
-    """Build and locally validate each pinned repo before installing any of them."""
     for repository, revision in repositories:
         _seed_pinned_repository(source, stage, repository, revision)
         _validate_staged_repository(stage, repository, revision)
 
 
 def _install_staged_cache_folders(stage: Path, target: Path, folder_names: Sequence[str]) -> None:
-    """Install validated folders and roll back only folders installed by this call."""
     installed: list[Path] = []
     try:
         for folder_name in folder_names:
@@ -1088,7 +1081,6 @@ def _install_staged_cache_folders(stage: Path, target: Path, folder_names: Seque
 
 
 def _rollback_installed_cache_folders(installed: Sequence[Path]) -> list[str]:
-    """Remove every folder installed by a failed seed attempt and report leftovers."""
     cleanup_errors = []
     for destination in reversed(installed):
         try:
@@ -1101,7 +1093,6 @@ def _rollback_installed_cache_folders(installed: Sequence[Path]) -> list[str]:
 def _seed_pinned_repository(
     source_cache: Path, staged_cache: Path, repository: str, revision: str
 ) -> None:
-    """Build a pinned repo cache only from files in the packaged Hub inventory."""
     folder_name = f"models--{repository.replace('/', '--')}"
     source_repo = source_cache / folder_name
     source_snapshot = source_repo / "snapshots" / revision
@@ -1147,7 +1138,6 @@ def _seed_snapshot_entry(
     revision: str,
     pinned_metadata: Mapping[str, Any] | None = None,
 ) -> None:
-    """Hash a pinned source blob before adding pointers to those immutable bytes."""
     relative = _pinned_snapshot_relative_path(file_name, repository, revision)
     expected_size, expected_blob_name = _pinned_snapshot_file_metadata(
         metadata, repository, revision
@@ -1175,7 +1165,6 @@ def _seed_snapshot_entry(
 
 
 def _required_pinned_cache_files(repository: str, revision: str) -> dict[str, dict[str, Any]]:
-    """Load the bounded, source-controlled file inventory for one exact Hub revision."""
     inventory = _read_pinned_cache_inventory()
     matching = [
         item
@@ -1190,7 +1179,6 @@ def _required_pinned_cache_files(repository: str, revision: str) -> dict[str, di
 
 
 def _read_pinned_cache_inventory() -> list[dict[str, Any]]:
-    """Read and validate the bounded package inventory document."""
     inventory_path = Path(__file__).with_name("pinned_cache_files.json")
     try:
         data = _read_bounded_pinned_cache_inventory(inventory_path)
@@ -1201,7 +1189,6 @@ def _read_pinned_cache_inventory() -> list[dict[str, Any]]:
 
 
 def _read_bounded_pinned_cache_inventory(inventory_path: Path) -> bytes:
-    """Read only the configured maximum plus one byte from the inventory file."""
     with inventory_path.open("rb") as stream:
         data = stream.read(MAX_PINNED_CACHE_INVENTORY_BYTES + 1)
     if len(data) > MAX_PINNED_CACHE_INVENTORY_BYTES:
@@ -1210,7 +1197,6 @@ def _read_bounded_pinned_cache_inventory(inventory_path: Path) -> bytes:
 
 
 def _pinned_cache_inventory_repositories(inventory: Any) -> list[dict[str, Any]]:
-    """Validate the package inventory envelope and repository records."""
     if not isinstance(inventory, dict) or inventory.get("format_version") != 1:
         raise RuntimeError("pinned cache inventory is missing or invalid")
     repositories = inventory.get("repositories")
@@ -1220,14 +1206,12 @@ def _pinned_cache_inventory_repositories(inventory: Any) -> list[dict[str, Any]]
 
 
 def _is_pinned_cache_repository_list(value: Any) -> TypeGuard[list[dict[str, Any]]]:
-    """Return whether the decoded inventory contains only repository records."""
     return isinstance(value, list) and all(isinstance(item, dict) for item in value)
 
 
 def _pinned_inventory_file_map(
     records: Any, repository: str, revision: str
 ) -> dict[str, dict[str, Any]]:
-    """Validate and index the pinned file records for a model revision."""
     if not isinstance(records, list):
         raise RuntimeError(f"pinned cache inventory is invalid for {repository}@{revision}")
     files: dict[str, dict[str, Any]] = {}
@@ -1241,7 +1225,6 @@ def _pinned_inventory_file_map(
 def _add_pinned_inventory_file(
     files: dict[str, dict[str, Any]], item: Any, repository: str, revision: str
 ) -> None:
-    """Validate one pinned inventory row and reject duplicate file paths."""
     message = f"pinned cache inventory is invalid for {repository}@{revision}"
     if not isinstance(item, dict):
         raise RuntimeError(message)
@@ -1253,7 +1236,6 @@ def _add_pinned_inventory_file(
 
 
 def _valid_inventory_file_metadata(metadata: Mapping[str, Any]) -> bool:
-    """Validate Hub identity and content digest fields from the pinned inventory."""
     size = metadata.get("size")
     blob_id = metadata.get("blob_id")
     algorithm = metadata.get("content_hash_algorithm")
@@ -1270,7 +1252,6 @@ def _valid_inventory_file_metadata(metadata: Mapping[str, Any]) -> bool:
 def _valid_git_inventory_file_content(
     metadata: Mapping[str, Any], blob_id: Any, content_hash: Any
 ) -> bool:
-    """Validate ordinary Git blob identity and reject LFS-only fields."""
     return all(
         (
             _valid_hex_digest(content_hash, 40),
@@ -1284,7 +1265,6 @@ def _valid_git_inventory_file_content(
 def _valid_lfs_inventory_file_content(
     metadata: Mapping[str, Any], size: Any, content_hash: Any
 ) -> bool:
-    """Validate a pinned LFS SHA256 and byte-size identity."""
     return all(
         (
             _valid_hex_digest(content_hash, 64),
@@ -1295,7 +1275,6 @@ def _valid_lfs_inventory_file_content(
 
 
 def _valid_hex_digest(value: Any, length: int) -> TypeGuard[str]:
-    """Return whether a value is a lower-case hexadecimal digest of the requested size."""
     return (
         isinstance(value, str)
         and len(value) == length
@@ -1309,7 +1288,6 @@ def _validate_cache_tree_against_inventory(
     repository: str,
     revision: str,
 ) -> None:
-    """Reject any missing, extra, or metadata-altered file in the cached snapshot tree."""
     for file_name in entries:
         _pinned_snapshot_relative_path(file_name, repository, revision)
     if set(entries) != set(required_files):
@@ -1324,7 +1302,6 @@ def _validate_cache_tree_against_inventory(
 
 
 def _cache_file_metadata_matches(actual: Any, required: Mapping[str, Any]) -> bool:
-    """Compare Hub tree identity and optional LFS size with the pinned inventory."""
     if not _valid_hub_file_metadata(actual):
         return False
     return all(
@@ -1343,7 +1320,6 @@ def _seed_content_digest(
     repository: str,
     revision: str,
 ) -> tuple[str, str]:
-    """Return the expected raw LFS SHA256 or Git blob SHA1 for one snapshot file."""
     metadata = pinned_metadata if pinned_metadata is not None else tree_metadata
     algorithm = metadata.get("content_hash_algorithm")
     expected_digest = metadata.get("content_hash")
@@ -1358,7 +1334,6 @@ def _seed_content_digest(
 
 
 def _tree_seed_content_digest(metadata: Mapping[str, Any]) -> tuple[str, Any]:
-    """Select the digest represented in Hub tree metadata when no pin is supplied."""
     lfs_sha256 = metadata.get("lfs_sha256")
     if lfs_sha256 is not None:
         return "sha256", lfs_sha256
@@ -1371,7 +1346,6 @@ def _check_seed_blob_collision(
     repository: str,
     revision: str,
 ) -> None:
-    """Reject a cache blob name already assigned to a different source path."""
     previous = blob_targets.get(source_blob.name)
     if previous is not None and previous != source_blob:
         raise RuntimeError(
@@ -1387,7 +1361,6 @@ def _verify_seed_blob_content(
     repository: str,
     revision: str,
 ) -> None:
-    """Hash a source file in bounded chunks and detect size or identity changes."""
     digest = _new_seed_content_hasher(algorithm, expected_size)
     try:
         byte_count, changed = _hash_seed_blob_in_chunks(source_blob, digest)
@@ -1414,7 +1387,6 @@ def _new_seed_content_hasher(algorithm: str, expected_size: int) -> Any:
 
 
 def _hash_seed_blob_in_chunks(source_blob: Path, digest: Any) -> tuple[int, bool]:
-    """Hash bounded chunks and report whether source identity changed during the read."""
     before_path = source_blob.stat()
     byte_count = 0
     with source_blob.open("rb") as stream:
@@ -1433,7 +1405,6 @@ def _hash_seed_blob_in_chunks(source_blob: Path, digest: Any) -> tuple[int, bool
 
 
 def _file_identity(stat_result: os.stat_result) -> tuple[int, int, int, int, int]:
-    """Capture stable file metadata used to detect replacement or mutation while hashing."""
     return (
         stat_result.st_dev,
         stat_result.st_ino,
@@ -1446,7 +1417,6 @@ def _file_identity(stat_result: os.stat_result) -> tuple[int, int, int, int, int
 def _read_pinned_cache_tree(
     snapshot: Path, tree_path: Path, repository: str, revision: str
 ) -> tuple[bytes, dict[str, Any]]:
-    """Read pinned Hub tree metadata and reject missing or unbounded metadata."""
     if not snapshot.is_dir() or not tree_path.is_file():
         raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
     tree_bytes, tree = _read_bounded_cache_tree(tree_path, repository, revision)
@@ -1458,7 +1428,6 @@ def _read_pinned_cache_tree(
 def _pinned_cache_tree_entries(
     tree: Mapping[str, Any], repository: str, revision: str
 ) -> dict[str, Any]:
-    """Require a nonempty file mapping in the pinned Hub tree metadata."""
     entries = tree.get("files")
     if not isinstance(entries, dict) or not entries:
         raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
@@ -1468,7 +1437,6 @@ def _pinned_cache_tree_entries(
 def _read_bounded_cache_tree(
     tree_path: Path, repository: str, revision: str
 ) -> tuple[bytes, dict[str, Any]]:
-    """Read at most the bounded Hub tree metadata size before parsing JSON."""
     try:
         with tree_path.open("rb") as stream:
             data = stream.read(MAX_CACHE_TREE_METADATA_BYTES + 1)
@@ -1485,7 +1453,6 @@ def _read_bounded_cache_tree(
 
 
 def _pinned_snapshot_relative_path(file_name: Any, repository: str, revision: str) -> PurePosixPath:
-    """Reject tree names that could escape their Hub snapshot directory."""
     message = f"pinned model cache seed has invalid tree metadata for {repository}@{revision}"
     if not isinstance(file_name, str):
         raise RuntimeError(message)
@@ -1496,7 +1463,6 @@ def _pinned_snapshot_relative_path(file_name: Any, repository: str, revision: st
 
 
 def _valid_hub_snapshot_name(file_name: str, path: PurePosixPath) -> bool:
-    """Return whether a Hub filename is a safe relative POSIX path."""
     return all(
         (
             bool(file_name),
@@ -1508,21 +1474,18 @@ def _valid_hub_snapshot_name(file_name: str, path: PurePosixPath) -> bool:
 
 
 def _valid_hub_snapshot_parts(path: PurePosixPath) -> bool:
-    """Reject absolute paths, empty paths, and path traversal components."""
     if path.is_absolute() or not path.parts:
         return False
     return _valid_hub_snapshot_components(path.parts)
 
 
 def _valid_hub_snapshot_components(parts: Sequence[str]) -> bool:
-    """Reject empty or traversal path components."""
     return all(part != ".." for part in parts)
 
 
 def _pinned_snapshot_file_metadata(
     metadata: Any, repository: str, revision: str
 ) -> tuple[int, str]:
-    """Return expected size and Hub cache blob name from a tree entry."""
     message = f"pinned model cache seed has invalid tree metadata for {repository}@{revision}"
     if not _valid_hub_file_metadata(metadata):
         raise RuntimeError(message)
@@ -1533,7 +1496,6 @@ def _pinned_snapshot_file_metadata(
 
 
 def _valid_hub_file_metadata(metadata: Any) -> bool:
-    """Validate Hub tree metadata without opening or hashing model weights."""
     if not isinstance(metadata, dict):
         return False
     size = metadata.get("size")
@@ -1547,19 +1509,16 @@ def _valid_hub_file_metadata(metadata: Any) -> bool:
 
 
 def _valid_hub_blob_size(size: Any) -> bool:
-    """Require nonnegative integer byte size metadata, excluding bool values."""
     return isinstance(size, int) and not isinstance(size, bool) and size >= 0
 
 
 def _nonempty_string(value: Any) -> bool:
-    """Return whether a metadata value is a nonempty string."""
     return isinstance(value, str) and bool(value)
 
 
 def _source_blob_for_snapshot(
     source_file: Path, source_blobs: Path, repository: str, revision: str
 ) -> Path:
-    """Resolve a snapshot link to its Hub blob entry, including shared storage links."""
     if not source_file.is_symlink():
         raise RuntimeError(f"pinned model cache seed is incomplete for {repository}@{revision}")
     try:
@@ -1580,7 +1539,6 @@ def _link_seed_blob(
     repository: str,
     revision: str,
 ) -> None:
-    """Link each source blob once and reject two paths with the same cache name."""
     previous = blob_targets.get(source_blob.name)
     if previous is not None and previous != source_blob:
         raise RuntimeError(
@@ -1592,7 +1550,6 @@ def _link_seed_blob(
 
 
 def _validate_staged_repository(cache: Path, repository: str, revision: str) -> None:
-    """Resolve the exact seeded commit with the pinned Hub client in offline mode."""
     from huggingface_hub import snapshot_download
 
     try:
@@ -1614,7 +1571,6 @@ def _validate_staged_repository(cache: Path, repository: str, revision: str) -> 
 
 
 def _cache_seed_provenance(source_hub_cache: Path | None) -> dict[str, Any] | None:
-    """Record the read-only cache and exact snapshots linked into the job cache."""
     if source_hub_cache is None:
         return None
     return {

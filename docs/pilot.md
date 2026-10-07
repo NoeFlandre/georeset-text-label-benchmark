@@ -313,7 +313,6 @@ uv run georeset-pilot run-dspark-smoke \
   --model-cache-seed "$HF_HUB_CACHE_SEED" \
   --computation-commit "$COMMIT_SHA" \
   --validation-commit "$COMMIT_SHA"
-# Inspect the smoke gate and continue only if it passed.
 FULL_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA"
 if python -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
   "$SMOKE_OUT/dspark_metrics.json"; then
