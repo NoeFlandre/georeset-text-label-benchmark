@@ -4062,6 +4062,22 @@ def test_seed_content_digest_rejects_invalid_pinned_hash() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("algorithm", "digest"),
+    [("sha256", "z" * 64), ("git-sha1", "g" * 40)],
+)
+def test_seed_content_digest_rejects_malformed_hash_for_supported_algorithm(
+    algorithm: str, digest: str
+) -> None:
+    with pytest.raises(RuntimeError, match="invalid digest metadata"):
+        dspark_runner._seed_content_digest(
+            {},
+            {"content_hash_algorithm": algorithm, "content_hash": digest},
+            dspark.TARGET_MODEL,
+            dspark.TARGET_REVISION,
+        )
+
+
 def test_verify_seed_blob_content_reports_read_and_size_changes(tmp_path: Path) -> None:
     missing = tmp_path / "missing-blob"
     with pytest.raises(RuntimeError, match="is incomplete"):
