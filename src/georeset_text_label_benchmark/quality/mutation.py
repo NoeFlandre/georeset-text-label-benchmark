@@ -68,6 +68,26 @@ EQUIVALENT_RATIONALES = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": (
         "Python resolves utf-8 and UTF-8 to the same codec when reading the manifest JSON."
     ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__new_seed_content_hasher__mutmut_13": (
+        "Python's codec registry resolves ascii and ASCII identically, so the Git blob header "
+        "bytes and resulting SHA-1 are unchanged."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_18": (
+        "dict.get without a default returns None; for an unknown digest algorithm, that "
+        "preserves the same invalid-digest rejection as the explicit zero default."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_20": (
+        "Omitting dict.get's default returns None; for an unknown digest algorithm, that "
+        "preserves the same invalid-digest rejection as the explicit zero default."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_63": (
+        "_check_seed_blob_collision immediately checks the same mapping and raises with "
+        "repository and revision before _link_seed_blob can repeat that conflict check."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_64": (
+        "_check_seed_blob_collision immediately checks the same mapping and raises with "
+        "repository and revision before _link_seed_blob can repeat that conflict check."
+    ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": (
         "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
         "test checks that the emitted metadata reports ZSTD."
@@ -318,6 +338,11 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__encode_frozen_prompts__mutmut_21": "ac9d8036932a65cafca518c618417eda57e1a87b9e26c6ba91c35698124848cc",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": "f567c307849498199c56c0b5b5fd47aa914f613e516c8618e0451837e9194c56",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": "5ad66d9af22bf0a6d8490a046db51195f17c4466a78e7b5968f6818cc2db273f",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__new_seed_content_hasher__mutmut_13": "f833139d0131d82c3b4f0769e7064a3ded068b4739a0bff29500ad37d2c9b5ca",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_18": "3b9f63c82ef33dd973b6c202fd9b203414d4790a3b5446cc0dd806e2772722d2",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_20": "2d4206ff1ec342bc601139470df0bed7807e6a4cafbabc3f1fef351dfe286981",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_63": "1ee83ba01298ea2fdcbebae3b6414ee12633ada2d2ae3eaa075b8eb6ed9c7a5e",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_64": "e33561ed992b03a4fb9a620a9eb82e193f774ddebefdf4dc69280e0f1d5242e1",
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": "e045243688cc4d3e63a821de04a801070bb4f6649ff06a58de31dbcd927cc354",
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_140": "ade27ff44bf497cf2c7beac3cb6b21c902f7e33da3797d4a266b22487367a016",
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_145": "719c04a01f20727321e10b97d631e4ba11731a59476562e980df6e7ec926efcd",

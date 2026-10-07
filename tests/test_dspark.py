@@ -3903,8 +3903,9 @@ def test_pinned_cache_inventory_rejects_invalid_documents(
     inventory.write_bytes(document)
     monkeypatch.setattr(dspark_runner, "__file__", str(module_file))
 
-    with pytest.raises(RuntimeError, match="pinned cache inventory is missing or invalid"):
+    with pytest.raises(RuntimeError) as error:
         dspark_runner._read_pinned_cache_inventory()
+    assert str(error.value) == "pinned cache inventory is missing or invalid"
 
 
 def test_pinned_cache_inventory_rejects_missing_and_oversized_files(
@@ -3914,13 +3915,15 @@ def test_pinned_cache_inventory_rejects_missing_and_oversized_files(
     module_file.touch()
     monkeypatch.setattr(dspark_runner, "__file__", str(module_file))
 
-    with pytest.raises(RuntimeError, match="pinned cache inventory is missing or invalid"):
+    with pytest.raises(RuntimeError) as missing:
         dspark_runner._read_pinned_cache_inventory()
+    assert str(missing.value) == "pinned cache inventory is missing or invalid"
 
     (tmp_path / "pinned_cache_files.json").write_bytes(b"12345")
     monkeypatch.setattr(dspark_runner, "MAX_PINNED_CACHE_INVENTORY_BYTES", 4)
-    with pytest.raises(RuntimeError, match="pinned cache inventory exceeds its size bound"):
+    with pytest.raises(RuntimeError) as oversized:
         dspark_runner._read_pinned_cache_inventory()
+    assert str(oversized.value) == "pinned cache inventory exceeds its size bound"
 
 
 def test_required_pinned_cache_inventory_rejects_unknown_revision() -> None:
@@ -4714,4 +4717,440 @@ def test_grid5000_runner_rejects_an_explicit_empty_model_cache_seed(
     assert result.returncode == 2
     assert (
         "--model-cache-seed must name an existing absolute HF Hub cache directory." in result.stderr
+    )
+
+
+@pytest.mark.parametrize(
+    ("repository", "revision"),
+    [
+        ("unknown/model", dspark.TARGET_REVISION),
+        (dspark.TARGET_MODEL, "unknown-revision"),
+    ],
+)
+def test_required_pinned_cache_inventory_requires_both_exact_keys(
+    repository: str, revision: str
+) -> None:
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._required_pinned_cache_files(repository, revision)
+
+    assert str(error.value) == (
+        f"pinned cache inventory has no unique entry for {repository}@{revision}"
+    )
+
+
+def test_required_pinned_cache_inventory_preserves_context_for_invalid_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+    monkeypatch.setattr(
+        dspark_runner,
+        "_read_pinned_cache_inventory",
+        lambda: [{"repository": repository, "revision": revision, "files": None}],
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._required_pinned_cache_files(repository, revision)
+
+    assert str(error.value) == f"pinned cache inventory is invalid for {repository}@{revision}"
+
+
+def test_pinned_inventory_file_map_rejects_invalid_and_duplicate_records() -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+    invalid_message = f"pinned cache inventory is invalid for {repository}@{revision}"
+    record = {
+        "path": "config.json",
+        "size": 1,
+        "blob_id": "a" * 40,
+        "content_hash_algorithm": "git-sha1",
+        "content_hash": "a" * 40,
+    }
+
+    for records, expected in [
+        (None, invalid_message),
+        ([], f"pinned cache inventory is empty for {repository}@{revision}"),
+        ([None], invalid_message),
+        ([record, record], invalid_message),
+        (
+            [{"path": "../escape", **{key: value for key, value in record.items() if key != "path"}}],
+            f"pinned model cache seed has invalid tree metadata for {repository}@{revision}",
+        ),
+    ]:
+        with pytest.raises(RuntimeError) as error:
+            dspark_runner._pinned_inventory_file_map(records, repository, revision)
+        assert str(error.value) == expected
+
+
+def test_pinned_inventory_read_requests_one_extra_byte_and_accepts_exact_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    limit = 4
+    payload = b"1234"
+    inventory = tmp_path / "pinned_cache_files.json"
+    inventory.write_bytes(payload)
+    monkeypatch.setattr(dspark_runner, "MAX_PINNED_CACHE_INVENTORY_BYTES", limit)
+    stream = MagicMock()
+    stream.__enter__.return_value = stream
+    stream.read.return_value = payload
+    original_open = Path.open
+
+    def open_inventory(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if path == inventory:
+            return stream
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_inventory)
+
+    assert dspark_runner._read_bounded_pinned_cache_inventory(inventory) == payload
+    stream.read.assert_called_once_with(limit + 1)
+
+
+@pytest.mark.parametrize("digest", ["a", "a" * 64])
+def test_seed_content_digest_rejects_unknown_algorithms_for_all_digest_lengths(
+    digest: str,
+) -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._seed_content_digest(
+            {},
+            {"content_hash_algorithm": "unknown", "content_hash": digest},
+            repository,
+            revision,
+        )
+
+    assert str(error.value) == (
+        f"pinned model cache seed has invalid digest metadata for {repository}@{revision}"
+    )
+
+
+def test_check_seed_blob_collision_rejects_only_a_different_source_path(
+    tmp_path: Path,
+) -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+    source_blob = tmp_path / "source" / "same-name"
+    alternate_blob = tmp_path / "alternate" / "same-name"
+    source_blob.parent.mkdir()
+    alternate_blob.parent.mkdir()
+    source_blob.write_bytes(b"source")
+    alternate_blob.write_bytes(b"alternate")
+
+    dspark_runner._check_seed_blob_collision(
+        source_blob, {source_blob.name: source_blob}, repository, revision
+    )
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._check_seed_blob_collision(
+            alternate_blob, {source_blob.name: source_blob}, repository, revision
+        )
+
+    assert str(error.value) == (
+        f"pinned model cache seed has conflicting blob names for {repository}@{revision}"
+    )
+
+
+def test_hash_seed_blob_uses_bounded_reads_and_detects_path_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_blob = tmp_path / "source-blob"
+    replacement = tmp_path / "replacement"
+    source_blob.write_bytes(b"abcdefghij")
+    original_open = Path.open
+    read_sizes: list[int | None] = []
+
+    monkeypatch.setattr(
+        Path,
+        "open",
+        _open_source_with_replacement(
+            source_blob, replacement, read_sizes, original_open
+        ),
+    )
+    monkeypatch.setattr(dspark_runner, "MAX_CACHE_HASH_CHUNK_BYTES", 4)
+
+    byte_count, changed = dspark_runner._hash_seed_blob_in_chunks(
+        source_blob, hashlib.sha256()
+    )
+
+    assert byte_count == 10
+    assert changed is True
+    assert read_sizes == [4, 4, 4, 4]
+
+
+class _ReplacingReader:
+    def __init__(
+        self, stream: Any, source_blob: Path, replacement: Path, read_sizes: list[int | None]
+    ) -> None:
+        self.stream = stream
+        self.source_blob = source_blob
+        self.replacement = replacement
+        self.read_sizes = read_sizes
+        self.replaced = False
+
+    def __enter__(self) -> _ReplacingReader:
+        self.stream.__enter__()
+        return self
+
+    def __exit__(self, *args: Any) -> Any:
+        return self.stream.__exit__(*args)
+
+    def fileno(self) -> int:
+        return self.stream.fileno()
+
+    def read(self, size: int | None = -1) -> bytes:
+        self.read_sizes.append(size)
+        chunk = self.stream.read(size)
+        if not self.replaced:
+            self.replacement.write_bytes(b"replacement")
+            os.replace(self.replacement, self.source_blob)
+            self.replaced = True
+        return chunk
+
+
+def _open_source_with_replacement(
+    source_blob: Path,
+    replacement: Path,
+    read_sizes: list[int | None],
+    original_open: Any,
+) -> Any:
+    def open_source(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        stream = original_open(path, mode, *args, **kwargs)
+        if path == source_blob and mode == "rb":
+            return _ReplacingReader(stream, source_blob, replacement, read_sizes)
+        return stream
+
+    return open_source
+
+
+class _CacheInstallFaults:
+    def __init__(self, original_replace: Any, original_rmtree: Any) -> None:
+        self.original_replace = original_replace
+        self.original_rmtree = original_rmtree
+
+    def replace(self, source: Any, destination: Any) -> Any:
+        if Path(destination).name == "third":
+            raise OSError("replace blocked")
+        return self.original_replace(source, destination)
+
+    def rmtree(self, path: Any, *args: Any, **kwargs: Any) -> Any:
+        name = Path(path).name
+        if name in {"first", "second"}:
+            raise OSError(f"cannot remove {name}")
+        return self.original_rmtree(path, *args, **kwargs)
+
+
+def test_install_staged_cache_folders_reports_all_rollback_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = tmp_path / "stage"
+    target = tmp_path / "target"
+    stage.mkdir()
+    target.mkdir()
+    folder_names = ("first", "second", "third")
+    for name in folder_names:
+        (stage / name).mkdir()
+    faults = _CacheInstallFaults(os.replace, shutil.rmtree)
+    monkeypatch.setattr(os, "replace", faults.replace)
+    monkeypatch.setattr(shutil, "rmtree", faults.rmtree)
+
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._install_staged_cache_folders(stage, target, folder_names)
+
+    assert str(error.value) == (
+        f"cache seed install failed (replace blocked); rollback left residual paths: "
+        f"{target / 'second'}: cannot remove second; "
+        f"{target / 'first'}: cannot remove first"
+    )
+    assert (target / "first").is_dir()
+    assert (target / "second").is_dir()
+
+
+def test_seed_snapshot_entry_preserves_context_for_digest_failures(
+    tmp_path: Path,
+) -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+    source_blobs = tmp_path / "source" / "blobs"
+    source_snapshot = tmp_path / "source" / "snapshots" / revision
+    staged_blobs = tmp_path / "stage" / "blobs"
+    staged_snapshot = tmp_path / "stage" / "snapshots" / revision
+    for directory in (source_blobs, source_snapshot, staged_blobs, staged_snapshot):
+        directory.mkdir(parents=True)
+
+    invalid_blob = source_blobs / "empty"
+    invalid_blob.write_bytes(b"")
+    (source_snapshot / "invalid.json").symlink_to(
+        Path(os.path.relpath(invalid_blob, source_snapshot))
+    )
+    with pytest.raises(RuntimeError) as invalid_digest:
+        dspark_runner._seed_snapshot_entry(
+            "invalid.json",
+            {
+                "size": 0,
+                "blob_id": "empty",
+                "content_hash_algorithm": "md5",
+                "content_hash": "bad",
+            },
+            source_snapshot,
+            source_blobs,
+            staged_blobs,
+            staged_snapshot,
+            {},
+            repository,
+            revision,
+        )
+    assert str(invalid_digest.value) == (
+        f"pinned model cache seed has invalid digest metadata for {repository}@{revision}"
+    )
+
+    wrong_blob = source_blobs / ("a" * 40)
+    wrong_blob.write_bytes(b"x")
+    (source_snapshot / "wrong.json").symlink_to(
+        Path(os.path.relpath(wrong_blob, source_snapshot))
+    )
+    with pytest.raises(RuntimeError) as mismatched_digest:
+        dspark_runner._seed_snapshot_entry(
+            "wrong.json",
+            {"size": 1, "blob_id": "a" * 40},
+            source_snapshot,
+            source_blobs,
+            staged_blobs,
+            staged_snapshot,
+            {},
+            repository,
+            revision,
+        )
+    assert str(mismatched_digest.value) == (
+        f"pinned model cache seed content digest mismatch for {repository}@{revision}"
+    )
+
+
+def test_seed_pinned_repository_builds_a_verified_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+    payload = b"verified config"
+    blob_id = hashlib.sha1(f"blob {len(payload)}\0".encode("ascii") + payload).hexdigest()
+    file_metadata = {
+        "size": len(payload),
+        "blob_id": blob_id,
+        "content_hash_algorithm": "git-sha1",
+        "content_hash": blob_id,
+    }
+    source = tmp_path / "source"
+    repo = source / f"models--{repository.replace('/', '--')}"
+    source_blobs = repo / "blobs"
+    source_snapshot = repo / "snapshots" / revision
+    source_blobs.mkdir(parents=True)
+    source_snapshot.mkdir(parents=True)
+    source_blob = source_blobs / blob_id
+    source_blob.write_bytes(payload)
+    (source_snapshot / "config.json").symlink_to(
+        Path(os.path.relpath(source_blob, source_snapshot))
+    )
+    tree_bytes = json.dumps(
+        {"format_version": 1, "files": {"config.json": {"size": len(payload), "blob_id": blob_id}}},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    tree = repo / "trees" / f"{revision}.json"
+    tree.parent.mkdir()
+    tree.write_bytes(tree_bytes)
+    monkeypatch.setattr(
+        dspark_runner,
+        "_required_pinned_cache_files",
+        lambda actual_repository, actual_revision: (
+            {"config.json": file_metadata}
+            if (actual_repository, actual_revision) == (repository, revision)
+            else pytest.fail("unexpected pinned cache identity")
+        ),
+    )
+    staged = tmp_path / "staged"
+
+    dspark_runner._seed_pinned_repository(source, staged, repository, revision)
+
+    staged_repo = staged / f"models--{repository.replace('/', '--')}"
+    staged_snapshot = staged_repo / "snapshots" / revision
+    assert (staged_snapshot / "config.json").read_bytes() == payload
+    assert (staged_repo / "trees" / f"{revision}.json").read_bytes() == tree_bytes
+    assert (staged_repo / "blobs" / blob_id).resolve() == source_blob.resolve()
+
+
+def test_seed_pinned_repository_uses_inventory_digest_over_tree_extensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+    trusted_payload = b"abc"
+    corrupted_payload = b"abd"
+    pinned_digest = hashlib.sha256(trusted_payload).hexdigest()
+    blob_id = "b" * 40
+    file_metadata = {
+        "size": len(trusted_payload),
+        "blob_id": blob_id,
+        "lfs_sha256": pinned_digest,
+        "lfs_size": len(trusted_payload),
+        "content_hash_algorithm": "sha256",
+        "content_hash": pinned_digest,
+    }
+    tree_metadata = {
+        "size": len(corrupted_payload),
+        "blob_id": blob_id,
+        "lfs_sha256": pinned_digest,
+        "lfs_size": len(corrupted_payload),
+        "content_hash_algorithm": "git-sha1",
+        "content_hash": hashlib.sha1(
+            f"blob {len(corrupted_payload)}\0".encode("ascii") + corrupted_payload
+        ).hexdigest(),
+    }
+    source = tmp_path / "source"
+    repo = source / f"models--{repository.replace('/', '--')}"
+    source_blobs = repo / "blobs"
+    source_snapshot = repo / "snapshots" / revision
+    source_blobs.mkdir(parents=True)
+    source_snapshot.mkdir(parents=True)
+    source_blob = source_blobs / pinned_digest
+    source_blob.write_bytes(corrupted_payload)
+    (source_snapshot / "config.json").symlink_to(
+        Path(os.path.relpath(source_blob, source_snapshot))
+    )
+    tree = repo / "trees" / f"{revision}.json"
+    tree.parent.mkdir()
+    tree.write_text(
+        json.dumps({"format_version": 1, "files": {"config.json": tree_metadata}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        dspark_runner,
+        "_required_pinned_cache_files",
+        lambda *_args: {"config.json": file_metadata},
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._seed_pinned_repository(source, tmp_path / "staged", repository, revision)
+
+    assert str(error.value) == (
+        f"pinned model cache seed content digest mismatch for {repository}@{revision}"
+    )
+    assert not (
+        tmp_path / "staged" / f"models--{repository.replace('/', '--')}" / "blobs" / pinned_digest
+    ).exists()
+
+
+def test_validate_cache_tree_against_inventory_reports_exact_identity_context() -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._validate_cache_tree_against_inventory(
+            {"config.json": {"size": 1, "blob_id": "a" * 40}},
+            {"config.json": {"size": 2, "blob_id": "a" * 40}},
+            repository,
+            revision,
+        )
+
+    assert str(error.value) == (
+        "pinned model cache tree does not match the pinned file inventory "
+        f"for {repository}@{revision}"
     )
