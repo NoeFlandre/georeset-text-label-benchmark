@@ -3775,7 +3775,7 @@ def test_cache_seed_reports_rollback_cleanup_failures_and_continues_cleanup(
     assert (target / "first").is_dir()
 
 
-def test_model_cache_seed_links_only_pinned_repositories_and_preserves_source(
+def test_model_cache_seed_copies_only_pinned_blobs_and_survives_source_removal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "verified-source" / "hub"
@@ -3856,8 +3856,10 @@ def test_model_cache_seed_links_only_pinned_repositories_and_preserves_source(
         seeded_blob = repo_cache / "blobs" / source_blob.name
         seeded_snapshot = repo_cache / "snapshots" / revision / "config.json"
         seeded_tree = repo_cache / "trees" / f"{revision}.json"
-        assert seeded_blob.is_symlink()
-        assert seeded_blob.resolve() == source_blob.resolve()
+        assert seeded_blob.is_file()
+        assert not seeded_blob.is_symlink()
+        assert not os.path.samefile(seeded_blob, source_blob)
+        assert seeded_blob.read_bytes() == payload
         assert seeded_snapshot.is_symlink()
         assert seeded_snapshot.read_bytes() == payload
         assert not seeded_tree.is_symlink()
@@ -3870,6 +3872,10 @@ def test_model_cache_seed_links_only_pinned_repositories_and_preserves_source(
         "models--LiquidAI--LFM2.5-2.6B",
         "models--LiquidAI--LFM2.5-2.6B-DSpark",
     }
+    shutil.rmtree(source.parent)
+    for folder, revision, _source_blob, payload in source_entries:
+        seeded_snapshot = target / folder / "snapshots" / revision / "config.json"
+        assert seeded_snapshot.read_bytes() == payload
 
 
 def test_pinned_cache_inventory_covers_both_exact_model_revisions() -> None:
@@ -4518,7 +4524,7 @@ def test_seed_snapshot_entry_errors_retain_model_identity(
     assert str(error.value) == f"pinned model cache seed {expected_error}{repository}@{revision}"
 
 
-def test_seed_snapshot_entry_supports_nested_reused_blob_paths(tmp_path: Path) -> None:
+def test_seed_snapshot_entry_copies_nested_reused_blob_paths(tmp_path: Path) -> None:
     repository = dspark.TARGET_MODEL
     revision = dspark.TARGET_REVISION
     source_blobs = tmp_path / "source" / "blobs"
@@ -4552,7 +4558,8 @@ def test_seed_snapshot_entry_supports_nested_reused_blob_paths(tmp_path: Path) -
         )
 
     assert len(blob_targets) == 1
-    assert (staged_blobs / blob_name).resolve() == source_blob.resolve()
+    assert not (staged_blobs / blob_name).is_symlink()
+    assert (staged_blobs / blob_name).read_bytes() == payload
     assert (staged_snapshot / "nested/deeper/config-a.json").read_bytes() == payload
     assert (staged_snapshot / "nested/deeper/config-b.json").read_bytes() == payload
 
@@ -4619,10 +4626,13 @@ def test_cache_seed_rejects_blob_name_collisions(tmp_path: Path) -> None:
     alternate_blob.write_bytes(b"alternate")
 
     with pytest.raises(RuntimeError, match="conflicting blob names"):
-        dspark_runner._link_seed_blob(
+        dspark_runner._copy_seed_blob(
             staged_blobs / source_blob.name,
             alternate_blob,
             {source_blob.name: source_blob},
+            len(b"alternate"),
+            "sha256",
+            hashlib.sha256(b"alternate").hexdigest(),
             dspark.TARGET_MODEL,
             dspark.TARGET_REVISION,
         )
@@ -4637,15 +4647,19 @@ def test_cache_seed_reuses_a_staged_blob_for_multiple_snapshot_files(tmp_path: P
     blob_targets: dict[str, Path] = {}
 
     for _ in range(2):
-        dspark_runner._link_seed_blob(
+        dspark_runner._copy_seed_blob(
             staged_blob,
             source_blob,
             blob_targets,
+            len(b"one blob"),
+            "git-sha1",
+            hashlib.sha1(f"blob {len(b'one blob')}\0".encode() + b"one blob").hexdigest(),
             dspark.TARGET_MODEL,
             dspark.TARGET_REVISION,
         )
 
-    assert staged_blob.resolve() == source_blob.resolve()
+    assert not staged_blob.is_symlink()
+    assert staged_blob.read_bytes() == b"one blob"
     assert blob_targets == {source_blob.name: source_blob}
 
 
@@ -5089,7 +5103,9 @@ def test_seed_pinned_repository_builds_a_verified_snapshot(
     staged_snapshot = staged_repo / "snapshots" / revision
     assert (staged_snapshot / "config.json").read_bytes() == payload
     assert (staged_repo / "trees" / f"{revision}.json").read_bytes() == tree_bytes
-    assert (staged_repo / "blobs" / blob_id).resolve() == source_blob.resolve()
+    staged_blob = staged_repo / "blobs" / blob_id
+    assert not staged_blob.is_symlink()
+    assert staged_blob.read_bytes() == payload
 
 
 def test_seed_pinned_repository_uses_inventory_digest_over_tree_extensions(
