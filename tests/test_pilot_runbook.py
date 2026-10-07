@@ -29,11 +29,11 @@ def _fake_tools(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     _write_executable(bin_dir / "hf", "#!/bin/sh\nexit 0\n")
     _write_executable(
         bin_dir / "git",
-        '#!/bin/sh\nprintf \'%s\\n\' "$PILOT_TEST_COMMIT"\n',
+        "#!/bin/sh\nprintf '%s\\n' \"$PILOT_TEST_COMMIT\"\n",
     )
     _write_executable(
         bin_dir / "python",
-        "#!/bin/sh\ncase \"$*\" in\n"
+        '#!/bin/sh\ncase "$*" in\n'
         '  *"import uuid"*) printf \'%s\\n\' "$PILOT_TEST_ATTEMPT";;\n'
         '  *) exec "$PILOT_TEST_REAL_PYTHON" "$@";;\n'
         "esac\n",
@@ -46,7 +46,7 @@ def _fake_tools(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
         "  printf 'HF_HOME=%s\\n' \"${HF_HOME-<unset>}\"\n"
         "  printf 'HF_HUB_CACHE=%s\\n' \"${HF_HUB_CACHE-<unset>}\"\n"
         "  printf 'END\\n'\n"
-        "} >> \"$PILOT_TEST_CALL_LOG\"\n"
+        '} >> "$PILOT_TEST_CALL_LOG"\n'
         'for arg in "$@"; do\n'
         '  [ "$arg" = "run-dspark-smoke" ] && exit "$PILOT_TEST_SMOKE_STATUS"\n'
         "done\nexit 0\n",
@@ -54,7 +54,9 @@ def _fake_tools(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     return bin_dir, call_log
 
 
-def _environment(bin_dir: pathlib.Path, call_log: pathlib.Path, smoke_status: str) -> dict[str, str]:
+def _environment(
+    bin_dir: pathlib.Path, call_log: pathlib.Path, smoke_status: str
+) -> dict[str, str]:
     env = os.environ.copy()
     env.update(
         {
@@ -95,12 +97,8 @@ def test_direct_runbook_stops_after_failed_smoke_with_stale_passing_metrics(
     snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
     bin_dir, call_log = _fake_tools(tmp_path)
     run_root = tmp_path / "artifacts/source/pilot/runs"
-    _write_passing_smoke(
-        run_root / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}"
-    )
-    _write_passing_smoke(
-        run_root / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
-    )
+    _write_passing_smoke(run_root / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}")
+    _write_passing_smoke(run_root / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}")
 
     result = subprocess.run(
         ["bash", "-c", snippet],
@@ -122,8 +120,10 @@ def test_direct_runbook_uses_distinct_cache_roots_and_ignores_inherited_cache_pa
 ) -> None:
     snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
     bin_dir, call_log = _fake_tools(tmp_path)
-    smoke_out = tmp_path / "artifacts/source/pilot/runs" / (
-        f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
+    smoke_out = (
+        tmp_path
+        / "artifacts/source/pilot/runs"
+        / (f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}")
     )
     _write_passing_smoke(smoke_out)
 
@@ -161,18 +161,14 @@ def test_grid_runbook_stops_after_failed_smoke_with_stale_passing_metrics(
         "  printf 'HF_HOME=%s\\n' \"${HF_HOME-<unset>}\"\n"
         "  printf 'HF_HUB_CACHE=%s\\n' \"${HF_HUB_CACHE-<unset>}\"\n"
         "  printf 'END\\n'\n"
-        "} >> \"$PILOT_TEST_CALL_LOG\"\n"
+        '} >> "$PILOT_TEST_CALL_LOG"\n'
         'for arg in "$@"; do\n'
         '  [ "$arg" = "--smoke" ] && exit "$PILOT_TEST_SMOKE_STATUS"\n'
         "done\nexit 0\n",
     )
+    _write_passing_smoke(tmp_path / "pilot/runs" / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}")
     _write_passing_smoke(
-        tmp_path / "pilot/runs" / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}"
-    )
-    _write_passing_smoke(
-        tmp_path
-        / "pilot/runs"
-        / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
+        tmp_path / "pilot/runs" / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
     )
 
     result = subprocess.run(
