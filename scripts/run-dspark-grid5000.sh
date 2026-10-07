@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output [--smoke] [--model-cache-seed /persistent/path/to/hf-hub-cache]" >&2
+  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output [--smoke] [--model-cache-seed /persistent/path/to/hf-hub-cache] [--expected-commit COMMIT_SHA]" >&2
 }
 
 if [[ $# -lt 2 ]]; then
@@ -15,6 +15,7 @@ OUTPUT_DIR=$2
 shift 2
 RUN_COMMAND=run-dspark
 MODEL_CACHE_SEED=
+EXPECTED_COMMIT=
 SMOKE_REQUESTED=false
 SEED_REQUESTED=false
 while (($#)); do
@@ -39,6 +40,14 @@ while (($#)); do
       fi
       SEED_REQUESTED=true
       MODEL_CACHE_SEED=$2
+      shift 2
+      ;;
+    --expected-commit)
+      if [[ -n "$EXPECTED_COMMIT" || $# -lt 2 || -z "$2" ]]; then
+        usage
+        exit 2
+      fi
+      EXPECTED_COMMIT=$2
       shift 2
       ;;
     *)
@@ -73,7 +82,14 @@ if [[ -n "$CHECKOUT_STATUS" ]]; then
   echo "Use a clean, committed checkout so the run manifest identifies the executed code." >&2
   exit 2
 fi
-COMMIT_SHA=$(git -C "$PROJECT_ROOT" rev-parse HEAD)
+if ! COMMIT_SHA=$(git -C "$PROJECT_ROOT" rev-parse HEAD); then
+  echo "Could not identify the committed checkout." >&2
+  exit 2
+fi
+if [[ -n "$EXPECTED_COMMIT" && "$COMMIT_SHA" != "$EXPECTED_COMMIT" ]]; then
+  echo "Checkout commit $COMMIT_SHA does not match expected commit $EXPECTED_COMMIT." >&2
+  exit 2
+fi
 
 TMP_PARENT=${TMPDIR:-/tmp}
 if [[ ! -d "$TMP_PARENT" ]]; then

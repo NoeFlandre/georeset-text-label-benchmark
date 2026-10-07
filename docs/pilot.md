@@ -339,6 +339,14 @@ fi
 FULL_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA-$PILOT_ATTEMPT_ID"
 if python -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
   "$SMOKE_OUT/dspark_metrics.json"; then
+  if ! CURRENT_COMMIT=$(git rev-parse HEAD); then
+    echo "Could not verify the checkout commit after the smoke." >&2
+    exit 1
+  fi
+  if [[ "$CURRENT_COMMIT" != "$COMMIT_SHA" ]]; then
+    echo "The checkout changed after the smoke; do not start the full pilot." >&2
+    exit 1
+  fi
   env -u HF_HOME -u HF_HUB_CACHE uv run georeset-pilot run-dspark \
     --run-dir "$RUN_DIR" \
     --output-dir "$FULL_OUT" \
@@ -379,7 +387,10 @@ exist and be writable. For example, after the authorized owner has placed the
 code and input files on the cluster:
 
 ```bash
-COMMIT_SHA=$(git rev-parse HEAD)
+if ! COMMIT_SHA=$(git rev-parse HEAD); then
+  echo "Could not identify the committed checkout." >&2
+  exit 1
+fi
 PILOT_ATTEMPT_ID=$(python -c 'import uuid; print(uuid.uuid4().hex)')
 HF_HUB_CACHE_SEED=/path/to/trusted/hf-hub-cache
 SMOKE_OUT="/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-smoke-8-seed42-$COMMIT_SHA-$PILOT_ATTEMPT_ID"
@@ -387,7 +398,8 @@ if ! scripts/run-dspark-grid5000.sh \
   /path/to/persistent/pilot/runs/e5-small-100-seed42 \
   "$SMOKE_OUT" \
   --smoke \
-  --model-cache-seed "$HF_HUB_CACHE_SEED"; then
+  --model-cache-seed "$HF_HUB_CACHE_SEED" \
+  --expected-commit "$COMMIT_SHA"; then
   echo "Smoke command failed; do not start the full pilot." >&2
   exit 1
 fi
@@ -418,7 +430,8 @@ if python3 -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-
   scripts/run-dspark-grid5000.sh \
     /path/to/persistent/pilot/runs/e5-small-100-seed42 \
     "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA-$PILOT_ATTEMPT_ID" \
-    --model-cache-seed "$HF_HUB_CACHE_SEED"
+    --model-cache-seed "$HF_HUB_CACHE_SEED" \
+    --expected-commit "$COMMIT_SHA"
 else
   echo "Smoke gate failed; do not start the full pilot." >&2
   exit 1
