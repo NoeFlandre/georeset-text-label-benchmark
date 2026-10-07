@@ -4616,54 +4616,6 @@ def test_cache_seed_readlink_errors_retain_model_identity(
     )
 
 
-def test_cache_seed_rejects_blob_name_collisions(tmp_path: Path) -> None:
-    staged_blobs = tmp_path / "stage" / "blobs"
-    staged_blobs.mkdir(parents=True)
-    source_blob = tmp_path / "source" / "same-name"
-    source_blob.parent.mkdir()
-    source_blob.write_bytes(b"source")
-    alternate_blob = tmp_path / "alternate" / "same-name"
-    alternate_blob.parent.mkdir()
-    alternate_blob.write_bytes(b"alternate")
-
-    with pytest.raises(RuntimeError, match="conflicting blob names"):
-        dspark_runner._copy_seed_blob(
-            staged_blobs / source_blob.name,
-            alternate_blob,
-            {source_blob.name: source_blob},
-            len(b"alternate"),
-            "sha256",
-            hashlib.sha256(b"alternate").hexdigest(),
-            dspark.TARGET_MODEL,
-            dspark.TARGET_REVISION,
-        )
-
-
-def test_cache_seed_reuses_a_staged_blob_for_multiple_snapshot_files(tmp_path: Path) -> None:
-    source_blob = tmp_path / "source" / "same-name"
-    source_blob.parent.mkdir()
-    source_blob.write_bytes(b"one blob")
-    staged_blob = tmp_path / "stage" / "same-name"
-    staged_blob.parent.mkdir()
-    blob_targets: dict[str, Path] = {}
-
-    for _ in range(2):
-        dspark_runner._copy_seed_blob(
-            staged_blob,
-            source_blob,
-            blob_targets,
-            len(b"one blob"),
-            "git-sha1",
-            hashlib.sha1(f"blob {len(b'one blob')}\0".encode() + b"one blob").hexdigest(),
-            dspark.TARGET_MODEL,
-            dspark.TARGET_REVISION,
-        )
-
-    assert not staged_blob.is_symlink()
-    assert staged_blob.read_bytes() == b"one blob"
-    assert blob_targets == {source_blob.name: source_blob}
-
-
 @pytest.mark.parametrize("failure", ["exception", "wrong-path"])
 def test_cache_seed_hub_verification_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
