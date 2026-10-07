@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path, PurePosixPath
 from time import perf_counter
-from typing import Any
+from typing import Any, TypeGuard
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -1262,7 +1262,7 @@ def _valid_inventory_file_metadata(metadata: Mapping[str, Any]) -> bool:
     return False
 
 
-def _valid_hex_digest(value: Any, length: int) -> bool:
+def _valid_hex_digest(value: Any, length: int) -> TypeGuard[str]:
     """Return whether a value is a lower-case hexadecimal digest of the requested size."""
     return (
         isinstance(value, str)
