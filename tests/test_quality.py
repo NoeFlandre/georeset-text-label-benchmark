@@ -334,6 +334,44 @@ def test_mutation_gate_reads_fingerprint_for_surviving_reviewed_patch(
     assert capsys.readouterr().out.endswith(f"(diff sha256: {fingerprint})\n")
 
 
+def test_read_mutation_fingerprints_suppresses_an_exact_reviewed_patch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = "example.x_gate__mutmut_1"
+    patch = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -1,2 +1,2 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
+    )
+    fingerprint = mutation._mutation_fingerprint(patch, name)
+    monkeypatch.setattr(
+        mutation,
+        "REVIEWED_EXEMPTIONS",
+        {name: mutation.MutationExemption(fingerprint, "fixture reviewed as equivalent")},
+    )
+    monkeypatch.setattr(mutation, "_read_mutation_patch", lambda mutant_name: patch)
+
+    assert mutation._read_mutation_fingerprints({name: "survived"}) == {name: fingerprint}
+    assert capsys.readouterr().out == ""
+
+
+def test_read_mutation_fingerprints_separates_unreviewed_patch_without_final_newline(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = "example.x_gate__mutmut_2"
+    patch = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -1,2 +1,2 @@\n def gate(value):\n-    return False\n+    return bool(value)"
+    )
+    fingerprint = mutation._mutation_fingerprint(patch, name)
+    monkeypatch.setattr(mutation, "REVIEWED_EXEMPTIONS", {})
+    monkeypatch.setattr(mutation, "_read_mutation_patch", lambda mutant_name: patch)
+
+    assert mutation._read_mutation_fingerprints({name: "survived"}) == {name: fingerprint}
+    assert capsys.readouterr().out == (
+        f"Unresolved mutation patch for {name}:\n{patch}\nMutation fingerprint: {fingerprint}\n"
+    )
+
+
 def test_mutation_fingerprint_binds_the_reviewed_patch_and_hunk_location() -> None:
     name = "example.x_gate__mutmut_1"
     reviewed = (

@@ -342,10 +342,10 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__encode_frozen_prompts__mutmut_21": "ac9d8036932a65cafca518c618417eda57e1a87b9e26c6ba91c35698124848cc",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": "f567c307849498199c56c0b5b5fd47aa914f613e516c8618e0451837e9194c56",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": "5ad66d9af22bf0a6d8490a046db51195f17c4466a78e7b5968f6818cc2db273f",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x__new_seed_content_hasher__mutmut_13": "1e1f7c43453d09b43e4492c6870a0ccbf0e666f3b6aba9a18e6f81c3ee5cbfc5",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_18": "0e45dd95ed5c703e95e47795ef9741e2e82f09b36cd24711dd7d9ac750c9318f",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_20": "30fd433af6269d39f65fdb5eadd772b7e31b4cd50079c480c0e28fd96fc1f727",
-    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_30": "3f76265ff88336a30675e95a5f4cb2ce960be35c1cce8c6a9f0d56d174d7ade1",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__new_seed_content_hasher__mutmut_13": "5a9c5526113e35c655fbf78e867c6d8ba98f9390652f897dc34c01a79a61f96a",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_18": "a12617dcc07e8cf3a7d11719897753ba26a9e35fcdca2ed13f796345253268ee",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_20": "218b57232dd04977f43fbaf2ee9e418982aa8fb48f52773337c675b2ab29d79e",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_30": "8857c05ed7d312df9c4c89a68d223ceff53e78ea23890ad4c748b78df663ade9",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_63": "0bfd009d988450f6deb0484b26f11e169cc4858aaf9486b8e664cb9bc9bd644d",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_64": "0a9fb48c9da4ce556c52551b3c944a3a381dbe05f8dbbc5e23928b83c49d1fbb",
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": "e045243688cc4d3e63a821de04a801070bb4f6649ff06a58de31dbcd927cc354",
@@ -524,10 +524,6 @@ def _read_mutation_patch(name: str) -> str:
     if completed.returncode:
         raise ValueError(f"mutmut show failed for {name}: {completed.stderr or completed.stdout}")
     return completed.stdout
-
-
-def _read_mutation_fingerprint(name: str) -> str:
-    return _mutation_fingerprint(_read_mutation_patch(name), name)
 
 
 def _read_mutation_fingerprints(results: Mapping[str, str]) -> dict[str, str]:

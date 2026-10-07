@@ -4530,6 +4530,47 @@ def test_seed_snapshot_entry_errors_retain_model_identity(
     assert str(error.value) == f"pinned model cache seed {expected_error}{repository}@{revision}"
 
 
+def test_seed_snapshot_entry_reports_model_identity_when_copied_blob_fails_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+    payload = b"trusted model bytes"
+    blob_name = hashlib.sha1(f"blob {len(payload)}\0".encode("ascii") + payload).hexdigest()
+    source_blobs = tmp_path / "source" / "blobs"
+    source_snapshot = tmp_path / "source" / "snapshots" / revision
+    staged_blobs = tmp_path / "stage" / "blobs"
+    staged_snapshot = tmp_path / "stage" / "snapshots" / revision
+    for directory in (source_blobs, source_snapshot, staged_blobs, staged_snapshot):
+        directory.mkdir(parents=True)
+    source_blob = source_blobs / blob_name
+    source_blob.write_bytes(payload)
+    (source_snapshot / "config.json").symlink_to(source_blob)
+
+    def corrupt_copy(source: Any, staged: Any, length: int) -> None:
+        assert source.read() == payload
+        staged.write(b"X" * len(payload))
+
+    monkeypatch.setattr(dspark_runner.shutil, "copyfileobj", corrupt_copy)
+
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._seed_snapshot_entry(
+            "config.json",
+            {"size": len(payload), "blob_id": blob_name},
+            source_snapshot,
+            source_blobs,
+            staged_blobs,
+            staged_snapshot,
+            {},
+            repository,
+            revision,
+        )
+
+    assert str(error.value) == (
+        f"pinned model cache seed content digest mismatch for {repository}@{revision}"
+    )
+
+
 def test_seed_snapshot_entry_copies_nested_reused_blob_paths(tmp_path: Path) -> None:
     repository = dspark.TARGET_MODEL
     revision = dspark.TARGET_REVISION
@@ -4837,6 +4878,40 @@ def test_check_seed_blob_collision_rejects_only_a_different_source_path(
     with pytest.raises(RuntimeError) as error:
         dspark_runner._check_seed_blob_collision(
             alternate_blob, {source_blob.name: source_blob}, repository, revision
+        )
+
+    assert str(error.value) == (
+        f"pinned model cache seed has conflicting blob names for {repository}@{revision}"
+    )
+
+
+def test_copy_seed_blob_preserves_its_source_path_for_collision_checks(tmp_path: Path) -> None:
+    repository = dspark.TARGET_MODEL
+    revision = dspark.TARGET_REVISION
+    payload = b"shared pinned bytes"
+    source_blob = tmp_path / "source-a" / "same-name"
+    other_source_blob = tmp_path / "source-b" / "same-name"
+    staged_blob = tmp_path / "job-local" / "same-name"
+    for path in (source_blob, other_source_blob):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(payload)
+    staged_blob.parent.mkdir()
+    blob_targets: dict[str, Path] = {}
+
+    dspark_runner._copy_seed_blob(
+        staged_blob,
+        source_blob,
+        blob_targets,
+        len(payload),
+        "sha256",
+        hashlib.sha256(payload).hexdigest(),
+        repository,
+        revision,
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        dspark_runner._check_seed_blob_collision(
+            other_source_blob, blob_targets, repository, revision
         )
 
     assert str(error.value) == (
