@@ -347,6 +347,14 @@ if python -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8
     echo "The checkout changed after the smoke; do not start the full pilot." >&2
     exit 1
   fi
+  if ! CODE_STATUS=$(git status --porcelain --untracked-files=all -- . ':(exclude)artifacts/source'); then
+    echo "Could not verify the code tree after the smoke." >&2
+    exit 1
+  fi
+  if [[ -n "$CODE_STATUS" ]]; then
+    echo "The code tree changed after the smoke; do not start the full pilot." >&2
+    exit 1
+  fi
   env -u HF_HOME -u HF_HUB_CACHE uv run georeset-pilot run-dspark \
     --run-dir "$RUN_DIR" \
     --output-dir "$FULL_OUT" \
