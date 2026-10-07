@@ -4773,7 +4773,12 @@ def test_pinned_inventory_file_map_rejects_invalid_and_duplicate_records() -> No
         ([None], invalid_message),
         ([record, record], invalid_message),
         (
-            [{"path": "../escape", **{key: value for key, value in record.items() if key != "path"}}],
+            [
+                {
+                    "path": "../escape",
+                    **{key: value for key, value in record.items() if key != "path"},
+                }
+            ],
             f"pinned model cache seed has invalid tree metadata for {repository}@{revision}",
         ),
     ]:
@@ -4863,15 +4868,11 @@ def test_hash_seed_blob_uses_bounded_reads_and_detects_path_replacement(
     monkeypatch.setattr(
         Path,
         "open",
-        _open_source_with_replacement(
-            source_blob, replacement, read_sizes, original_open
-        ),
+        _open_source_with_replacement(source_blob, replacement, read_sizes, original_open),
     )
     monkeypatch.setattr(dspark_runner, "MAX_CACHE_HASH_CHUNK_BYTES", 4)
 
-    byte_count, changed = dspark_runner._hash_seed_blob_in_chunks(
-        source_blob, hashlib.sha256()
-    )
+    byte_count, changed = dspark_runner._hash_seed_blob_in_chunks(source_blob, hashlib.sha256())
 
     assert byte_count == 10
     assert changed is True
@@ -5006,9 +5007,7 @@ def test_seed_snapshot_entry_preserves_context_for_digest_failures(
 
     wrong_blob = source_blobs / ("a" * 40)
     wrong_blob.write_bytes(b"x")
-    (source_snapshot / "wrong.json").symlink_to(
-        Path(os.path.relpath(wrong_blob, source_snapshot))
-    )
+    (source_snapshot / "wrong.json").symlink_to(Path(os.path.relpath(wrong_blob, source_snapshot)))
     with pytest.raises(RuntimeError) as mismatched_digest:
         dspark_runner._seed_snapshot_entry(
             "wrong.json",
