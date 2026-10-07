@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -34,6 +35,13 @@ from georeset_text_label_benchmark.quality.mutation import (
 from georeset_text_label_benchmark.quality.mutation import (
     main as check_mutations,
 )
+
+
+def test_mutmut_copies_docs_directory_needed_by_runbook_tests() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "docs/" in config["tool"]["mutmut"]["also_copy"]
 
 
 def _function(source: str) -> ast.FunctionDef:

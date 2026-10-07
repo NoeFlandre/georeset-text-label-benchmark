@@ -85,12 +85,12 @@ EQUIVALENT_RATIONALES = {
         "zero; replacing the zero comparison with one preserves all validation outcomes."
     ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_63": (
-        "_check_seed_blob_collision immediately checks the same mapping and raises with "
-        "repository and revision before _link_seed_blob can repeat that conflict check."
+        "_check_seed_blob_collision rejects conflicting source paths before "
+        "_copy_seed_blob writes the already-checked mapping."
     ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_64": (
-        "_check_seed_blob_collision immediately checks the same mapping and raises with "
-        "repository and revision before _link_seed_blob can repeat that conflict check."
+        "_check_seed_blob_collision rejects conflicting source paths before "
+        "_copy_seed_blob writes the already-checked mapping."
     ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": (
         "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "

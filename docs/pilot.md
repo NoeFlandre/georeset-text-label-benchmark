@@ -300,7 +300,14 @@ Run the smoke and full inference commands only inside an eligible Grid’5000
 GPU allocation. Set `TMPDIR` to that allocation's job-local scratch and use a
 fresh cache directory for each command, as below.
 
+Run this direct example from a clean, committed checkout. It records `HEAD` in
+the run manifest and does not account for uncommitted checkout changes.
+
 ```bash
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "Pilot requires a clean, committed checkout." >&2
+  exit 1
+fi
 PILOT_REVISION=073a1e478bd719f7a8ddc8c9fca191cb87c12926
 hf download NoeFlandre/georeset-text-label-benchmark \
   pilot/runs/e5-small-100-seed42/frozen_sample.json \

@@ -7,6 +7,8 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 DOCS = pathlib.Path(__file__).resolve().parents[1] / "docs" / "pilot.md"
 COMMIT = "a" * 40
 ATTEMPT = "pilot-attempt"
@@ -26,10 +28,21 @@ def _write_executable(path: pathlib.Path, content: str) -> None:
 def _fake_tools(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     bin_dir = tmp_path / "bin"
     call_log = tmp_path / "calls.log"
-    _write_executable(bin_dir / "hf", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "hf",
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$PILOT_TEST_HF_LOG"\nexit 0\n',
+    )
     _write_executable(
         bin_dir / "git",
-        "#!/bin/sh\nprintf '%s\\n' \"$PILOT_TEST_COMMIT\"\n",
+        "#!/bin/sh\n"
+        'if [ "$1" = status ]; then\n'
+        '  case "$PILOT_TEST_GIT_STATUS" in\n'
+        '    "?? "*) [ "$3" = "--untracked-files=no" ] && exit 0;;\n'
+        "  esac\n"
+        "  printf '%s' \"$PILOT_TEST_GIT_STATUS\"\n"
+        "else\n"
+        "  printf '%s\\n' \"$PILOT_TEST_COMMIT\"\n"
+        "fi\n",
     )
     _write_executable(
         bin_dir / "python",
@@ -64,6 +77,8 @@ def _environment(
             "PILOT_TEST_ATTEMPT": ATTEMPT,
             "PILOT_TEST_CALL_LOG": str(call_log),
             "PILOT_TEST_COMMIT": COMMIT,
+            "PILOT_TEST_GIT_STATUS": "",
+            "PILOT_TEST_HF_LOG": str(call_log.parent / "hf.log"),
             "PILOT_TEST_REAL_PYTHON": sys.executable,
             "PILOT_TEST_SMOKE_STATUS": smoke_status,
             "TMPDIR": str(call_log.parent),
@@ -90,6 +105,36 @@ def _write_passing_smoke(path: pathlib.Path) -> None:
     (path / "dspark_metrics.json").write_text(
         json.dumps({"smoke_gate": {"passed": True}}), encoding="utf-8"
     )
+
+
+@pytest.mark.parametrize(
+    "git_status",
+    [
+        " M src/georeset_text_label_benchmark/pilot/dspark_runner.py",
+        "?? untracked-pilot-code.py",
+    ],
+)
+def test_direct_runbook_rejects_dirty_checkout_before_downloading_inputs(
+    tmp_path: pathlib.Path, git_status: str
+) -> None:
+    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
+    bin_dir, call_log = _fake_tools(tmp_path)
+    env = _environment(bin_dir, call_log, "0")
+    env["PILOT_TEST_GIT_STATUS"] = git_status
+
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "clean, committed checkout" in result.stderr
+    assert not (tmp_path / "hf.log").exists()
+    assert _calls(call_log) == []
 
 
 def test_direct_runbook_stops_after_failed_smoke_with_stale_passing_metrics(
