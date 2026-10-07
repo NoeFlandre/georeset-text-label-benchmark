@@ -7,7 +7,6 @@ import re
 import subprocess
 import sys
 
-
 DOCS = pathlib.Path(__file__).resolve().parents[1] / "docs" / "pilot.md"
 COMMIT = "a" * 40
 ATTEMPT = "pilot-attempt"
