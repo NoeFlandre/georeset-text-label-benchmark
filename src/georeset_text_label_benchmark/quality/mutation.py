@@ -498,6 +498,18 @@ def _equivalent_survivors(results: dict[str, str], fingerprints: Mapping[str, st
     )
 
 
+def _format_failure(
+    failure: str, fingerprints: Mapping[str, str], patches: Mapping[str, str] | None
+) -> str:
+    name, status = failure.split(": ", 1)
+    patch = patches.get(name, "") if status == "survived" and patches is not None else ""
+    if patch and not patch.endswith("\n"):
+        patch += "\n"
+    if status == "survived" and name in fingerprints:
+        failure = f"{failure} (diff sha256: {fingerprints[name]})"
+    return f"{patch}  {failure}\n"
+
+
 def _read_results() -> dict[str, str] | None:
     completed = subprocess.run(
         ["mutmut", "results", "--all=true"], capture_output=True, text=True, check=False
@@ -513,28 +525,41 @@ def _read_results() -> dict[str, str] | None:
     return results
 
 
-def _reviewed_survivor_names(results: Mapping[str, str]) -> list[str]:
-    return [
-        name
-        for name, status in sorted(results.items())
-        if status == "survived" and name in REVIEWED_EXEMPTIONS
-    ]
+def _survivor_names(results: Mapping[str, str]) -> list[str]:
+    return [name for name, status in sorted(results.items()) if status == "survived"]
 
 
-def _read_mutation_fingerprint(name: str) -> str:
+def _read_mutation_patch(name: str) -> str:
     completed = subprocess.run(
         ["mutmut", "show", name], capture_output=True, text=True, check=False
     )
     if completed.returncode:
         raise ValueError(f"mutmut show failed for {name}: {completed.stderr or completed.stdout}")
-    return _mutation_fingerprint(completed.stdout, name)
+    return completed.stdout
 
 
-def _read_mutation_fingerprints(results: Mapping[str, str]) -> dict[str, str]:
-    return {name: _read_mutation_fingerprint(name) for name in _reviewed_survivor_names(results)}
+def _read_mutation_fingerprint(name: str) -> str:
+    return _mutation_fingerprint(_read_mutation_patch(name), name)
 
 
-def _report_results(results: dict[str, str], fingerprints: Mapping[str, str]) -> int:
+def _read_mutation_fingerprints(
+    results: Mapping[str, str], patches: dict[str, str] | None = None
+) -> dict[str, str]:
+    fingerprints = {}
+    for name in _survivor_names(results):
+        patch = _read_mutation_patch(name)
+        fingerprint = _mutation_fingerprint(patch, name)
+        fingerprints[name] = fingerprint
+        if patches is not None:
+            patches[name] = patch
+    return fingerprints
+
+
+def _report_results(
+    results: dict[str, str],
+    fingerprints: Mapping[str, str],
+    patches: Mapping[str, str] | None = None,
+) -> int:
     failures = _failures(results, fingerprints)
     print(f"Mutation results: {_killed_count(results)}/{len(results)} killed")
     for name in _equivalent_survivors(results, fingerprints):
@@ -546,7 +571,7 @@ def _report_results(results: dict[str, str], fingerprints: Mapping[str, str]) ->
     if failures:
         print("Unresolved mutation results:")
         for failure in failures:
-            print(f"  {failure}")
+            print(_format_failure(failure, fingerprints, patches), end="")
         return 1
     return 0
 
@@ -555,9 +580,10 @@ def main() -> int:
     results = _read_results()
     if results is None:
         return 1
+    patches = {}
     try:
-        fingerprints = _read_mutation_fingerprints(results)
+        fingerprints = _read_mutation_fingerprints(results, patches)
     except ValueError as error:
         print(str(error))
         return 1
-    return _report_results(results, fingerprints)
+    return _report_results(results, fingerprints, patches)

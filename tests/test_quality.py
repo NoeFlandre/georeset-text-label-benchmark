@@ -444,7 +444,7 @@ def test_mutation_fingerprint_never_waives_invalid_statuses(
     assert _failures({name: status}, {name: fingerprint}) == [f"{name}: {status}"]
 
 
-def test_reviewed_survivor_names_filters_status_and_unreviewed_mutants(
+def test_survivor_names_includes_reviewed_and_unreviewed_mutants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -453,9 +453,9 @@ def test_reviewed_survivor_names_filters_status_and_unreviewed_mutants(
         {"reviewed": mutation.MutationExemption("a" * 64, "fixture")},
     )
 
-    assert mutation._reviewed_survivor_names(
+    assert mutation._survivor_names(
         {"reviewed": "survived", "killed": "killed", "unreviewed": "survived"}
-    ) == ["reviewed"]
+    ) == ["reviewed", "unreviewed"]
 
 
 def test_mutation_gate_fails_when_mutmut_command_fails(
@@ -493,7 +493,7 @@ def test_mutation_gate_fails_closed_when_survivor_diff_cannot_be_read(
         (
             "alive: survived\n",
             1,
-            "Mutation results: 0/1 killed\nUnresolved mutation results:\n  alive: survived\n",
+            None,
         ),
         (
             "untested: no tests\n",
@@ -508,15 +508,30 @@ def test_mutation_gate_checks_run_results(
     capsys: pytest.CaptureFixture[str],
     stdout: str,
     expected: int,
-    reported: str,
+    reported: str | None,
 ) -> None:
-    monkeypatch.setattr(
-        "georeset_text_label_benchmark.quality.mutation.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+    patch = (
+        "# alive: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -14,3 +14,3 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
     )
+    fingerprint = mutation._mutation_fingerprint(patch, "alive")
+
+    def fake_run(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        output = stdout if args[1] == "results" else patch
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(mutation.subprocess, "run", fake_run)
 
     assert check_mutations() == expected
-    assert capsys.readouterr().out == reported
+    actual = capsys.readouterr().out
+    if reported is None:
+        reported = (
+            "Mutation results: 0/1 killed\n"
+            "Unresolved mutation results:\n"
+            f"{patch}"
+            f"  alive: survived (diff sha256: {fingerprint})\n"
+        )
+    assert actual == reported
 
 
 def test_mutation_gate_invokes_mutmut_with_all_results_and_reports_status(
