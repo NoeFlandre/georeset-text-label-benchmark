@@ -538,3 +538,25 @@ def test_mutation_gate_invokes_mutmut_with_all_results_and_reports_status(
         )
     ]
     assert capsys.readouterr().out == "Mutation results: 1/1 killed\n"
+
+
+def test_mutation_gate_reports_patch_and_fingerprint_for_unreviewed_survivor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = "example.x_gate__mutmut_1"
+    patch = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -14,3 +14,3 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
+    )
+    fingerprint = mutation._mutation_fingerprint(patch, name)
+
+    def fake_run(args: list[str], **kwargs: Any) -> SimpleNamespace:
+        output = f"{name}: survived\n" if args[1] == "results" else patch
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(mutation.subprocess, "run", fake_run)
+
+    assert check_mutations() == 1
+    output = capsys.readouterr().out
+    assert patch in output
+    assert f"{name}: survived (diff sha256: {fingerprint})" in output
