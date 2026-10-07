@@ -3873,9 +3873,10 @@ def test_model_cache_seed_copies_only_pinned_blobs_and_survives_source_removal(
         "models--LiquidAI--LFM2.5-2.6B-DSpark",
     }
     shutil.rmtree(source.parent)
-    for folder, revision, _source_blob, payload in source_entries:
-        seeded_snapshot = target / folder / "snapshots" / revision / "config.json"
-        assert seeded_snapshot.read_bytes() == payload
+    folder, revision, _source_blob, payload = source_entries[0]
+    assert (target / folder / "snapshots" / revision / "config.json").read_bytes() == payload
+    folder, revision, _source_blob, payload = source_entries[1]
+    assert (target / folder / "snapshots" / revision / "config.json").read_bytes() == payload
 
 
 def test_pinned_cache_inventory_covers_both_exact_model_revisions() -> None:
