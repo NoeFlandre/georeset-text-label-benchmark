@@ -36,6 +36,11 @@ def _fake_tools(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
         bin_dir / "git",
         "#!/bin/sh\n"
         'if [ "$1" = status ]; then\n'
+        '  case "$*" in\n'
+        '    *"--untracked-files=all"*)\n'
+        "      printf '%s' \"$PILOT_TEST_POST_SMOKE_GIT_STATUS\"\n"
+        '      exit "${PILOT_TEST_POST_SMOKE_GIT_STATUS_EXIT:-0}";;\n'
+        "  esac\n"
         '  case "$PILOT_TEST_GIT_STATUS" in\n'
         '    "?? "*) [ "$3" = "--untracked-files=no" ] && exit 0;;\n'
         "  esac\n"
@@ -221,6 +226,36 @@ def test_direct_runbook_stops_if_checkout_changes_after_smoke(
     calls = _calls(call_log)
     assert result.returncode != 0
     assert "checkout changed after the smoke" in result.stderr
+    assert len(calls) == 1
+    assert "run-dspark-smoke" in calls[0]
+
+
+def test_direct_runbook_stops_if_code_tree_changes_after_smoke(
+    tmp_path: pathlib.Path,
+) -> None:
+    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
+    bin_dir, call_log = _fake_tools(tmp_path)
+    smoke_out = (
+        tmp_path
+        / "artifacts/source/pilot/runs"
+        / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
+    )
+    _write_passing_smoke(smoke_out)
+    env = _environment(bin_dir, call_log, "0")
+    env["PILOT_TEST_POST_SMOKE_GIT_STATUS"] = " M src/georeset_text_label_benchmark/pilot/runner.py"
+
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _calls(call_log)
+    assert result.returncode != 0
+    assert "code tree changed after the smoke" in result.stderr
     assert len(calls) == 1
     assert "run-dspark-smoke" in calls[0]
 
