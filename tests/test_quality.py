@@ -37,11 +37,11 @@ from georeset_text_label_benchmark.quality.mutation import (
 )
 
 
-def test_mutmut_copies_docs_directory_needed_by_runbook_tests() -> None:
+def test_mutmut_copies_repo_files_needed_by_runbook_tests() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert "docs/" in config["tool"]["mutmut"]["also_copy"]
+    assert {"docs/", "scripts/"} <= set(config["tool"]["mutmut"]["also_copy"])
 
 
 def _function(source: str) -> ast.FunctionDef:
