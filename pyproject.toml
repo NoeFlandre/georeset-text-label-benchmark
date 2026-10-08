@@ -45,6 +45,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/georeset_text_label_benchmark"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/georeset_text_label_benchmark/pilot/pinned_cache_files.json" = "georeset_text_label_benchmark/pilot/pinned_cache_files.json"
+
 [tool.uv]
 conflicts = [[{ extra = "pilot" }, { extra = "dspark" }]]
 
@@ -77,6 +80,7 @@ python-version = "3.12"
 [tool.mutmut]
 source_paths = ["src/georeset_text_label_benchmark/"]
 pytest_add_cli_args_test_selection = ["tests"]
+also_copy = ["docs/", "scripts/"]
 dict_synonyms = ["Dict"]
 on_dependency_change = "rerun"
 # PyTorch is imported by the test suite; forkserver avoids inheriting fork-unsafe runtime state.

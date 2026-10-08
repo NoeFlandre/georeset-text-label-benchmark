@@ -68,11 +68,39 @@ EQUIVALENT_RATIONALES = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": (
         "Python resolves utf-8 and UTF-8 to the same codec when reading the manifest JSON."
     ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__new_seed_content_hasher__mutmut_13": (
+        "Python's codec registry resolves ascii and ASCII identically, so the Git blob header "
+        "bytes and resulting SHA-1 are unchanged."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_18": (
+        "dict.get without a default returns None; for an unknown digest algorithm, that "
+        "preserves the same invalid-digest rejection as the explicit zero default."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_20": (
+        "Omitting dict.get's default returns None; for an unknown digest algorithm, that "
+        "preserves the same invalid-digest rejection as the explicit zero default."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_30": (
+        "The supported digest lengths are only 40 and 64, while an unknown algorithm maps to "
+        "zero; replacing the zero comparison with one preserves all validation outcomes."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_63": (
+        "_check_seed_blob_collision rejects conflicting source paths before "
+        "_copy_seed_blob writes the already-checked mapping."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_64": (
+        "_check_seed_blob_collision rejects conflicting source paths before "
+        "_copy_seed_blob writes the already-checked mapping."
+    ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": (
         "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
         "test checks that the emitted metadata reports ZSTD."
     ),
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_140": (
+        "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
+        "test checks that the emitted metadata reports ZSTD."
+    ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_145": (
         "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
         "test checks that the emitted metadata reports ZSTD."
     ),
@@ -314,8 +342,15 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__encode_frozen_prompts__mutmut_21": "ac9d8036932a65cafca518c618417eda57e1a87b9e26c6ba91c35698124848cc",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__prediction_row__mutmut_41": "f567c307849498199c56c0b5b5fd47aa914f613e516c8618e0451837e9194c56",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_e5_manifest__mutmut_10": "5ad66d9af22bf0a6d8490a046db51195f17c4466a78e7b5968f6818cc2db273f",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__new_seed_content_hasher__mutmut_13": "a12617dcc07e8cf3a7d11719897753ba26a9e35fcdca2ed13f796345253268ee",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_18": "218b57232dd04977f43fbaf2ee9e418982aa8fb48f52773337c675b2ab29d79e",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_20": "8857c05ed7d312df9c4c89a68d223ceff53e78ea23890ad4c748b78df663ade9",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_content_digest__mutmut_30": "1f560e886c54fbebc1da628bc728a6ca876e8cc9b711797646b8ffe90e43db17",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_63": "0bfd009d988450f6deb0484b26f11e169cc4858aaf9486b8e664cb9bc9bd644d",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_64": "0a9fb48c9da4ce556c52551b3c944a3a381dbe05f8dbbc5e23928b83c49d1fbb",
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_117": "e045243688cc4d3e63a821de04a801070bb4f6649ff06a58de31dbcd927cc354",
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_140": "ade27ff44bf497cf2c7beac3cb6b21c902f7e33da3797d4a266b22487367a016",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_145": "719c04a01f20727321e10b97d631e4ba11731a59476562e980df6e7ec926efcd",
     "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": "6df3a896f6cea2f72dd0eab8273ac2447f1f8ad7219bc656d651e728ec548f6a",
     "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_46": "762fcd4391bf4f011b03d439abcd817c23b83fdbc386a50c5b090ce5363bf529",
     "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_49": "52e595bb1289043f8ddb669f2998e8ad247382744d3a255ce445a728f3a32d84",
@@ -478,28 +513,37 @@ def _read_results() -> dict[str, str] | None:
     return results
 
 
-def _reviewed_survivor_names(results: Mapping[str, str]) -> list[str]:
-    return [
-        name
-        for name, status in sorted(results.items())
-        if status == "survived" and name in REVIEWED_EXEMPTIONS
-    ]
+def _survivor_names(results: Mapping[str, str]) -> list[str]:
+    return [name for name, status in sorted(results.items()) if status == "survived"]
 
 
-def _read_mutation_fingerprint(name: str) -> str:
+def _read_mutation_patch(name: str) -> str:
     completed = subprocess.run(
         ["mutmut", "show", name], capture_output=True, text=True, check=False
     )
     if completed.returncode:
         raise ValueError(f"mutmut show failed for {name}: {completed.stderr or completed.stdout}")
-    return _mutation_fingerprint(completed.stdout, name)
+    return completed.stdout
 
 
 def _read_mutation_fingerprints(results: Mapping[str, str]) -> dict[str, str]:
-    return {name: _read_mutation_fingerprint(name) for name in _reviewed_survivor_names(results)}
+    fingerprints = {}
+    for name in _survivor_names(results):
+        patch = _read_mutation_patch(name)
+        fingerprint = _mutation_fingerprint(patch, name)
+        fingerprints[name] = fingerprint
+        if not _matches_reviewed_fingerprint(name, fingerprint):
+            print(f"Unresolved mutation patch for {name}:")
+            print(patch, end="" if patch.endswith("\n") else "\n")
+            print(f"Mutation fingerprint: {fingerprint}")
+    return fingerprints
 
 
-def _report_results(results: dict[str, str], fingerprints: Mapping[str, str]) -> int:
+def _report_results(
+    results: dict[str, str],
+    fingerprints: Mapping[str, str],
+    patches: Mapping[str, str] | None = None,
+) -> int:
     failures = _failures(results, fingerprints)
     print(f"Mutation results: {_killed_count(results)}/{len(results)} killed")
     for name in _equivalent_survivors(results, fingerprints):

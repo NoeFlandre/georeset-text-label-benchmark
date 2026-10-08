@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -34,6 +35,13 @@ from georeset_text_label_benchmark.quality.mutation import (
 from georeset_text_label_benchmark.quality.mutation import (
     main as check_mutations,
 )
+
+
+def test_mutmut_copies_repo_files_needed_by_runbook_tests() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert {"docs/", "scripts/"} <= set(config["tool"]["mutmut"]["also_copy"])
 
 
 def _function(source: str) -> ast.FunctionDef:
@@ -326,6 +334,44 @@ def test_mutation_gate_reads_fingerprint_for_surviving_reviewed_patch(
     assert capsys.readouterr().out.endswith(f"(diff sha256: {fingerprint})\n")
 
 
+def test_read_mutation_fingerprints_suppresses_an_exact_reviewed_patch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = "example.x_gate__mutmut_1"
+    patch = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -1,2 +1,2 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
+    )
+    fingerprint = mutation._mutation_fingerprint(patch, name)
+    monkeypatch.setattr(
+        mutation,
+        "REVIEWED_EXEMPTIONS",
+        {name: mutation.MutationExemption(fingerprint, "fixture reviewed as equivalent")},
+    )
+    monkeypatch.setattr(mutation, "_read_mutation_patch", lambda mutant_name: patch)
+
+    assert mutation._read_mutation_fingerprints({name: "survived"}) == {name: fingerprint}
+    assert capsys.readouterr().out == ""
+
+
+def test_read_mutation_fingerprints_separates_unreviewed_patch_without_final_newline(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = "example.x_gate__mutmut_2"
+    patch = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -1,2 +1,2 @@\n def gate(value):\n-    return False\n+    return bool(value)"
+    )
+    fingerprint = mutation._mutation_fingerprint(patch, name)
+    monkeypatch.setattr(mutation, "REVIEWED_EXEMPTIONS", {})
+    monkeypatch.setattr(mutation, "_read_mutation_patch", lambda mutant_name: patch)
+
+    assert mutation._read_mutation_fingerprints({name: "survived"}) == {name: fingerprint}
+    assert capsys.readouterr().out == (
+        f"Unresolved mutation patch for {name}:\n{patch}\nMutation fingerprint: {fingerprint}\n"
+    )
+
+
 def test_mutation_fingerprint_binds_the_reviewed_patch_and_hunk_location() -> None:
     name = "example.x_gate__mutmut_1"
     reviewed = (
@@ -444,7 +490,7 @@ def test_mutation_fingerprint_never_waives_invalid_statuses(
     assert _failures({name: status}, {name: fingerprint}) == [f"{name}: {status}"]
 
 
-def test_reviewed_survivor_names_filters_status_and_unreviewed_mutants(
+def test_survivor_names_includes_reviewed_and_unreviewed_mutants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -453,9 +499,9 @@ def test_reviewed_survivor_names_filters_status_and_unreviewed_mutants(
         {"reviewed": mutation.MutationExemption("a" * 64, "fixture")},
     )
 
-    assert mutation._reviewed_survivor_names(
+    assert mutation._survivor_names(
         {"reviewed": "survived", "killed": "killed", "unreviewed": "survived"}
-    ) == ["reviewed"]
+    ) == ["reviewed", "unreviewed"]
 
 
 def test_mutation_gate_fails_when_mutmut_command_fails(
@@ -493,7 +539,7 @@ def test_mutation_gate_fails_closed_when_survivor_diff_cannot_be_read(
         (
             "alive: survived\n",
             1,
-            "Mutation results: 0/1 killed\nUnresolved mutation results:\n  alive: survived\n",
+            None,
         ),
         (
             "untested: no tests\n",
@@ -508,15 +554,32 @@ def test_mutation_gate_checks_run_results(
     capsys: pytest.CaptureFixture[str],
     stdout: str,
     expected: int,
-    reported: str,
+    reported: str | None,
 ) -> None:
-    monkeypatch.setattr(
-        "georeset_text_label_benchmark.quality.mutation.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+    patch = (
+        "# alive: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -14,3 +14,3 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
     )
+    fingerprint = mutation._mutation_fingerprint(patch, "alive")
+
+    def fake_run(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        output = stdout if args[1] == "results" else patch
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(mutation.subprocess, "run", fake_run)
 
     assert check_mutations() == expected
-    assert capsys.readouterr().out == reported
+    actual = capsys.readouterr().out
+    if reported is None:
+        reported = (
+            "Unresolved mutation patch for alive:\n"
+            f"{patch}"
+            f"Mutation fingerprint: {fingerprint}\n"
+            "Mutation results: 0/1 killed\n"
+            "Unresolved mutation results:\n"
+            "  alive: survived\n"
+        )
+    assert actual == reported
 
 
 def test_mutation_gate_invokes_mutmut_with_all_results_and_reports_status(
@@ -538,3 +601,26 @@ def test_mutation_gate_invokes_mutmut_with_all_results_and_reports_status(
         )
     ]
     assert capsys.readouterr().out == "Mutation results: 1/1 killed\n"
+
+
+def test_mutation_gate_reports_patch_and_fingerprint_for_unreviewed_survivor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = "example.x_gate__mutmut_1"
+    patch = (
+        f"# {name}: survived\n--- src/example.py\n+++ src/example.py\n"
+        "@@ -14,3 +14,3 @@\n def gate(value):\n-    return False\n+    return bool(value)\n"
+    )
+    fingerprint = mutation._mutation_fingerprint(patch, name)
+
+    def fake_run(args: list[str], **kwargs: Any) -> SimpleNamespace:
+        output = f"{name}: survived\n" if args[1] == "results" else patch
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(mutation.subprocess, "run", fake_run)
+
+    assert check_mutations() == 1
+    output = capsys.readouterr().out
+    assert patch in output
+    assert f"Mutation fingerprint: {fingerprint}" in output
+    assert f"{name}: survived" in output
