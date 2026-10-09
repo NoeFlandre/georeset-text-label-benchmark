@@ -19,6 +19,8 @@ DescriptionKey = tuple[str, str]
 PolygonKey = tuple[str, int]
 SENTENCE_DECISIONS = frozenset({"yes", "no", "failed"})
 ALL_DECISIONS = SENTENCE_DECISIONS | {"skipped_unsplit"}
+LABELLED_DECISIONS = frozenset({"yes", "no"})
+BBOX_FIELDS = ("bbox_min_x", "bbox_min_y", "bbox_max_x", "bbox_max_y")
 
 
 def process_partition(
@@ -30,8 +32,13 @@ def process_partition(
     partition_name: str,
     expected_eunis_source_version: str,
     global_keys: GlobalKeys | None = None,
+    labelled: bool = False,
 ) -> PartitionResult:
-    """Join one bounded source partition and return eligible rows plus audit counts."""
+    """Join one bounded source partition and return eligible rows plus audit counts.
+
+    Default rows are yes sentences with an EUNIS assignment. With ``labelled`` set, yes and
+    no sentences with an assignment are kept, each with its decision and polygon bbox.
+    """
     seen = global_keys if global_keys is not None else GlobalKeys()
     audit = AuditCounts()
     polygon_index = _index_polygons(
@@ -41,7 +48,14 @@ def process_partition(
         descriptions, polygon_index, seen, audit, partition_name
     )
     rows = _join_labels(
-        labels, description_index, polygon_index, seen, audit, input_revision, partition_name
+        labels,
+        description_index,
+        polygon_index,
+        seen,
+        audit,
+        input_revision,
+        partition_name,
+        labelled,
     )
     return PartitionResult(rows, audit)
 
@@ -362,27 +376,81 @@ def _record_label(
     text_hash: str,
     index: int,
     audit: AuditCounts,
+    labelled: bool = False,
 ) -> dict[str, Any] | None:
     code = polygon.get("eunis_code")
-    assignment = _assignment_name(code)
-    audit.label_rows += 1
-    audit.decisions[decision] += 1
-    audit.decision_assignment[(decision, assignment)] += 1
+    _count_label(audit, decision, _assignment_name(code))
     if sentence is None:
         audit.skipped_unsplit_rows += 1
         return None
     audit.sentence_rows += 1
     audit.unique_sentence_hashes.add(text_hash)
-    if decision != "yes":
+    if decision not in _retained_decisions(labelled):
         return None
     if code is None:
-        audit.yes_without_eunis_rows += 1
+        _count_unassigned(audit, decision)
         return None
+    if decision == "yes":
+        _count_overlap(audit, description, code)
+    return _retained_record(labelled, decision, description, polygon, sentence, text_hash, index)
+
+
+def _count_label(audit: AuditCounts, decision: str, assignment: str) -> None:
+    audit.label_rows += 1
+    audit.decisions[decision] += 1
+    audit.decision_assignment[(decision, assignment)] += 1
+
+
+def _retained_decisions(labelled: bool) -> frozenset[str]:
+    return LABELLED_DECISIONS if labelled else frozenset({"yes"})
+
+
+def _count_unassigned(audit: AuditCounts, decision: str) -> None:
+    if decision == "yes":
+        audit.yes_without_eunis_rows += 1
+
+
+def _retained_record(
+    labelled: bool,
+    decision: str,
+    description: Mapping[str, Any],
+    polygon: Mapping[str, Any],
+    sentence: str,
+    text_hash: str,
+    index: int,
+) -> dict[str, Any]:
+    if labelled:
+        return _labelled_record(decision, description, polygon, sentence, text_hash, index)
+    return _overlap_record(description, polygon, sentence, text_hash, index)
+
+
+def _count_overlap(audit: AuditCounts, description: Mapping[str, Any], code: str) -> None:
     audit.retained_rows += 1
     audit.overlap_by_eunis[code] += 1
     audit.overlap_by_tag[description["tag_key"]] += 1
     audit.overlap_by_language[description.get("language_code") or "unknown"] += 1
-    return _overlap_record(description, polygon, sentence, text_hash, index)
+
+
+def _labelled_record(
+    decision: str,
+    description: Mapping[str, Any],
+    polygon: Mapping[str, Any],
+    sentence: str,
+    text_hash: str,
+    index: int,
+) -> dict[str, Any]:
+    record = _overlap_record(description, polygon, sentence, text_hash, index)
+    record["decision"] = decision
+    for field in BBOX_FIELDS:
+        record[field] = _finite_number(polygon, field)
+    return record
+
+
+def _finite_number(polygon: Mapping[str, Any], field: str) -> float:
+    value = polygon.get(field)
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise DataValidationError(f"polygon {field} must be a finite number")
+    return float(value)
 
 
 def _assignment_name(code: Any) -> str:
@@ -397,6 +465,7 @@ def _join_labels(
     audit: AuditCounts,
     input_revision: str,
     partition_name: str,
+    labelled: bool = False,
 ) -> list[dict[str, Any]]:
     observed_by_description: Counter[DescriptionKey] = Counter()
     overlaps: list[dict[str, Any]] = []
@@ -414,7 +483,9 @@ def _join_labels(
         observed_by_description[key] += 1
         seen.sentence_keys.add(sentence_key)
         polygon = _polygon_for_description(description, polygons, context)
-        row = _record_label(decision, description, polygon, sentence, text_hash, index, audit)
+        row = _record_label(
+            decision, description, polygon, sentence, text_hash, index, audit, labelled
+        )
         if row is not None:
             overlaps.append(row)
     _verify_label_coverage(descriptions, observed_by_description, partition_name)
