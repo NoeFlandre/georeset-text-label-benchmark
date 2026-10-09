@@ -230,7 +230,7 @@ and generation configuration; they address the missing repetition control and
 EOS stop and use a smaller explicit cap. They have not yet been validated on a
 GPU and do not establish that accuracy will improve. Run the bounded smoke
 below first. Only if it passes should the full 100-row retry use a new output
-path such as `pilot/runs/lfm2.5-2.6b-dspark-100-seed42-sampling-v2/`. The
+path such as `pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA-$PILOT_ATTEMPT_ID/`. The
 manifest records every generation setting and its rationale.
 
 The adapter writes three files into a separate LLM run directory beside the

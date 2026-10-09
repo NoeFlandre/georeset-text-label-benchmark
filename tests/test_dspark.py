@@ -321,7 +321,7 @@ def test_pinned_model_template_opens_thinking_even_when_flag_is_false() -> None:
     from tokenizers.models import WordLevel
     from transformers import PreTrainedTokenizerFast
 
-    template_path = Path(__file__).parent / "fixtures/lfm2_5_chat_template.jinja"
+    template_path = Path(__file__).parent / "fixtures/lfm25-2.6b-pinned/chat_template.jinja"
     template = template_path.read_text(encoding="utf-8")
     assert hashlib.sha256(template.encode("utf-8")).hexdigest() == (
         "ea663864491de7ade391839479860ca95541f892f72665c73251fbd4643b1bef"

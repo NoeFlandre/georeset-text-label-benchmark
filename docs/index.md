@@ -15,7 +15,11 @@ filename alignment by itself is never treated as proof that rows match.
 
 ```bash
 uv sync --locked --all-groups
-uv run georeset-benchmark run --output artifacts/description-eunis-overlap
+COMMIT_SHA=$(git rev-parse HEAD)
+uv run georeset-benchmark run \
+  --output artifacts/description-eunis-overlap \
+  --computation-commit "$COMMIT_SHA" \
+  --validation-commit "$COMMIT_SHA"
 ```
 
 An output directory is published only after every shard passes cardinality,

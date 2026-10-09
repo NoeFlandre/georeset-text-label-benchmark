@@ -7,6 +7,10 @@ mutants/
 mutmut-cache/
 site/
 artifacts/
+pilot/runs/
+dist/
+build/
+.env
 *.egg-info/
 __pycache__/
 .pytest_cache/
