@@ -2030,7 +2030,7 @@ def test_runner_verifies_full_frozen_inputs_before_gpu_preflight(
         )
 
 
-def test_runner_requires_published_e5_manifest_before_gpu_preflight(
+def test_runner_requires_frozen_manifest_before_gpu_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run_dir = tmp_path / "pilot"
@@ -3154,7 +3154,7 @@ def test_smoke_row_selection_caps_eight_unique_languages_and_groups_missing_valu
 
 
 def test_default_dspark_output_names_separate_smoke_and_full_runs() -> None:
-    frozen_run = Path("/persistent/pilot/e5-small-100-seed42")
+    frozen_run = Path("/persistent/pilot/pilot-100-seed42")
 
     assert dspark_runner._output_destination(frozen_run, None, False) == Path(
         "/persistent/pilot/lfm2.5-2.6b-dspark-100-seed42"

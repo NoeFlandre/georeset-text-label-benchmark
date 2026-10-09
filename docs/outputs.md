@@ -23,6 +23,18 @@ existing polygon-level EUNIS assignment. Its 13 fields are:
 Unlabeled polygons and `no`, `failed`, or `skipped_unsplit` occurrences are not
 rows in the overlap file. Their counts remain in `summary.json`.
 
+## `labelled-eunis.parquet`
+
+Every `yes` and `no` sentence occurrence whose polygon has an EUNIS code. It has the
+same columns as `overlap.parquet`, plus:
+
+- `decision`: `yes` or `no`;
+- `bbox_min_x`, `bbox_min_y`, `bbox_max_x`, `bbox_max_y`: the polygon bbox in the
+  WGS 84 longitude and latitude.
+
+The pilot samples from this file. `overlap.parquet` keeps only `yes` rows and no bbox
+columns. Its checksum is listed in `manifest.json`.
+
 ## `summary.json`
 
 The report includes input row stages, decision counts, assigned/missing EUNIS

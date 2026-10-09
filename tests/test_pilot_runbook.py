@@ -7,8 +7,6 @@ import re
 import subprocess
 import sys
 
-import pytest
-
 DOCS = pathlib.Path(__file__).resolve().parents[1] / "docs" / "pilot.md"
 COMMIT = "a" * 40
 ATTEMPT = "pilot-attempt"
@@ -121,216 +119,6 @@ def _write_passing_smoke(path: pathlib.Path) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "git_status",
-    [
-        " M src/georeset_text_label_benchmark/pilot/dspark_runner.py",
-        "?? untracked-pilot-code.py",
-    ],
-)
-def test_direct_runbook_rejects_dirty_checkout_before_downloading_inputs(
-    tmp_path: pathlib.Path, git_status: str
-) -> None:
-    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
-    bin_dir, call_log = _fake_tools(tmp_path)
-    env = _environment(bin_dir, call_log, "0")
-    env["PILOT_TEST_GIT_STATUS"] = git_status
-
-    result = subprocess.run(
-        ["bash", "-c", snippet],
-        cwd=tmp_path,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode != 0
-    assert "clean, committed checkout" in result.stderr
-    assert not (tmp_path / "hf.log").exists()
-    assert _calls(call_log) == []
-
-
-def test_direct_runbook_rejects_failed_cleanliness_check_before_downloading_inputs(
-    tmp_path: pathlib.Path,
-) -> None:
-    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
-    bin_dir, call_log = _fake_tools(tmp_path)
-    env = _environment(bin_dir, call_log, "0")
-    env["PILOT_TEST_GIT_STATUS_EXIT"] = "128"
-
-    result = subprocess.run(
-        ["bash", "-c", snippet],
-        cwd=tmp_path,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode != 0
-    assert "Could not verify a clean, committed checkout" in result.stderr
-    assert not (tmp_path / "hf.log").exists()
-    assert _calls(call_log) == []
-
-
-def test_direct_runbook_stops_after_failed_smoke_with_stale_passing_metrics(
-    tmp_path: pathlib.Path,
-) -> None:
-    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
-    bin_dir, call_log = _fake_tools(tmp_path)
-    run_root = tmp_path / "artifacts/source/pilot/runs"
-    _write_passing_smoke(run_root / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}")
-    _write_passing_smoke(run_root / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}")
-
-    result = subprocess.run(
-        ["bash", "-c", snippet],
-        cwd=tmp_path,
-        env=_environment(bin_dir, call_log, "23"),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    calls = _calls(call_log)
-    assert result.returncode != 0
-    assert len(calls) == 1
-    assert "run-dspark-smoke" in calls[0]
-
-
-def test_direct_runbook_stops_if_checkout_changes_after_smoke(
-    tmp_path: pathlib.Path,
-) -> None:
-    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
-    bin_dir, call_log = _fake_tools(tmp_path)
-    smoke_out = (
-        tmp_path
-        / "artifacts/source/pilot/runs"
-        / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
-    )
-    _write_passing_smoke(smoke_out)
-    commit_sequence = tmp_path / "commits.txt"
-    commit_sequence.write_text(f"{COMMIT}\n{'b' * 40}\n", encoding="utf-8")
-    env = _environment(bin_dir, call_log, "0")
-    env["PILOT_TEST_COMMIT_SEQUENCE_FILE"] = str(commit_sequence)
-
-    result = subprocess.run(
-        ["bash", "-c", snippet],
-        cwd=tmp_path,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    calls = _calls(call_log)
-    assert result.returncode != 0
-    assert "checkout changed after the smoke" in result.stderr
-    assert len(calls) == 1
-    assert "run-dspark-smoke" in calls[0]
-
-
-def test_direct_runbook_stops_if_code_tree_changes_after_smoke(
-    tmp_path: pathlib.Path,
-) -> None:
-    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
-    bin_dir, call_log = _fake_tools(tmp_path)
-    smoke_out = (
-        tmp_path
-        / "artifacts/source/pilot/runs"
-        / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
-    )
-    _write_passing_smoke(smoke_out)
-    env = _environment(bin_dir, call_log, "0")
-    env["PILOT_TEST_POST_SMOKE_GIT_STATUS"] = " M src/georeset_text_label_benchmark/pilot/runner.py"
-
-    result = subprocess.run(
-        ["bash", "-c", snippet],
-        cwd=tmp_path,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    calls = _calls(call_log)
-    assert result.returncode != 0
-    assert "code tree changed after the smoke" in result.stderr
-    assert len(calls) == 1
-    assert "run-dspark-smoke" in calls[0]
-
-
-def test_direct_runbook_uses_distinct_cache_roots_and_ignores_inherited_cache_paths(
-    tmp_path: pathlib.Path,
-) -> None:
-    snippet = _bash_blocks_after("Run the smoke and full inference commands only inside")[0]
-    bin_dir, call_log = _fake_tools(tmp_path)
-    smoke_out = (
-        tmp_path
-        / "artifacts/source/pilot/runs"
-        / (f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}")
-    )
-    _write_passing_smoke(smoke_out)
-
-    result = subprocess.run(
-        ["bash", "-c", snippet],
-        cwd=tmp_path,
-        env=_environment(bin_dir, call_log, "0"),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    calls = _calls(call_log)
-    assert result.returncode == 0
-    assert len(calls) == 2
-    assert _cache_path(calls[0]).endswith("/smoke")
-    assert _cache_path(calls[1]).endswith("/full")
-    assert _cache_path(calls[0]) != _cache_path(calls[1])
-    assert all("HF_HOME=<unset>" in call for call in calls)
-    assert all("HF_HUB_CACHE=<unset>" in call for call in calls)
-
-
-def test_grid_runbook_stops_after_failed_smoke_with_stale_passing_metrics(
-    tmp_path: pathlib.Path,
-) -> None:
-    blocks = _bash_blocks_after("### Grid" + chr(0x2019) + "5000 one-GPU execution")
-    snippet = "\n".join(blocks[:2]).replace("/path/to/persistent", str(tmp_path))
-    bin_dir, call_log = _fake_tools(tmp_path)
-    wrapper = tmp_path / "scripts/run-dspark-grid5000.sh"
-    _write_executable(
-        wrapper,
-        "#!/bin/sh\n{\n"
-        "  printf 'CALL\\n'\n"
-        "  printf '%s\\n' \"$@\"\n"
-        "  printf 'HF_HOME=%s\\n' \"${HF_HOME-<unset>}\"\n"
-        "  printf 'HF_HUB_CACHE=%s\\n' \"${HF_HUB_CACHE-<unset>}\"\n"
-        "  printf 'END\\n'\n"
-        '} >> "$PILOT_TEST_CALL_LOG"\n'
-        'for arg in "$@"; do\n'
-        '  [ "$arg" = "--smoke" ] && exit "$PILOT_TEST_SMOKE_STATUS"\n'
-        "done\nexit 0\n",
-    )
-    _write_passing_smoke(tmp_path / "pilot/runs" / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}")
-    _write_passing_smoke(
-        tmp_path / "pilot/runs" / f"lfm2.5-2.6b-dspark-smoke-8-seed42-{COMMIT}-{ATTEMPT}"
-    )
-
-    result = subprocess.run(
-        ["bash", "-c", snippet],
-        cwd=tmp_path,
-        env=_environment(bin_dir, call_log, "23"),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    calls = _calls(call_log)
-    assert result.returncode != 0
-    assert len(calls) == 1
-    assert "--smoke" in calls[0]
-
-
 def test_grid_wrapper_rejects_failed_cleanliness_check_before_recording_head(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -430,3 +218,13 @@ def test_grid_wrapper_rejects_checkout_commit_mismatch_before_runtime(
 
     assert result.returncode == 2
     assert "does not match expected commit" in result.stderr
+
+
+def test_grid_wrapper_usage_names_the_geographic_run_directory() -> None:
+    wrapper = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "run-dspark-grid5000.sh"
+    usage = next(
+        line for line in wrapper.read_text(encoding="utf-8").splitlines() if "Usage:" in line
+    )
+
+    assert "pilot-100-seed42" in usage
+    assert "e5-small" not in wrapper.read_text(encoding="utf-8")

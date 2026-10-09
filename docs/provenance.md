@@ -2,9 +2,9 @@
 
 This project aims to compare text-to-geographic-label prediction across
 sources and references. The data pipeline computes only the pinned
-Description/EUNIS overlap documented here. A separate small pilot ranks frozen
-sentences against EUNIS text candidates; it does not change overlap data or
-recompute geometries. See [pilot provenance and method](pilot.md).
+Description/EUNIS overlap documented here. A separate pilot has LFM2.5 + DSpark pick
+one EUNIS code for each frozen sentence; it does not change overlap data or recompute
+geometries. See [pilot provenance and method](pilot.md).
 
 ## Pinned source snapshots
 
