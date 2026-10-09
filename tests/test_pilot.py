@@ -2511,6 +2511,10 @@ def test_cli_parser_help_is_stable_and_defaults_are_pinned() -> None:
         parser.parse_args(["run", "--computation-commit", "a" * 40])
     with pytest.raises(SystemExit, match="2"):
         parser.parse_args(["run-dspark"])
+    with pytest.raises(SystemExit, match="2"):
+        parser.parse_args(
+            ["run-dspark", "--computation-commit", "a" * 40, "--validation-commit", "b" * 40]
+        )
 
     frozen = parser.parse_args(["freeze", "--source-parquet", "overlap.parquet"])
     assert frozen.source_parquet == Path("overlap.parquet")
@@ -2526,9 +2530,18 @@ def test_cli_parser_help_is_stable_and_defaults_are_pinned() -> None:
     assert running.batch_size == 16
     assert running.max_length == 512
     dspark_running = parser.parse_args(
-        ["run-dspark", "--computation-commit", "a" * 40, "--validation-commit", "b" * 40]
+        [
+            "run-dspark",
+            "--smoke-output-dir",
+            "smoke-evidence",
+            "--computation-commit",
+            "a" * 40,
+            "--validation-commit",
+            "b" * 40,
+        ]
     )
     assert dspark_running.run_dir == Path("artifacts/e5-small-100-seed42")
+    assert dspark_running.smoke_output_dir == Path("smoke-evidence")
     assert dspark_running.output_dir is None
     assert dspark_running.model_cache == Path(".cache/model-dspark")
 

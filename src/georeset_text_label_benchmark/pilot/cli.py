@@ -49,6 +49,7 @@ def _parser() -> argparse.ArgumentParser:
     dspark.add_argument("--output-dir", type=Path)
     dspark.add_argument("--model-cache", type=Path, default=Path(".cache/model-dspark"))
     dspark.add_argument("--model-cache-seed", type=Path)
+    dspark.add_argument("--smoke-output-dir", type=Path, required=True)
     dspark.add_argument("--computation-commit", required=True)
     dspark.add_argument("--validation-commit", required=True)
     smoke = commands.add_parser(
@@ -104,6 +105,7 @@ def _run_e5_command(args: argparse.Namespace) -> dict[str, Any]:
 
 def _run_dspark_command(args: argparse.Namespace) -> dict[str, Any]:
     """Run the DSpark pilot or bounded smoke for the selected subcommand."""
+    smoke = args.command == "run-dspark-smoke"
     return run_dspark_pilot(
         args.run_dir,
         output_dir=args.output_dir,
@@ -111,5 +113,6 @@ def _run_dspark_command(args: argparse.Namespace) -> dict[str, Any]:
         model_cache_seed_dir=args.model_cache_seed,
         computation_commit=args.computation_commit,
         validation_commit=args.validation_commit,
-        smoke=args.command == "run-dspark-smoke",
+        smoke=smoke,
+        smoke_output_dir=None if smoke else args.smoke_output_dir,
     )

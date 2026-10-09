@@ -23,6 +23,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from georeset_text_label_benchmark.pilot import dspark
+from georeset_text_label_benchmark.pilot.checkout import require_committed_checkout
 from georeset_text_label_benchmark.pilot.metrics import (
     single_label_class_breakdown,
     single_label_group_breakdown,
@@ -62,6 +63,9 @@ MAX_CACHE_HASH_CHUNK_BYTES = 1024**2
 PREDICTIONS_NAME = "dspark_predictions.parquet"
 METRICS_NAME = "dspark_metrics.json"
 MANIFEST_NAME = "dspark_manifest.json"
+_SOFTWARE_IDENTITY_KEYS = ("python", "sglang", "flashinfer_python", "transformers", "pyarrow")
+_GPU_IDENTITY_KEYS = ("name", "memory_mib", "compute_capability", "driver_version")
+_CUDA_IDENTITY_KEYS = ("driver_version", "nvcc_release", "torch_version", "torch_cuda")
 _clock = perf_counter
 
 
@@ -74,14 +78,34 @@ def run_dspark_pilot(
     model_cache_dir: Path = Path(".cache/model-dspark"),
     model_cache_seed_dir: Path | None = None,
     smoke: bool = False,
+    smoke_output_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Run the frozen DSpark pilot or its fixed eight-row readiness smoke."""
+    """Run the frozen DSpark pilot or its fixed eight-row readiness smoke.
+
+    A full run must name a completed smoke output directory for the same frozen inputs,
+    model configuration, and commits. That evidence is revalidated before staged recovery,
+    GPU admission, model-cache work, tokenizer loading, or engine startup.
+    """
     destination = _output_destination(run_dir, output_dir, smoke)
     _validate_run_options(run_dir, destination, computation_commit, validation_commit)
+    require_committed_checkout(computation_commit, validation_commit)
     staging = _find_staged_dspark_run(destination)
     sample, frozen_rows, candidates = read_frozen_pilot_inputs(run_dir)
     _validate_published_sample(sample, frozen_rows)
     frozen_e5_manifest_sha256 = _validate_frozen_e5_manifest(run_dir, sample)
+    admitted = _admit_full_run(
+        run_dir,
+        destination,
+        staging,
+        smoke,
+        smoke_output_dir,
+        sample,
+        frozen_rows,
+        candidates,
+        computation_commit,
+        validation_commit,
+        frozen_e5_manifest_sha256,
+    )
     rows = _rows_for_run(frozen_rows, smoke)
     smoke_gate = None
     run_scope = _run_scope(sample, rows, smoke)
@@ -98,8 +122,7 @@ def run_dspark_pilot(
             run_scope,
         )
     ensure_publication_supported(destination.parent)
-    gpu = _require_supported_gpu()
-    cuda_preflight = _runtime_compatibility_preflight(gpu)
+    gpu, cuda_preflight = _probe_gpu_runtime(admitted)
     cache_dir = _prepare_model_cache(model_cache_dir)
     if model_cache_seed_dir is not None:
         _seed_model_cache_from_hub_cache(model_cache_seed_dir, cache_dir)
@@ -152,6 +175,7 @@ def run_dspark_pilot(
             frozen_e5_manifest_sha256,
             cuda_preflight,
             model_cache_seed_dir,
+            admitted,
         )
         _write_json_exclusive(staged_manifest, manifest)
         publish_directory(staging, destination)
@@ -429,6 +453,7 @@ def _build_manifest(
     frozen_e5_manifest_sha256: str,
     cuda_preflight: Mapping[str, Any],
     model_cache_seed_dir: Path | None,
+    admitted: _AdmittedSmoke | None,
 ) -> dict[str, Any]:
     generation_config = _generation_config(template_hash, sample)
     return {
@@ -441,20 +466,10 @@ def _build_manifest(
         "sample": sample["selection"],
         "run_scope": dict(run_scope),
         "smoke_gate": dict(smoke_gate) if smoke_gate is not None else None,
+        "admitted_smoke": None if admitted is None else dict(admitted.record),
         "candidate_labels": _candidate_provenance(sample, candidates),
-        "model": {
-            "repository": dspark.TARGET_MODEL,
-            "revision": dspark.TARGET_REVISION,
-            "license": "LFM1.0",
-            "context_tokens": dspark.MODEL_CONTEXT_TOKENS,
-        },
-        "draft": {
-            "repository": dspark.DRAFT_MODEL,
-            "revision": dspark.DRAFT_REVISION,
-            "license": "LFM1.0",
-            "parameters": 327_700_000,
-            "context_tokens": dspark.RUNTIME_CONTEXT_TOKENS,
-        },
+        "model": _model_provenance(),
+        "draft": _draft_provenance(),
         "generation_config": generation_config,
         "generation_config_sha256": _sha256_json(generation_config),
         "runtime": {
@@ -493,6 +508,25 @@ def _build_manifest(
                 else []
             ),
         ],
+    }
+
+
+def _model_provenance() -> dict[str, Any]:
+    return {
+        "repository": dspark.TARGET_MODEL,
+        "revision": dspark.TARGET_REVISION,
+        "license": "LFM1.0",
+        "context_tokens": dspark.MODEL_CONTEXT_TOKENS,
+    }
+
+
+def _draft_provenance() -> dict[str, Any]:
+    return {
+        "repository": dspark.DRAFT_MODEL,
+        "revision": dspark.DRAFT_REVISION,
+        "license": "LFM1.0",
+        "parameters": 327_700_000,
+        "context_tokens": dspark.RUNTIME_CONTEXT_TOKENS,
     }
 
 
@@ -543,6 +577,294 @@ def _find_staged_dspark_run(destination: Path) -> Path | None:
     if staging is None or (destination / MANIFEST_NAME).exists():
         _validate_output_is_available(destination)
     return staging
+
+
+def _admit_full_run(
+    run_dir: Path,
+    destination: Path,
+    staging: Path | None,
+    smoke: bool,
+    smoke_output_dir: Path | None,
+    sample: Mapping[str, Any],
+    frozen_rows: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, str]],
+    computation_commit: str,
+    validation_commit: str,
+    frozen_e5_manifest_sha256: str,
+) -> _AdmittedSmoke | None:
+    """Require matching smoke evidence before any full-run work, including staged recovery."""
+    if smoke:
+        if smoke_output_dir is not None:
+            raise ValueError("bounded smoke runs do not accept a smoke output directory")
+        return None
+    if smoke_output_dir is None:
+        raise ValueError("full DSpark runs require a completed matching smoke output directory")
+    admitted = _validate_full_run_smoke_evidence(
+        run_dir,
+        destination,
+        smoke_output_dir,
+        sample,
+        frozen_rows,
+        candidates,
+        computation_commit,
+        validation_commit,
+        frozen_e5_manifest_sha256,
+    )
+    if staging is not None:
+        _validate_staged_matches_smoke(staging, admitted)
+    return admitted
+
+
+class _AdmittedSmoke(NamedTuple):
+    """Smoke evidence that admitted a full run, with the exact bytes it pins."""
+
+    directory: Path
+    manifest: Mapping[str, Any]
+    record: dict[str, Any]
+
+
+def _validate_full_run_smoke_evidence(
+    run_dir: Path,
+    destination: Path,
+    smoke_dir: Path,
+    sample: Mapping[str, Any],
+    frozen_rows: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, str]],
+    computation_commit: str,
+    validation_commit: str,
+    frozen_e5_manifest_sha256: str,
+) -> _AdmittedSmoke:
+    """Revalidate a completed smoke directory before a full run may touch the model."""
+    _validate_smoke_evidence_placement(smoke_dir, destination, run_dir)
+    manifest = _read_smoke_evidence_manifest(smoke_dir)
+    selected_rows = _select_smoke_rows(frozen_rows)
+    run_scope = _run_scope(sample, selected_rows, smoke=True)
+    _validate_staged_dspark_protocol(
+        smoke_dir,
+        manifest,
+        sample,
+        candidates,
+        computation_commit,
+        validation_commit,
+        frozen_e5_manifest_sha256,
+        run_scope,
+    )
+    _validate_smoke_model_configuration(manifest, sample, smoke_dir)
+    _validate_staged_dspark_hashes(run_dir, smoke_dir, manifest)
+    predictions = _read_staged_dspark_predictions(smoke_dir)
+    metrics = _read_staged_dspark_metrics(smoke_dir)
+    _validate_staged_smoke_gate(smoke_dir, manifest, run_scope, metrics)
+    _validate_smoke_predictions(predictions, selected_rows, candidates, smoke_dir)
+    _validate_smoke_metrics(metrics, predictions, candidates, smoke_dir)
+    return _AdmittedSmoke(smoke_dir, manifest, _admitted_smoke_record(smoke_dir, manifest))
+
+
+def _admitted_smoke_record(smoke_dir: Path, manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Pin the exact smoke manifest, predictions, metrics, and scope that admitted a full run."""
+    return {
+        "manifest_sha256": sha256_file(smoke_dir / MANIFEST_NAME),
+        "predictions_sha256": sha256_file(smoke_dir / PREDICTIONS_NAME),
+        "metrics_sha256": sha256_file(smoke_dir / METRICS_NAME),
+        "run_scope": dict(manifest["run_scope"]),
+    }
+
+
+def _validate_smoke_evidence_placement(smoke_dir: Path, destination: Path, run_dir: Path) -> None:
+    if _paths_overlap(smoke_dir, destination):
+        raise ValueError("DSpark smoke evidence must be separate from the full-run output")
+    if _paths_overlap(smoke_dir, run_dir):
+        raise ValueError("DSpark smoke evidence must be separate from frozen E5 inputs")
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    """Return whether two paths are equal, or one is nested inside the other."""
+    first_path = first.resolve()
+    second_path = second.resolve()
+    return (
+        first_path == second_path
+        or first_path in second_path.parents
+        or second_path in first_path.parents
+    )
+
+
+def _read_smoke_evidence_manifest(smoke_dir: Path) -> Mapping[str, Any]:
+    if not smoke_dir.is_dir():
+        raise ValueError(f"DSpark smoke evidence directory is missing: {smoke_dir}")
+    return _read_staged_dspark_manifest(smoke_dir)
+
+
+def _validate_smoke_model_configuration(
+    manifest: Mapping[str, Any], sample: Mapping[str, Any], smoke_dir: Path
+) -> None:
+    """Require the pinned model, draft, sampling, engine, and parser configuration."""
+    # load_tokenizer rejects any chat template whose hash differs from this pinned constant
+    # before the engine starts, so the full run records exactly this template hash.
+    generation_config = _generation_config(dspark.TARGET_CHAT_TEMPLATE_SHA256, sample)
+    expected = {
+        "format_version": 1,
+        "source_coverage": sample["source_coverage"],
+        "model": _model_provenance(),
+        "draft": _draft_provenance(),
+        "generation_config": generation_config,
+        "generation_config_sha256": _sha256_json(generation_config),
+    }
+    if {key: manifest.get(key) for key in expected} != expected:
+        raise ValueError(f"DSpark smoke evidence does not match the pinned model: {smoke_dir}")
+    _validate_smoke_runtime_identity(manifest, smoke_dir)
+
+
+def _validate_smoke_runtime_identity(manifest: Mapping[str, Any], smoke_dir: Path) -> None:
+    if _runtime_identity(manifest.get("runtime")) != _runtime_identity(_runtime_metadata()):
+        raise ValueError(f"DSpark smoke evidence came from a different runtime: {smoke_dir}")
+
+
+def _runtime_identity(runtime: Any) -> dict[str, Any]:
+    """Keep the interpreter and pinned package versions that make two runs comparable."""
+    return _selected_fields(runtime, _SOFTWARE_IDENTITY_KEYS)
+
+
+def _runtime_hardware_identity(runtime: Any) -> dict[str, Any]:
+    """Keep the GPU and CUDA toolchain facts recorded by a completed run."""
+    if not isinstance(runtime, Mapping):
+        return {}
+    return _hardware_identity(runtime.get("gpu"), runtime.get("cuda_preflight"))
+
+
+def _hardware_identity(gpu: Any, cuda_preflight: Any) -> dict[str, Any]:
+    """Keep the live GPU and CUDA fields that a smoke must share with its full run."""
+    return {
+        "gpu": _selected_fields(gpu, _GPU_IDENTITY_KEYS),
+        "cuda": _selected_fields(cuda_preflight, _CUDA_IDENTITY_KEYS),
+    }
+
+
+def _selected_fields(record: Any, keys: Sequence[str]) -> dict[str, Any]:
+    if not isinstance(record, Mapping):
+        return {}
+    return {key: record.get(key) for key in keys}
+
+
+def _probe_gpu_runtime(admitted: _AdmittedSmoke | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Probe the GPU and CUDA toolchain, then require a full run to match its smoke hardware."""
+    gpu = _require_supported_gpu()
+    cuda_preflight = _runtime_compatibility_preflight(gpu)
+    if admitted is not None:
+        _require_matching_smoke_hardware(admitted, gpu, cuda_preflight)
+    return gpu, cuda_preflight
+
+
+def _require_matching_smoke_hardware(
+    admitted: _AdmittedSmoke, gpu: Mapping[str, Any], cuda_preflight: Mapping[str, Any]
+) -> None:
+    """Reject a full run on different hardware before model cache, tokenizer, or engine work."""
+    current = _hardware_identity(gpu, cuda_preflight)
+    if _runtime_hardware_identity(admitted.manifest.get("runtime")) != current:
+        raise ValueError(
+            f"DSpark smoke evidence came from different GPU or CUDA hardware: {admitted.directory}"
+        )
+
+
+def _validate_smoke_predictions(
+    predictions: Sequence[Mapping[str, Any]],
+    selected_rows: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, str]],
+    smoke_dir: Path,
+) -> None:
+    """Tie each retained smoke row to its frozen identity, prompt, and recomputed parse."""
+    for prediction, row in zip(predictions, selected_rows, strict=True):
+        _validate_smoke_prediction_row(prediction, row, candidates, smoke_dir)
+
+
+def _validate_smoke_prediction_row(
+    prediction: Mapping[str, Any],
+    row: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+    smoke_dir: Path,
+) -> None:
+    expected = _frozen_prediction_identity(row)
+    if {key: prediction.get(key) for key in expected} != expected:
+        raise ValueError(f"DSpark smoke evidence row does not match its frozen row: {smoke_dir}")
+    if prediction.get("prompt_sha256") != _prompt_sha256(row, candidates):
+        raise ValueError(f"DSpark smoke evidence prompt does not match its row: {smoke_dir}")
+    _validate_smoke_parse(prediction, row, candidates, smoke_dir)
+
+
+def _frozen_prediction_identity(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the frozen row and its gold labels, which every retained prediction must repeat."""
+    return {**row, "gold_eunis_code": row["eunis_code"], "gold_eunis_name": row["eunis_name"]}
+
+
+def _prompt_sha256(row: Mapping[str, Any], candidates: Sequence[Mapping[str, str]]) -> str:
+    prompt = dspark.build_prompt(row["sentence"], candidates)
+    return hashlib.sha256(prompt.encode()).hexdigest()
+
+
+def _validate_smoke_parse(
+    prediction: Mapping[str, Any],
+    row: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+    smoke_dir: Path,
+) -> None:
+    """Recompute parser output so retained status, code, and correctness match raw text."""
+    raw_output = prediction.get("raw_output")
+    finish_reason = prediction.get("finish_reason")
+    if not isinstance(raw_output, str) or not isinstance(finish_reason, str):
+        raise ValueError(f"DSpark smoke evidence has malformed generated text: {smoke_dir}")
+    expected = _recomputed_parse_fields(raw_output, finish_reason, row, candidates)
+    if {key: prediction.get(key) for key in expected} != expected:
+        raise ValueError(f"DSpark smoke evidence parse does not match its raw text: {smoke_dir}")
+
+
+def _recomputed_parse_fields(
+    raw_output: str,
+    finish_reason: str,
+    row: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, str]],
+) -> dict[str, Any]:
+    names = {item["eunis_code"]: item["eunis_name"] for item in candidates}
+    parsed = dspark.parse_label(
+        raw_output, finish_reason=finish_reason, candidate_codes=list(names)
+    )
+    return {
+        "parse_status": parsed.status,
+        "parse_error": parsed.error,
+        "parsed_eunis_code": parsed.code,
+        "parsed_eunis_name": names.get(parsed.code),
+        "correct_top1": parsed.code == row["eunis_code"] if parsed.code else None,
+    }
+
+
+def _validate_smoke_metrics(
+    metrics: Mapping[str, Any],
+    predictions: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, str]],
+    smoke_dir: Path,
+) -> None:
+    """Require saved metrics and the gate to be exactly the summary of the retained rows."""
+    expected: dict[str, Any] = json.loads(json.dumps(_metrics_payload(predictions, candidates)))
+    expected["smoke_gate"] = _smoke_gate(predictions)
+    if dict(metrics) != expected:
+        raise ValueError(f"DSpark smoke evidence metrics do not match its predictions: {smoke_dir}")
+
+
+def _validate_staged_matches_smoke(staging: Path, admitted: _AdmittedSmoke) -> None:
+    """Recover a retained full run only if this exact smoke admitted it."""
+    manifest = _read_staged_dspark_manifest(staging)
+    if _configuration_identity(manifest) != _configuration_identity(admitted.manifest):
+        raise ValueError(f"retained DSpark staging configuration does not match smoke: {staging}")
+    if manifest.get("admitted_smoke") != admitted.record:
+        raise ValueError(f"retained DSpark staging was not admitted by this smoke: {staging}")
+
+
+def _configuration_identity(manifest: Mapping[str, Any]) -> tuple[Any, ...]:
+    runtime = manifest.get("runtime")
+    return (
+        manifest.get("model"),
+        manifest.get("draft"),
+        manifest.get("generation_config_sha256"),
+        _runtime_identity(runtime),
+        _runtime_hardware_identity(runtime),
+    )
 
 
 def _resume_staged_dspark_run(

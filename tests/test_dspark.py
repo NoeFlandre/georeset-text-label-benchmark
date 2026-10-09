@@ -8,7 +8,9 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -20,7 +22,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from georeset_text_label_benchmark.pilot import cli, dspark, dspark_runner, publication, runner
+from georeset_text_label_benchmark.pilot import (
+    checkout,
+    cli,
+    dspark,
+    dspark_runner,
+    publication,
+    runner,
+)
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
     OVERLAP_DATASET,
@@ -36,6 +45,11 @@ def _candidate_file() -> Path:
         if candidate.is_file():
             return candidate
     raise FileNotFoundError("pinned EUNIS candidate table is missing")
+
+
+def _exact(message: str) -> str:
+    """Build a regex that matches one complete exception message and nothing longer."""
+    return f"^{re.escape(message)}$"
 
 
 def _row(index: int) -> dict[str, Any]:
@@ -115,6 +129,247 @@ def _write_frozen_run(run_dir: Path, size: int = 100) -> list[dict[str, Any]]:
 
 def _mock_cuda_preflight(_gpu: dict[str, Any]) -> dict[str, Any]:
     return {"status": "passed", "torch_cuda": "13.0"}
+
+
+_COMMIT = "a" * 40
+_VALIDATION = "b" * 40
+_TEST_RUNTIME = {
+    "python": "3.12.0",
+    "sglang": "0.5.20",
+    "flashinfer_python": "0.6.18",
+    "transformers": "5.0.0",
+    "pyarrow": "23.0.0",
+}
+
+
+_TEST_GPU = {
+    "name": "NVIDIA H100 80GB",
+    "memory_mib": 81920,
+    "compute_capability": "9.0",
+    "driver_version": "580.95.05",
+}
+_TEST_CUDA = {
+    "status": "passed",
+    "driver_version": "580.95.05",
+    "nvcc_release": "13.0",
+    "torch_version": "2.9.0",
+    "torch_cuda": "13.0",
+    "sglang_version": "0.5.20",
+    "flashinfer_python_version": "0.6.18",
+    "flashinfer_jit_smoke": {"result": "passed"},
+}
+
+
+class _PassingSmokeEngine:
+    """Answers every fixed smoke row with one valid, EOS-stopped candidate code."""
+
+    version = "0.5.20"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.shutdown_called = False
+
+    async def generate(self, input_ids: list[int]) -> dict[str, Any]:
+        assert input_ids
+        self.calls += 1
+        return {
+            "text": "reasoning </think>T11<|im_end|>",
+            "meta_info": {
+                "completion_tokens": 9,
+                "finish_reason": {"type": "stop"},
+                "spec_num_correct_drafts": 4,
+                "spec_num_proposed_drafts": 8,
+            },
+        }
+
+    def shutdown(self) -> None:
+        self.shutdown_called = True
+
+
+class _OtherPassingSmokeEngine(_PassingSmokeEngine):
+    """Passes the same smoke gate with different telemetry, so its retained bytes differ."""
+
+    async def generate(self, input_ids: list[int]) -> dict[str, Any]:
+        output = await super().generate(input_ids)
+        output["meta_info"]["completion_tokens"] = 10
+        return output
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_commit_labels(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """Let synthetic commit labels reach the pilot; checkout binding has real-git tests."""
+    if "real_checkout" not in request.fixturenames:
+        monkeypatch.setattr(dspark_runner, "require_committed_checkout", lambda *_args: None)
+
+
+@pytest.fixture
+def real_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore the real checkout binding for a test that exercises it."""
+    monkeypatch.setattr(
+        dspark_runner, "require_committed_checkout", checkout.require_committed_checkout
+    )
+
+
+def _new_frozen_run(tmp_path: Path) -> Path:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    _write_frozen_run(run_dir)
+    return run_dir
+
+
+def _pin_dspark_environment(monkeypatch: pytest.MonkeyPatch, run_dir: Path) -> None:
+    """Pin the identity facts that a retained smoke and the later full run must share."""
+    sample = _read_json(run_dir / "frozen_sample.json")
+    monkeypatch.setattr(
+        dspark, "EXPECTED_SAMPLE_IDS_SHA256", sample["selection"]["sample_ids_sha256"]
+    )
+    monkeypatch.setattr(
+        dspark, "TARGET_CHAT_TEMPLATE_SHA256", dspark.template_sha256(_PromptTokenizer())
+    )
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: dict(_TEST_RUNTIME))
+
+
+def _patch_model_work(monkeypatch: pytest.MonkeyPatch, engine_factory: Any) -> None:
+    monkeypatch.setattr(dspark, "load_tokenizer", lambda: _PromptTokenizer())
+    monkeypatch.setattr(dspark, "SGLangEngine", engine_factory)
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
+    monkeypatch.setattr(dspark_runner, "_prepare_model_cache", lambda path: path)
+
+
+def _forbid_model_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if a run reaches GPU, model-cache, tokenizer, or engine work."""
+    for name in ("_require_supported_gpu", "_runtime_compatibility_preflight"):
+        monkeypatch.setattr(dspark_runner, name, lambda *_args: pytest.fail("GPU work started"))
+    _forbid_model_loading(monkeypatch)
+
+
+def _forbid_model_loading(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if a run reaches model-cache, tokenizer, or engine work."""
+    monkeypatch.setattr(
+        dspark_runner, "_prepare_model_cache", lambda *_args: pytest.fail("model cache touched")
+    )
+    monkeypatch.setattr(dspark, "load_tokenizer", lambda: pytest.fail("tokenizer loaded"))
+    monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: pytest.fail("engine started"))
+
+
+def _patch_hardware(
+    monkeypatch: pytest.MonkeyPatch, gpu: Mapping[str, Any], cuda: Mapping[str, Any]
+) -> None:
+    """Report one GPU and CUDA toolchain to the pilot's hardware probes."""
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: dict(gpu))
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", lambda _gpu: dict(cuda))
+
+
+def _write_smoke(
+    tmp_path: Path,
+    run_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str = "smoke-evidence",
+    engine_factory: Any = None,
+    computation_commit: str = _COMMIT,
+    validation_commit: str = _VALIDATION,
+    hardware: tuple[Mapping[str, Any], Mapping[str, Any]] | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    """Run the real eight-row smoke path with fake model components and keep its output."""
+    smoke_dir = tmp_path / name
+    _pin_dspark_environment(monkeypatch, run_dir)
+    with monkeypatch.context() as patch:
+        _patch_model_work(patch, engine_factory or (lambda *_args: _PassingSmokeEngine()))
+        if hardware is not None:
+            _patch_hardware(patch, *hardware)
+        patch.setattr(dspark_runner, "_clock", iter(range(10_000)).__next__)
+        result = dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit=computation_commit,
+            validation_commit=validation_commit,
+            output_dir=smoke_dir,
+            smoke=True,
+        )
+    return smoke_dir, result
+
+
+def _passing_smoke(tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    smoke_dir, result = _write_smoke(tmp_path, run_dir, monkeypatch)
+    assert result["smoke_gate"]["passed"] is True
+    return smoke_dir
+
+
+def _run_full(
+    run_dir: Path,
+    output_dir: Path,
+    smoke_dir: Path,
+    *,
+    computation_commit: str = _COMMIT,
+    validation_commit: str = _VALIDATION,
+) -> dict[str, Any]:
+    return dspark_runner.run_dspark_pilot(
+        run_dir,
+        computation_commit=computation_commit,
+        validation_commit=validation_commit,
+        output_dir=output_dir,
+        smoke_output_dir=smoke_dir,
+    )
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _expected_admitted_smoke(smoke_dir: Path) -> dict[str, Any]:
+    """Describe the exact smoke bytes and scope that a full manifest must pin."""
+    smoke_manifest = _read_json(smoke_dir / dspark_runner.MANIFEST_NAME)
+    return {
+        "manifest_sha256": runner.sha256_file(smoke_dir / dspark_runner.MANIFEST_NAME),
+        "predictions_sha256": runner.sha256_file(smoke_dir / dspark_runner.PREDICTIONS_NAME),
+        "metrics_sha256": runner.sha256_file(smoke_dir / dspark_runner.METRICS_NAME),
+        "run_scope": smoke_manifest["run_scope"],
+    }
+
+
+def _published_bytes(directory: Path) -> dict[str, bytes]:
+    names = (
+        dspark_runner.PREDICTIONS_NAME,
+        dspark_runner.METRICS_NAME,
+        dspark_runner.MANIFEST_NAME,
+    )
+    return {name: (directory / name).read_bytes() for name in names}
+
+
+def _edit_manifest(directory: Path, edit: Any) -> None:
+    manifest_path = directory / dspark_runner.MANIFEST_NAME
+    manifest = _read_json(manifest_path)
+    edit(manifest)
+    _write_json(manifest_path, manifest)
+
+
+def _refresh_output_hash(smoke_dir: Path, name: str) -> None:
+    """Keep a tampered output's manifest hash current so only the intended check fails."""
+    digest = runner.sha256_file(smoke_dir / name)
+    _edit_manifest(smoke_dir, lambda manifest: manifest["outputs_sha256"].update({name: digest}))
+
+
+def _edit_smoke_metrics(smoke_dir: Path, edit: Any) -> None:
+    metrics_path = smoke_dir / dspark_runner.METRICS_NAME
+    metrics = _read_json(metrics_path)
+    edit(metrics)
+    _write_json(metrics_path, metrics)
+    _refresh_output_hash(smoke_dir, dspark_runner.METRICS_NAME)
+
+
+def _edit_smoke_predictions(smoke_dir: Path, edit: Any) -> None:
+    path = smoke_dir / dspark_runner.PREDICTIONS_NAME
+    rows = pq.read_table(path).to_pylist()
+    edit(rows)
+    pq.write_table(pa.Table.from_pylist(rows), path, compression="zstd")
+    _refresh_output_hash(smoke_dir, dspark_runner.PREDICTIONS_NAME)
 
 
 def _test_prompt_for_sentence(sentence: str, _candidates: Any) -> str:
@@ -452,6 +707,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
     expected_prompts = [f"prompt:{row['sentence']}" for row in selected]
     monkeypatch.setattr(dspark, "build_prompt", lambda sentence, _candidates: f"prompt:{sentence}")
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
 
     def run_pilot() -> dict[str, Any]:
         return dspark_runner.run_dspark_pilot(
@@ -459,6 +715,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             computation_commit="a" * 40,
             validation_commit="b" * 40,
             output_dir=output_arg,
+            smoke_output_dir=smoke_dir,
         )
 
     result = run_pilot()
@@ -641,6 +898,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             ),
         },
         "smoke_gate": None,
+        "admitted_smoke": _expected_admitted_smoke(smoke_dir),
         "candidate_labels": expected_candidate_labels,
         "model": {
             "repository": "LiquidAI/LFM2.5-2.6B",
@@ -658,7 +916,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "generation_config": expected_generation_config,
         "generation_config_sha256": runner._sha256_json(expected_generation_config),
         "runtime": {
-            "python": "3.12.0",
+            **_TEST_RUNTIME,
             "engine_version": "0.5.20",
             "gpu": {"name": "mock GPU"},
             "cuda_preflight": {"status": "passed", "torch_cuda": "13.0"},
@@ -888,12 +1146,14 @@ def test_runner_preserves_sample_prompt_generation_prediction_identity(
     )
     monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
 
     dspark_runner.run_dspark_pilot(
         run_dir,
         computation_commit="a" * 40,
         validation_commit="b" * 40,
         output_dir=output_dir,
+        smoke_output_dir=smoke_dir,
     )
 
     prompt_payloads = _identity_prompt_payloads(tokenizer.prompts)
@@ -935,10 +1195,14 @@ def test_runner_preserves_output_created_during_inference(
     )
     monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
     original_metrics_payload = dspark_runner._metrics_payload
 
     def create_output_race(predictions: Any, candidates: Any) -> dict[str, Any]:
         payload = original_metrics_payload(predictions, candidates)
+        if len(predictions) != len(selected):
+            # Admission also summarizes the eight-row smoke evidence with this function.
+            return payload
         output_dir.mkdir(parents=True)
         (output_dir / "race-marker.txt").write_text("preserve", encoding="utf-8")
         return payload
@@ -946,12 +1210,7 @@ def test_runner_preserves_output_created_during_inference(
     monkeypatch.setattr(dspark_runner, "_metrics_payload", create_output_race)
 
     with pytest.raises(FileExistsError):
-        dspark_runner.run_dspark_pilot(
-            run_dir,
-            computation_commit="a" * 40,
-            validation_commit="b" * 40,
-            output_dir=output_dir,
-        )
+        _run_full(run_dir, output_dir, smoke_dir)
 
     assert (output_dir / "race-marker.txt").read_text(encoding="utf-8") == "preserve"
     assert not (output_dir / "dspark_predictions.parquet").exists()
@@ -963,12 +1222,7 @@ def test_runner_preserves_output_created_during_inference(
         lambda: pytest.fail("a retained stage must be checked before GPU admission"),
     )
     with pytest.raises(FileExistsError):
-        dspark_runner.run_dspark_pilot(
-            run_dir,
-            computation_commit="a" * 40,
-            validation_commit="b" * 40,
-            output_dir=output_dir,
-        )
+        _run_full(run_dir, output_dir, smoke_dir)
     assert (output_dir / "race-marker.txt").read_text(encoding="utf-8") == "preserve"
 
 
@@ -998,6 +1252,7 @@ def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
     )
     monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
     if failing_name == dspark_runner.PREDICTIONS_NAME:
         write_table = dspark_runner.pq.write_table
 
@@ -1017,12 +1272,7 @@ def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
         monkeypatch.setattr(dspark_runner, "_write_json_exclusive", write_then_fail)
 
     with pytest.raises(OSError, match="injected publication failure"):
-        dspark_runner.run_dspark_pilot(
-            run_dir,
-            computation_commit="a" * 40,
-            validation_commit="b" * 40,
-            output_dir=output_dir,
-        )
+        _run_full(run_dir, output_dir, smoke_dir)
 
     assert not output_dir.exists()
     assert (run_dir / "frozen_sample.json").is_file()
@@ -1056,6 +1306,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
     )
     monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
     original_link = publication.os.link
     failed_once = False
 
@@ -1073,12 +1324,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
     monkeypatch.setattr(publication.os, "link", fail_manifest_once)
 
     with pytest.raises(OSError, match="transient publication failure"):
-        dspark_runner.run_dspark_pilot(
-            run_dir,
-            computation_commit="a" * 40,
-            validation_commit="b" * 40,
-            output_dir=output_dir,
-        )
+        _run_full(run_dir, output_dir, smoke_dir)
 
     staging_dirs = list(tmp_path.glob(".dspark.staging-*"))
     assert len(staging_dirs) == 1
@@ -1107,12 +1353,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
         lambda: pytest.fail("a complete retained stage must recover before model loading"),
     )
 
-    result = dspark_runner.run_dspark_pilot(
-        run_dir,
-        computation_commit="a" * 40,
-        validation_commit="b" * 40,
-        output_dir=output_dir,
-    )
+    result = _run_full(run_dir, output_dir, smoke_dir)
 
     published_manifest = json.loads(
         (output_dir / dspark_runner.MANIFEST_NAME).read_text(encoding="utf-8")
@@ -1898,6 +2139,8 @@ def test_runner_rejects_nfs_style_link_failure_before_gpu_admission(
         runner._sha256_json([row["sample_id"] for row in selected]),
     )
 
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+
     def unsupported_link(_source: Path, _target: Path) -> None:
         raise OSError(errno.EINVAL, "NFS server rejects this link operation")
 
@@ -1909,12 +2152,7 @@ def test_runner_rejects_nfs_style_link_failure_before_gpu_admission(
     )
 
     with pytest.raises(OSError, match="output filesystem must support exclusive hard links"):
-        dspark_runner.run_dspark_pilot(
-            run_dir,
-            computation_commit="a" * 40,
-            validation_commit="b" * 40,
-            output_dir=output_dir,
-        )
+        _run_full(run_dir, output_dir, smoke_dir)
 
     assert not output_dir.exists()
 
@@ -2208,6 +2446,7 @@ def test_runner_rejects_context_overflow_before_constructing_engine(
     monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
     monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
     monkeypatch.setattr(dspark_runner, "_prepare_model_cache", lambda _path: tmp_path / "cache")
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
     monkeypatch.setattr(
         dspark,
         "encode_prompt",
@@ -2226,6 +2465,7 @@ def test_runner_rejects_context_overflow_before_constructing_engine(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_output_dir=smoke_dir,
         )
     assert str(error.value) == "prompt plus generation cap exceeds SGLang context"
 
@@ -2982,6 +3222,120 @@ def test_single_label_group_breakdown_rejects_each_length_mismatch(
     assert str(error.value) == "groups, gold, and predictions lengths must agree and be non-empty"
 
 
+_GIT_IDENTITY = ("-c", "user.name=Pilot Test", "-c", "user.email=pilot@example.invalid")
+
+
+def _git(root: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(root), *_GIT_IDENTITY, *arguments],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def _committed_checkout(root: Path) -> str:
+    """Create a clean Git repository with one commit and return its HEAD."""
+    root.mkdir(parents=True)
+    _git(root, "init", "-q")
+    _git(root, "commit", "-q", "--allow-empty", "-m", "pilot code")
+    return _git(root, "rev-parse", "HEAD")
+
+
+def test_full_run_refuses_a_checkout_that_moved_after_its_smoke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, real_checkout: None
+) -> None:
+    checkout_root = tmp_path / "checkout"
+    first = _committed_checkout(checkout_root)
+    monkeypatch.setattr(checkout, "checkout_root", lambda: checkout_root)
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir, _ = _write_smoke(
+        tmp_path, run_dir, monkeypatch, computation_commit=first, validation_commit=first
+    )
+    _git(checkout_root, "commit", "-q", "--allow-empty", "-m", "moved")
+    second = _git(checkout_root, "rev-parse", "HEAD")
+    _forbid_model_work(monkeypatch)
+    output = tmp_path / "full-100"
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(f"Checkout commit {second} does not match the recorded commit labels."),
+    ):
+        _run_full(
+            run_dir,
+            output,
+            smoke_dir,
+            computation_commit=first,
+            validation_commit=first,
+        )
+    assert not output.exists()
+
+
+def test_direct_cli_full_run_refuses_a_checkout_that_moved_after_its_smoke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, real_checkout: None
+) -> None:
+    checkout_root = tmp_path / "checkout"
+    first = _committed_checkout(checkout_root)
+    monkeypatch.setattr(checkout, "checkout_root", lambda: checkout_root)
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir, _ = _write_smoke(
+        tmp_path, run_dir, monkeypatch, computation_commit=first, validation_commit=first
+    )
+    _git(checkout_root, "commit", "-q", "--allow-empty", "-m", "moved")
+    second = _git(checkout_root, "rev-parse", "HEAD")
+    _forbid_model_work(monkeypatch)
+    output = tmp_path / "full-100"
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(f"Checkout commit {second} does not match the recorded commit labels."),
+    ):
+        cli.main(
+            [
+                "run-dspark",
+                "--run-dir",
+                str(run_dir),
+                "--output-dir",
+                str(output),
+                "--smoke-output-dir",
+                str(smoke_dir),
+                "--computation-commit",
+                first,
+                "--validation-commit",
+                first,
+            ]
+        )
+    assert not output.exists()
+
+
+def test_smoke_run_refuses_an_uncommitted_checkout_before_model_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, real_checkout: None
+) -> None:
+    checkout_root = tmp_path / "checkout"
+    head = _committed_checkout(checkout_root)
+    (checkout_root / "uncommitted.py").write_text("VALUE = 2\n", encoding="utf-8")
+    monkeypatch.setattr(checkout, "checkout_root", lambda: checkout_root)
+    run_dir = _new_frozen_run(tmp_path)
+    _forbid_model_work(monkeypatch)
+    output = tmp_path / "smoke-evidence"
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(
+            "Use a clean, committed checkout so the run manifest identifies the executed code."
+        ),
+    ):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit=head,
+            validation_commit=head,
+            output_dir=output,
+            smoke=True,
+        )
+    assert not output.exists()
+
+
 def test_dspark_cli_uses_frozen_run_directory_and_cache_settings(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -3005,6 +3359,8 @@ def test_dspark_cli_uses_frozen_run_directory_and_cache_settings(
                 "verified-hub-cache",
                 "--output-dir",
                 "dspark-output",
+                "--smoke-output-dir",
+                "dspark-smoke",
                 "--computation-commit",
                 "a" * 40,
                 "--validation-commit",
@@ -3025,9 +3381,60 @@ def test_dspark_cli_uses_frozen_run_directory_and_cache_settings(
                 "computation_commit": "a" * 40,
                 "validation_commit": "b" * 40,
                 "smoke": False,
+                "smoke_output_dir": Path("dspark-smoke"),
             },
         )
     ]
+
+
+def test_dspark_cli_full_run_refuses_to_parse_without_smoke_evidence(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        cli._parser().parse_args(
+            [
+                "run-dspark",
+                "--run-dir",
+                "frozen-inputs",
+                "--computation-commit",
+                "a" * 40,
+                "--validation-commit",
+                "b" * 40,
+            ]
+        )
+
+    assert error.value.code == 2
+    assert "--smoke-output-dir" in capsys.readouterr().err
+
+
+def test_dspark_cli_smoke_command_passes_no_smoke_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def run(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"smoke_gate": {"passed": True}}
+
+    monkeypatch.setattr(cli, "run_dspark_pilot", run)
+
+    assert (
+        cli.main(
+            [
+                "run-dspark-smoke",
+                "--output-dir",
+                "dspark-smoke",
+                "--computation-commit",
+                "a" * 40,
+                "--validation-commit",
+                "b" * 40,
+            ]
+        )
+        == 0
+    )
+
+    assert calls[0]["smoke"] is True
+    assert calls[0]["smoke_output_dir"] is None
 
 
 @pytest.mark.parametrize(
@@ -3046,6 +3453,8 @@ def test_dspark_cli_requires_both_provenance_commits(
         "run-dspark",
         "--run-dir",
         "frozen-inputs",
+        "--smoke-output-dir",
+        "dspark-smoke",
         "--computation-commit",
         "a" * 40,
         "--validation-commit",
@@ -3128,6 +3537,7 @@ def test_grid5000_runner_loads_the_cuda_toolkit_before_installing_sglang() -> No
     assert content.index("export CUDA_HOME=") < content.index("run_bounded uv sync")
     assert 'paths.append(("model cache seed", sys.argv[4]))' in content
     assert 'DS_PILOT_ARGS+=(--model-cache-seed "$MODEL_CACHE_SEED")' in content
+    assert 'DS_PILOT_ARGS+=(--smoke-output-dir "$SMOKE_OUTPUT_DIR")' in content
 
 
 def test_actual_pinned_template_still_opens_thinking_and_ignores_false_flag() -> None:
@@ -3522,6 +3932,7 @@ def test_dspark_smoke_cli_requires_separate_output_and_fails_closed(
                 "computation_commit": "a" * 40,
                 "validation_commit": "b" * 40,
                 "smoke": True,
+                "smoke_output_dir": None,
             },
         )
     ]
@@ -4183,6 +4594,8 @@ def test_incomplete_cache_seed_fails_before_tokenizer_engine_or_publication(
         runner._sha256_json([row["sample_id"] for row in selected]),
     )
 
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+
     def fail_seed(*_args: Any) -> list[str]:
         raise RuntimeError("pinned model cache seed is incomplete")
 
@@ -4205,6 +4618,7 @@ def test_incomplete_cache_seed_fails_before_tokenizer_engine_or_publication(
             validation_commit="b" * 40,
             output_dir=output_dir,
             model_cache_seed_dir=tmp_path / "seed",
+            smoke_output_dir=smoke_dir,
         )
 
     assert not output_dir.exists()
@@ -5220,3 +5634,664 @@ def test_validate_cache_tree_against_inventory_reports_exact_identity_context() 
         "pinned model cache tree does not match the pinned file inventory "
         f"for {repository}@{revision}"
     )
+
+
+def test_full_run_without_smoke_evidence_fails_before_any_model_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    _pin_dspark_environment(monkeypatch, run_dir)
+    _forbid_model_work(monkeypatch)
+    output_dir = tmp_path / "full-100"
+
+    with pytest.raises(
+        ValueError,
+        match=_exact("full DSpark runs require a completed matching smoke output directory"),
+    ):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit=_COMMIT,
+            validation_commit=_VALIDATION,
+            output_dir=output_dir,
+        )
+    assert not output_dir.exists()
+
+
+def test_smoke_run_rejects_a_smoke_evidence_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    _pin_dspark_environment(monkeypatch, run_dir)
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(
+        ValueError, match=_exact("bounded smoke runs do not accept a smoke output directory")
+    ):
+        dspark_runner.run_dspark_pilot(
+            run_dir,
+            computation_commit=_COMMIT,
+            validation_commit=_VALIDATION,
+            output_dir=tmp_path / "smoke",
+            smoke=True,
+            smoke_output_dir=tmp_path / "evidence",
+        )
+
+
+def test_full_run_rejects_a_missing_smoke_directory_before_model_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    _pin_dspark_environment(monkeypatch, run_dir)
+    _forbid_model_work(monkeypatch)
+    output_dir = tmp_path / "full-100"
+
+    with pytest.raises(ValueError, match="smoke evidence directory is missing"):
+        _run_full(run_dir, output_dir, tmp_path / "never-written")
+
+    assert not output_dir.exists()
+
+
+def test_full_run_rejects_a_failed_smoke_before_model_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir, result = _write_smoke(
+        tmp_path,
+        run_dir,
+        monkeypatch,
+        name="failed-smoke",
+        engine_factory=lambda *_args: _FakeEngine(),
+    )
+    assert result["smoke_gate"]["passed"] is False
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(ValueError, match="smoke gate did not pass"):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+@pytest.mark.parametrize(
+    ("smoke_commits", "message"),
+    [
+        (
+            ("c" * 40, _VALIDATION),
+            "retained DSpark staging manifest does not match this frozen run: {smoke}",
+        ),
+        (
+            (_COMMIT, "c" * 40),
+            "retained DSpark staging manifest does not match this frozen run: {smoke}",
+        ),
+    ],
+)
+def test_full_run_rejects_smoke_evidence_from_another_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    smoke_commits: tuple[str, str],
+    message: str,
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    computation_commit, validation_commit = smoke_commits
+    smoke_dir, _ = _write_smoke(
+        tmp_path,
+        run_dir,
+        monkeypatch,
+        computation_commit=computation_commit,
+        validation_commit=validation_commit,
+    )
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(ValueError, match=_exact(message.format(smoke=smoke_dir))):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+def test_full_run_rejects_smoke_evidence_after_the_frozen_e5_manifest_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(_read_json(manifest_path), indent=4), encoding="utf-8")
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(
+            f"retained DSpark staging manifest does not match this frozen run: {smoke_dir}"
+        ),
+    ):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda manifest: manifest["run_scope"].update(
+            processed_sample_ids=list(reversed(manifest["run_scope"]["processed_sample_ids"]))
+        ),
+        lambda manifest: manifest["run_scope"].update(processed_row_count=7),
+    ],
+)
+def test_full_run_rejects_smoke_evidence_with_a_different_sample_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edit: Any
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _edit_manifest(smoke_dir, edit)
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(
+            f"retained DSpark staging manifest does not match this frozen run: {smoke_dir}"
+        ),
+    ):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+def test_full_run_rejects_smoke_outputs_that_changed_after_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    (smoke_dir / dspark_runner.METRICS_NAME).write_text("{}", encoding="utf-8")
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(ValueError, match="output hash mismatch"):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (
+            lambda manifest: manifest["model"].update(revision="0" * 40),
+            "DSpark smoke evidence does not match the pinned model: {smoke}",
+        ),
+        (
+            lambda manifest: manifest["draft"].update(revision="1" * 40),
+            "DSpark smoke evidence does not match the pinned model: {smoke}",
+        ),
+        (
+            lambda manifest: manifest["generation_config"]["sampling"].update(temperature=0.2),
+            "DSpark smoke evidence does not match the pinned model: {smoke}",
+        ),
+        (
+            lambda manifest: manifest.update(generation_config_sha256="0" * 64),
+            "DSpark smoke evidence does not match the pinned model: {smoke}",
+        ),
+        (
+            lambda manifest: manifest["source_coverage"].update(row_count=1),
+            "DSpark smoke evidence does not match the pinned model: {smoke}",
+        ),
+        (
+            lambda manifest: manifest["runtime"].update(python="9.9.9"),
+            "DSpark smoke evidence came from a different runtime: {smoke}",
+        ),
+        (
+            lambda manifest: manifest["runtime"].update(sglang="9.9.9"),
+            "DSpark smoke evidence came from a different runtime: {smoke}",
+        ),
+        (
+            lambda manifest: manifest["runtime"].update(flashinfer_python="9.9.9"),
+            "DSpark smoke evidence came from a different runtime: {smoke}",
+        ),
+        (
+            lambda manifest: manifest["runtime"].update(transformers="9.9.9"),
+            "DSpark smoke evidence came from a different runtime: {smoke}",
+        ),
+        (
+            lambda manifest: manifest["runtime"].update(pyarrow="9.9.9"),
+            "DSpark smoke evidence came from a different runtime: {smoke}",
+        ),
+        (
+            lambda manifest: manifest.update(runtime="not a runtime"),
+            "DSpark smoke evidence came from a different runtime: {smoke}",
+        ),
+    ],
+)
+def test_full_run_rejects_smoke_evidence_from_a_different_model_or_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edit: Any, message: str
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _edit_manifest(smoke_dir, edit)
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(ValueError, match=_exact(message.format(smoke=smoke_dir))):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+@pytest.mark.parametrize(
+    ("gpu_update", "cuda_update"),
+    [
+        ({"name": "NVIDIA A100 80GB"}, {}),
+        ({"memory_mib": 40960}, {}),
+        ({"compute_capability": "8.0"}, {}),
+        ({"driver_version": "580.65.06"}, {}),
+        ({}, {"driver_version": "580.65.06"}),
+        ({}, {"nvcc_release": "12.8"}),
+        ({}, {"torch_version": "2.8.0"}),
+        ({}, {"torch_cuda": "12.8"}),
+    ],
+)
+def test_full_run_rejects_smoke_evidence_from_other_gpu_or_cuda_toolchain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gpu_update: dict[str, Any],
+    cuda_update: dict[str, Any],
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir, _ = _write_smoke(tmp_path, run_dir, monkeypatch, hardware=(_TEST_GPU, _TEST_CUDA))
+    _patch_hardware(monkeypatch, {**_TEST_GPU, **gpu_update}, {**_TEST_CUDA, **cuda_update})
+    _forbid_model_loading(monkeypatch)
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(
+            f"DSpark smoke evidence came from different GPU or CUDA hardware: {smoke_dir}"
+        ),
+    ):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+def test_matching_gpu_and_cuda_toolchain_admits_the_full_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir, _ = _write_smoke(tmp_path, run_dir, monkeypatch, hardware=(_TEST_GPU, _TEST_CUDA))
+    _patch_model_work(monkeypatch, lambda *_args: _PassingSmokeEngine())
+    _patch_hardware(monkeypatch, _TEST_GPU, _TEST_CUDA)
+
+    result = _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+    manifest = _read_json(tmp_path / "full-100" / dspark_runner.MANIFEST_NAME)
+    assert result["sample_count"] == 100
+    assert manifest["runtime"]["gpu"] == _TEST_GPU
+    assert manifest["runtime"]["cuda_preflight"] == _TEST_CUDA
+
+
+def test_full_run_rejects_metrics_that_contradict_the_smoke_predictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _edit_smoke_metrics(
+        smoke_dir,
+        lambda metrics: metrics.update(invalid_output_reasons=[{"count": 1, "reason": "forged"}]),
+    )
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(f"DSpark smoke evidence metrics do not match its predictions: {smoke_dir}"),
+    ):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (
+            lambda rows: rows[0].update(parsed_eunis_code="U62"),
+            "DSpark smoke evidence parse does not match its raw text: {smoke}",
+        ),
+        (
+            lambda rows: rows[0].update(sentence="A different sentence."),
+            "DSpark smoke evidence row does not match its frozen row: {smoke}",
+        ),
+        (
+            lambda rows: rows[0].update(prompt_sha256="0" * 64),
+            "DSpark smoke evidence prompt does not match its row: {smoke}",
+        ),
+        (
+            lambda rows: rows.reverse(),
+            "retained DSpark staging predictions do not match smoke scope: {smoke}",
+        ),
+        (
+            lambda rows: rows[0].update(
+                parse_status="invalid",
+                parsed_eunis_code=None,
+                parsed_eunis_name=None,
+                correct_top1=None,
+            ),
+            "retained DSpark staging smoke gate does not match staged predictions: {smoke}",
+        ),
+        (
+            lambda rows: rows[0].update(gold_eunis_code="MA221"),
+            "DSpark smoke evidence row does not match its frozen row: {smoke}",
+        ),
+        (
+            lambda rows: rows[0].update(gold_eunis_name="Forged gold name"),
+            "DSpark smoke evidence row does not match its frozen row: {smoke}",
+        ),
+    ],
+)
+def test_full_run_rejects_predictions_that_contradict_their_frozen_rows_or_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edit: Any, message: str
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _edit_smoke_predictions(smoke_dir, edit)
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(ValueError, match=_exact(message.format(smoke=smoke_dir))):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+def _forge_gold_with_recomputed_metrics(smoke_dir: Path, run_dir: Path) -> None:
+    """Rewrite row 0's gold labels and every metric derived from them, with fresh hashes."""
+    _, _, candidates = runner.read_frozen_pilot_inputs(run_dir)
+    forged_name = next(row["eunis_name"] for row in candidates if row["eunis_code"] == "MA221")
+
+    def forge_gold(rows: list[dict[str, Any]]) -> None:
+        rows[0].update(gold_eunis_code="MA221", gold_eunis_name=forged_name)
+
+    _edit_smoke_predictions(smoke_dir, forge_gold)
+    predictions = pq.read_table(smoke_dir / dspark_runner.PREDICTIONS_NAME).to_pylist()
+    recomputed: dict[str, Any] = json.loads(
+        json.dumps(dspark_runner._metrics_payload(predictions, candidates))
+    )
+    recomputed["smoke_gate"] = dspark_runner._smoke_gate(predictions)
+
+    def replace_metrics(metrics: dict[str, Any]) -> None:
+        metrics.clear()
+        metrics.update(recomputed)
+
+    _edit_smoke_metrics(smoke_dir, replace_metrics)
+
+
+def test_full_run_rejects_forged_gold_labels_even_when_metrics_are_recomputed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _forge_gold_with_recomputed_metrics(smoke_dir, run_dir)
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(f"DSpark smoke evidence row does not match its frozen row: {smoke_dir}"),
+    ):
+        _run_full(run_dir, tmp_path / "full-100", smoke_dir)
+
+
+_OUTPUT_OVERLAP = "DSpark smoke evidence must be separate from the full-run output"
+_INPUT_OVERLAP = "DSpark smoke evidence must be separate from frozen E5 inputs"
+
+
+@pytest.mark.parametrize(
+    ("smoke_path", "output_path", "message"),
+    [
+        ("full-100", "full-100", _OUTPUT_OVERLAP),
+        ("full-100/smoke", "full-100", _OUTPUT_OVERLAP),
+        ("parent", "parent/full-100", _OUTPUT_OVERLAP),
+        ("pilot", "full-100", _INPUT_OVERLAP),
+        ("pilot/evidence", "full-100", _INPUT_OVERLAP),
+    ],
+)
+def test_full_run_rejects_overlapping_smoke_evidence_before_model_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    smoke_path: str,
+    output_path: str,
+    message: str,
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    _pin_dspark_environment(monkeypatch, run_dir)
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(ValueError, match=_exact(message)):
+        _run_full(run_dir, tmp_path / output_path, tmp_path / smoke_path)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        ("a", "a", True),
+        ("a", "a/b", True),
+        ("a/b", "a", True),
+        ("a", "ab", False),
+        ("a/b", "a/c", False),
+    ],
+)
+def test_paths_overlap_detects_equal_and_nested_directories(
+    tmp_path: Path, first: str, second: str, expected: bool
+) -> None:
+    assert dspark_runner._paths_overlap(tmp_path / first, tmp_path / second) is expected
+
+
+def test_matching_passing_smoke_admits_a_fresh_full_run_without_touching_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    smoke_before = _published_bytes(smoke_dir)
+    frozen_names = ("frozen_sample.json", "candidate_labels.csv", "manifest.json")
+    frozen_before = {name: (run_dir / name).read_bytes() for name in frozen_names}
+    engine = _PassingSmokeEngine()
+    _patch_model_work(monkeypatch, lambda *_args: engine)
+    output_dir = tmp_path / "full-100"
+
+    result = _run_full(run_dir, output_dir, smoke_dir)
+
+    assert result["sample_count"] == 100
+    assert engine.calls == 100
+    assert (output_dir / dspark_runner.MANIFEST_NAME).is_file()
+    assert _published_bytes(smoke_dir) == smoke_before
+    assert {name: (run_dir / name).read_bytes() for name in frozen_names} == frozen_before
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda manifest: manifest.update(generation_config_sha256="0" * 64),
+        lambda manifest: manifest["model"].update(revision="0" * 40),
+        lambda manifest: manifest["draft"].update(revision="1" * 40),
+        lambda manifest: manifest["runtime"].update(python="9.9.9"),
+        lambda manifest: manifest["runtime"].update(sglang="9.9.9"),
+        lambda manifest: manifest["runtime"].update(flashinfer_python="9.9.9"),
+        lambda manifest: manifest["runtime"].update(transformers="9.9.9"),
+        lambda manifest: manifest["runtime"].update(pyarrow="9.9.9"),
+        lambda manifest: manifest["runtime"]["gpu"].update(name="NVIDIA A100 80GB"),
+        lambda manifest: manifest["runtime"]["cuda_preflight"].update(torch_cuda="12.8"),
+    ],
+)
+def test_retained_full_staging_must_match_the_admitted_smoke_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edit: Any
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _patch_model_work(monkeypatch, lambda *_args: _PassingSmokeEngine())
+    final = tmp_path / "full-100"
+    _run_full(run_dir, final, smoke_dir)
+    staging = tmp_path / f".{final.name}.staging-retained"
+    final.rename(staging)
+    _edit_manifest(staging, edit)
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(f"retained DSpark staging configuration does not match smoke: {staging}"),
+    ):
+        _run_full(run_dir, final, smoke_dir)
+    assert not final.exists()
+
+
+def test_matching_retained_full_staging_recovers_without_model_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _patch_model_work(monkeypatch, lambda *_args: _PassingSmokeEngine())
+    final = tmp_path / "full-100"
+    _run_full(run_dir, final, smoke_dir)
+    final.rename(tmp_path / f".{final.name}.staging-retained")
+    _forbid_model_work(monkeypatch)
+
+    result = _run_full(run_dir, final, smoke_dir)
+
+    assert result["sample_count"] == 100
+    assert (final / dspark_runner.MANIFEST_NAME).is_file()
+
+
+def test_full_run_manifest_pins_the_admitted_smoke_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _patch_model_work(monkeypatch, lambda *_args: _PassingSmokeEngine())
+    full_dir = tmp_path / "full-100"
+
+    _run_full(run_dir, full_dir, smoke_dir)
+
+    manifest = _read_json(full_dir / dspark_runner.MANIFEST_NAME)
+    assert manifest["admitted_smoke"] == _expected_admitted_smoke(smoke_dir)
+    assert manifest["smoke_gate"] is None
+    assert _read_json(smoke_dir / dspark_runner.MANIFEST_NAME)["admitted_smoke"] is None
+
+
+def test_retained_full_staging_without_an_admitted_smoke_record_is_not_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    _patch_model_work(monkeypatch, lambda *_args: _PassingSmokeEngine())
+    final = tmp_path / "full-100"
+    _run_full(run_dir, final, smoke_dir)
+    staging = tmp_path / f".{final.name}.staging-retained"
+    final.rename(staging)
+    _edit_manifest(staging, lambda manifest: manifest.pop("admitted_smoke"))
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(f"retained DSpark staging was not admitted by this smoke: {staging}"),
+    ):
+        _run_full(run_dir, final, smoke_dir)
+    assert not final.exists()
+
+
+def test_retained_full_staging_is_not_admitted_by_a_different_matching_smoke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _new_frozen_run(tmp_path)
+    smoke_dir = _passing_smoke(tmp_path, run_dir, monkeypatch)
+    other_dir, other_result = _write_smoke(
+        tmp_path,
+        run_dir,
+        monkeypatch,
+        name="other-smoke",
+        engine_factory=lambda *_args: _OtherPassingSmokeEngine(),
+    )
+    assert other_result["smoke_gate"]["passed"] is True
+    assert _expected_admitted_smoke(other_dir) != _expected_admitted_smoke(smoke_dir)
+    _patch_model_work(monkeypatch, lambda *_args: _PassingSmokeEngine())
+    final = tmp_path / "full-100"
+    _run_full(run_dir, final, smoke_dir)
+    staging = tmp_path / f".{final.name}.staging-retained"
+    final.rename(staging)
+    _forbid_model_work(monkeypatch)
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(f"retained DSpark staging was not admitted by this smoke: {staging}"),
+    ):
+        _run_full(run_dir, final, other_dir)
+    assert not final.exists()
+
+
+@pytest.mark.parametrize(
+    ("raw_output", "finish_reason", "status", "error", "code", "correct"),
+    [
+        ("reasoning </think>T11<|im_end|>", "stop", "valid", None, "T11", True),
+        ("reasoning without a closing tag", "stop", "invalid", "missing_think_close", None, None),
+        ("reasoning </think>T11", "length", "truncated", "generation_length", None, None),
+    ],
+)
+def test_smoke_parse_validation_accepts_each_recomputed_parser_status(
+    tmp_path: Path,
+    raw_output: str,
+    finish_reason: str,
+    status: str,
+    error: str | None,
+    code: str | None,
+    correct: bool | None,
+) -> None:
+    prediction = {
+        "raw_output": raw_output,
+        "finish_reason": finish_reason,
+        "parse_status": status,
+        "parse_error": error,
+        "parsed_eunis_code": code,
+        "parsed_eunis_name": "Temperate forest" if code else None,
+        "correct_top1": correct,
+    }
+    candidates = [{"eunis_code": "T11", "eunis_name": "Temperate forest"}]
+
+    dspark_runner._validate_smoke_parse(prediction, _row(1), candidates, tmp_path / "smoke")
+
+
+@pytest.mark.parametrize(
+    ("raw_output", "finish_reason"),
+    [(None, "stop"), ("reasoning </think>T11<|im_end|>", None)],
+)
+def test_smoke_parse_validation_rejects_non_text_generation_fields(
+    tmp_path: Path, raw_output: Any, finish_reason: Any
+) -> None:
+    candidates = [{"eunis_code": "T11", "eunis_name": "Temperate forest"}]
+
+    with pytest.raises(
+        ValueError,
+        match=_exact(f"DSpark smoke evidence has malformed generated text: {tmp_path / 'smoke'}"),
+    ):
+        dspark_runner._validate_smoke_parse(
+            {"raw_output": raw_output, "finish_reason": finish_reason},
+            _row(1),
+            candidates,
+            tmp_path / "smoke",
+        )
+
+
+def test_smoke_prediction_validation_requires_one_row_per_frozen_row(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="argument 2 is longer than argument 1"):
+        dspark_runner._validate_smoke_predictions([], [_row(1)], [], tmp_path / "smoke")
+
+
+def test_hardware_identity_is_empty_without_a_recorded_mapping() -> None:
+    assert dspark_runner._runtime_hardware_identity("not a runtime") == {}
+    assert dspark_runner._runtime_hardware_identity({"gpu": "x", "cuda_preflight": None}) == {
+        "gpu": {},
+        "cuda": {},
+    }
+    assert dspark_runner._selected_fields("not a mapping", ("name",)) == {}
+
+
+def test_hardware_identity_keeps_only_the_gpu_and_cuda_fields_a_smoke_must_share() -> None:
+    gpu = {**_TEST_GPU, "extra": "ignored"}
+    cuda = {**_TEST_CUDA, "flashinfer_jit_smoke": {"result": "other"}}
+    assert dspark_runner._hardware_identity(gpu, cuda) == {
+        "gpu": {
+            "name": "NVIDIA H100 80GB",
+            "memory_mib": 81920,
+            "compute_capability": "9.0",
+            "driver_version": "580.95.05",
+        },
+        "cuda": {
+            "driver_version": "580.95.05",
+            "nvcc_release": "13.0",
+            "torch_version": "2.9.0",
+            "torch_cuda": "13.0",
+        },
+    }
+
+
+def test_runtime_identity_keeps_only_comparable_versions() -> None:
+    assert dspark_runner._runtime_identity(None) == {}
+    assert dspark_runner._runtime_identity(
+        {"python": "3.12.0", "platform": "node-specific", "sglang": "0.5.20"}
+    ) == {
+        "python": "3.12.0",
+        "sglang": "0.5.20",
+        "flashinfer_python": None,
+        "transformers": None,
+        "pyarrow": None,
+    }

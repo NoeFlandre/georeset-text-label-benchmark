@@ -337,33 +337,32 @@ if ! env -u HF_HOME -u HF_HUB_CACHE uv run georeset-pilot run-dspark-smoke \
   exit 1
 fi
 FULL_OUT="artifacts/source/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA-$PILOT_ATTEMPT_ID"
-if python -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
-  "$SMOKE_OUT/dspark_metrics.json"; then
-  if ! CURRENT_COMMIT=$(git rev-parse HEAD); then
-    echo "Could not verify the checkout commit after the smoke." >&2
-    exit 1
-  fi
-  if [[ "$CURRENT_COMMIT" != "$COMMIT_SHA" ]]; then
-    echo "The checkout changed after the smoke; do not start the full pilot." >&2
-    exit 1
-  fi
-  if ! CODE_STATUS=$(git status --porcelain --untracked-files=all -- . ':(exclude)artifacts/source'); then
-    echo "Could not verify the code tree after the smoke." >&2
-    exit 1
-  fi
-  if [[ -n "$CODE_STATUS" ]]; then
-    echo "The code tree changed after the smoke; do not start the full pilot." >&2
-    exit 1
-  fi
-  env -u HF_HOME -u HF_HUB_CACHE uv run georeset-pilot run-dspark \
-    --run-dir "$RUN_DIR" \
-    --output-dir "$FULL_OUT" \
-    --model-cache "$FULL_CACHE" \
-    --model-cache-seed "$HF_HUB_CACHE_SEED" \
-    --computation-commit "$COMMIT_SHA" \
-    --validation-commit "$COMMIT_SHA"
-else
-  echo "Smoke gate failed; do not start the full pilot." >&2
+if ! CURRENT_COMMIT=$(git rev-parse HEAD); then
+  echo "Could not verify the checkout commit after the smoke." >&2
+  exit 1
+fi
+if [[ "$CURRENT_COMMIT" != "$COMMIT_SHA" ]]; then
+  echo "The checkout changed after the smoke; do not start the full pilot." >&2
+  exit 1
+fi
+if ! CODE_STATUS=$(git status --porcelain --untracked-files=all -- . ':(exclude)artifacts/source'); then
+  echo "Could not verify the code tree after the smoke." >&2
+  exit 1
+fi
+if [[ -n "$CODE_STATUS" ]]; then
+  echo "The code tree changed after the smoke; do not start the full pilot." >&2
+  exit 1
+fi
+# The full run admits itself only if $SMOKE_OUT passes the smoke evidence checks.
+if ! env -u HF_HOME -u HF_HUB_CACHE uv run georeset-pilot run-dspark \
+  --run-dir "$RUN_DIR" \
+  --output-dir "$FULL_OUT" \
+  --smoke-output-dir "$SMOKE_OUT" \
+  --model-cache "$FULL_CACHE" \
+  --model-cache-seed "$HF_HUB_CACHE_SEED" \
+  --computation-commit "$COMMIT_SHA" \
+  --validation-commit "$COMMIT_SHA"; then
+  echo "Full run refused or failed; inspect its message before retrying." >&2
   exit 1
 fi
 ```
@@ -425,23 +424,25 @@ resample or relabel the full benchmark and its metrics are not a full pilot
 result.
 
 After that smoke passes, invoke the wrapper without `--smoke`, using a separate
-new full-run path and the same cache seed. The script requires a clean,
-committed checkout so both manifest commit fields identify the exact runtime
-code.
+new full-run path and the same cache seed. The full run must also name the
+completed smoke directory with `--smoke-output-dir`. Before any GPU, model-cache,
+tokenizer, or engine work, the adapter revalidates that directory against the
+frozen inputs, both commits, the pinned model and runtime, the retained
+predictions, and the metrics, and it refuses a missing, failed, or mismatched
+smoke. The script requires a clean, committed checkout so both manifest commit
+fields identify the exact runtime code.
 
 ```bash
 : "${COMMIT_SHA:?run the smoke setup in this shell first}"
 : "${PILOT_ATTEMPT_ID:?run the smoke setup in this shell first}"
 : "${SMOKE_OUT:?run the smoke setup in this shell first}"
-if python3 -c 'import json, sys; gate=json.load(open(sys.argv[1], encoding="utf-8"))["smoke_gate"]; raise SystemExit(0 if gate["passed"] else 1)' \
-  "$SMOKE_OUT/dspark_metrics.json"; then
-  scripts/run-dspark-grid5000.sh \
-    /path/to/persistent/pilot/runs/e5-small-100-seed42 \
-    "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA-$PILOT_ATTEMPT_ID" \
-    --model-cache-seed "$HF_HUB_CACHE_SEED" \
-    --expected-commit "$COMMIT_SHA"
-else
-  echo "Smoke gate failed; do not start the full pilot." >&2
+if ! scripts/run-dspark-grid5000.sh \
+  /path/to/persistent/pilot/runs/e5-small-100-seed42 \
+  "/path/to/persistent/pilot/runs/lfm2.5-2.6b-dspark-100-seed42-retry-$COMMIT_SHA-$PILOT_ATTEMPT_ID" \
+  --smoke-output-dir "$SMOKE_OUT" \
+  --model-cache-seed "$HF_HUB_CACHE_SEED" \
+  --expected-commit "$COMMIT_SHA"; then
+  echo "Full run refused or failed; inspect its message before retrying." >&2
   exit 1
 fi
 ```

@@ -346,6 +346,8 @@ def test_grid_wrapper_rejects_failed_cleanliness_check_before_recording_head(
         (run_dir / name).write_text("{}", encoding="utf-8")
     output_dir = tmp_path / "outputs/new-run"
     output_dir.parent.mkdir(parents=True)
+    smoke_dir = tmp_path / "outputs/smoke"
+    smoke_dir.mkdir()
     scratch_dir = tmp_path / "scratch"
     scratch_dir.mkdir()
     fake_bin = tmp_path / "bin"
@@ -370,7 +372,7 @@ def test_grid_wrapper_rejects_failed_cleanliness_check_before_recording_head(
     )
 
     result = subprocess.run(
-        [str(wrapper), str(run_dir), str(output_dir)],
+        [str(wrapper), str(run_dir), str(output_dir), "--smoke-output-dir", str(smoke_dir)],
         cwd=tmp_path,
         env=env,
         check=False,
@@ -400,6 +402,8 @@ def test_grid_wrapper_rejects_checkout_commit_mismatch_before_runtime(
         (run_dir / name).write_text("{}", encoding="utf-8")
     output_dir = tmp_path / "outputs/new-run"
     output_dir.parent.mkdir(parents=True)
+    smoke_dir = tmp_path / "outputs/smoke"
+    smoke_dir.mkdir()
     scratch_dir = tmp_path / "scratch"
     scratch_dir.mkdir()
     fake_bin = tmp_path / "bin"
@@ -420,7 +424,15 @@ def test_grid_wrapper_rejects_checkout_commit_mismatch_before_runtime(
     )
 
     result = subprocess.run(
-        [str(wrapper), str(run_dir), str(output_dir), "--expected-commit", "b" * 40],
+        [
+            str(wrapper),
+            str(run_dir),
+            str(output_dir),
+            "--smoke-output-dir",
+            str(smoke_dir),
+            "--expected-commit",
+            "b" * 40,
+        ],
         cwd=tmp_path,
         env=env,
         check=False,
@@ -430,3 +442,136 @@ def test_grid_wrapper_rejects_checkout_commit_mismatch_before_runtime(
 
     assert result.returncode == 2
     assert "does not match expected commit" in result.stderr
+
+
+def _grid_wrapper_harness(
+    tmp_path: pathlib.Path,
+) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path, dict[str, str], pathlib.Path]:
+    project_root = pathlib.Path(__file__).resolve().parents[1]
+    wrapper = tmp_path / "project/scripts/run-dspark-grid5000.sh"
+    _write_executable(
+        wrapper,
+        (project_root / "scripts/run-dspark-grid5000.sh").read_text(encoding="utf-8"),
+    )
+    run_dir = tmp_path / "inputs"
+    run_dir.mkdir()
+    for name in ("frozen_sample.json", "candidate_labels.csv", "manifest.json"):
+        (run_dir / name).write_text("{}", encoding="utf-8")
+    output_dir = tmp_path / "outputs/new-run"
+    output_dir.parent.mkdir(parents=True)
+    scratch_dir = tmp_path / "scratch"
+    scratch_dir.mkdir()
+    fake_bin = tmp_path / "bin"
+    git_log = tmp_path / "git.log"
+    _write_executable(
+        fake_bin / "git",
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$*" >> "$PILOT_TEST_GIT_LOG"\n'
+        'if [[ " $* " == *" status "* ]]; then exit 0; fi\n'
+        'if [[ " $* " == *" rev-parse "* ]]; then printf \'%s\\n\' "$PILOT_TEST_COMMIT"; exit 0; fi\n'
+        "exit 2\n",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "PILOT_TEST_COMMIT": COMMIT,
+            "PILOT_TEST_GIT_LOG": str(git_log),
+            "TMPDIR": str(scratch_dir),
+        }
+    )
+    return wrapper, run_dir, output_dir, env, git_log
+
+
+def test_grid_wrapper_full_run_requires_smoke_output_before_checking_git(
+    tmp_path: pathlib.Path,
+) -> None:
+    wrapper, run_dir, output_dir, env, git_log = _grid_wrapper_harness(tmp_path)
+
+    result = subprocess.run(
+        [str(wrapper), str(run_dir), str(output_dir)],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "requires --smoke-output-dir" in result.stderr
+    assert not git_log.exists()
+    assert not output_dir.exists()
+
+
+@pytest.mark.parametrize(
+    ("smoke_arguments", "message"),
+    [
+        (["--smoke", "--smoke-output-dir", "smoke"], "applies only to the full run"),
+        (["--smoke-output-dir", "relative-smoke"], "must name an existing absolute"),
+        (["--smoke-output-dir", "missing-smoke"], "must name an existing absolute"),
+        (["--smoke-output-dir", ""], "Usage:"),
+    ],
+)
+def test_grid_wrapper_rejects_misplaced_or_unusable_smoke_output(
+    tmp_path: pathlib.Path, smoke_arguments: list[str], message: str
+) -> None:
+    wrapper, run_dir, output_dir, env, git_log = _grid_wrapper_harness(tmp_path)
+    (tmp_path / "smoke").mkdir()
+    arguments = [
+        str(wrapper),
+        str(run_dir),
+        str(output_dir),
+        *[str(tmp_path / value) if value == "smoke" else value for value in smoke_arguments],
+    ]
+
+    result = subprocess.run(
+        arguments,
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert message in result.stderr
+    assert not git_log.exists()
+    assert not output_dir.exists()
+
+
+def test_grid_runbook_full_run_passes_the_verified_smoke_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    blocks = _bash_blocks_after("### Grid" + chr(0x2019) + "5000 one-GPU execution")
+    snippet = "\n".join(blocks[:2]).replace("/path/to/persistent", str(tmp_path))
+    bin_dir, call_log = _fake_tools(tmp_path)
+    wrapper = tmp_path / "scripts/run-dspark-grid5000.sh"
+    _write_executable(
+        wrapper,
+        "#!/bin/sh\n{\n"
+        "  printf 'CALL\\n'\n"
+        "  printf '%s\\n' \"$@\"\n"
+        "  printf 'HF_HOME=%s\\n' \"${HF_HOME-<unset>}\"\n"
+        "  printf 'HF_HUB_CACHE=%s\\n' \"${HF_HUB_CACHE-<unset>}\"\n"
+        "  printf 'END\\n'\n"
+        '} >> "$PILOT_TEST_CALL_LOG"\n'
+        "exit 0\n",
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        cwd=tmp_path,
+        env=_environment(bin_dir, call_log, "0"),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = [call.split("HF_HOME=", 1)[0].splitlines() for call in _calls(call_log)]
+    assert result.returncode == 0, result.stderr
+    assert len(calls) == 2
+    smoke_arguments, full_arguments = calls
+    assert "--smoke" in smoke_arguments
+    assert "--smoke" not in full_arguments
+    smoke_output = smoke_arguments[1]
+    assert full_arguments[full_arguments.index("--smoke-output-dir") + 1] == smoke_output

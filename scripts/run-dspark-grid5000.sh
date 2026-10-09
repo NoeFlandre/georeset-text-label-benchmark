@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output [--smoke] [--model-cache-seed /persistent/path/to/hf-hub-cache] [--expected-commit COMMIT_SHA]" >&2
+  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output [--smoke | --smoke-output-dir /persistent/path/to/completed-smoke] [--model-cache-seed /persistent/path/to/hf-hub-cache] [--expected-commit COMMIT_SHA]" >&2
 }
 
 if [[ $# -lt 2 ]]; then
@@ -16,6 +16,7 @@ shift 2
 RUN_COMMAND=run-dspark
 MODEL_CACHE_SEED=
 EXPECTED_COMMIT=
+SMOKE_OUTPUT_DIR=
 SMOKE_REQUESTED=false
 SEED_REQUESTED=false
 while (($#)); do
@@ -50,6 +51,14 @@ while (($#)); do
       EXPECTED_COMMIT=$2
       shift 2
       ;;
+    --smoke-output-dir)
+      if [[ -n "$SMOKE_OUTPUT_DIR" || $# -lt 2 || -z "$2" ]]; then
+        usage
+        exit 2
+      fi
+      SMOKE_OUTPUT_DIR=$2
+      shift 2
+      ;;
     *)
       usage
       exit 2
@@ -58,6 +67,18 @@ while (($#)); do
 done
 if [[ -n "$MODEL_CACHE_SEED" && ( "$MODEL_CACHE_SEED" != /* || ! -d "$MODEL_CACHE_SEED" ) ]]; then
   echo "--model-cache-seed must name an existing absolute HF Hub cache directory." >&2
+  exit 2
+fi
+if [[ "$RUN_COMMAND" == run-dspark && -z "$SMOKE_OUTPUT_DIR" ]]; then
+  echo "A full run requires --smoke-output-dir naming the completed, passing eight-row smoke." >&2
+  exit 2
+fi
+if [[ "$RUN_COMMAND" == run-dspark-smoke && -n "$SMOKE_OUTPUT_DIR" ]]; then
+  echo "--smoke-output-dir applies only to the full run, not to --smoke." >&2
+  exit 2
+fi
+if [[ -n "$SMOKE_OUTPUT_DIR" && ( "$SMOKE_OUTPUT_DIR" != /* || ! -d "$SMOKE_OUTPUT_DIR" ) ]]; then
+  echo "--smoke-output-dir must name an existing absolute smoke output directory." >&2
   exit 2
 fi
 if [[ "$RUN_DIR" != /* || "$OUTPUT_DIR" != /* ]]; then
@@ -248,6 +269,9 @@ DS_PILOT_ARGS=(
 )
 if [[ -n "$MODEL_CACHE_SEED" ]]; then
   DS_PILOT_ARGS+=(--model-cache-seed "$MODEL_CACHE_SEED")
+fi
+if [[ -n "$SMOKE_OUTPUT_DIR" ]]; then
+  DS_PILOT_ARGS+=(--smoke-output-dir "$SMOKE_OUTPUT_DIR")
 fi
 run_bounded uv run --locked georeset-pilot "$RUN_COMMAND" "${DS_PILOT_ARGS[@]}"
 
