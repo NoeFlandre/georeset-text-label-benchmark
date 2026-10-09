@@ -17,7 +17,8 @@ The `overlap.parquet` artifact is not used for sampling.
 
 Rules, applied in this order:
 
-1. Keep English rows only (`language_code == "eng"`) with a non-null `eunis_code`.
+1. Keep English rows only (`language_code == "eng"`) whose `eunis_code` is one of the 158
+   candidate codes. Rows with other codes are left out and counted.
 2. Give each row a coordinate: the midpoint of the polygon bbox
    (`bbox_min_*`, `bbox_max_*`).
 3. Assign each row an H3 cell at resolution 3.
@@ -135,7 +136,12 @@ Direct generation gives one code per row, so there is no top-5 metric.
 
 ## Status
 
-- The labelled pool and the new sample have not been generated yet.
-- The pinned sample ID digest in `pilot/dspark.py` still belongs to the retired sample.
-  DSpark rejects the new sample until that digest is updated from the new run.
-- The failed earlier DSpark run and the E5 run are being removed from the Hub.
+- The labelled pool was built by the pipeline at commit `9f834e4c`. Its baseline counts
+  match the pinned source.
+- The sample was frozen from that pool. Its sample ID digest is
+  `e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d`. DSpark accepts
+  this sample only.
+- Four pool rows have codes outside the 158-code table (`R41`, `R1K`). They are left
+  out before sampling and counted in `source_coverage`.
+- The GPU inference run has not been done yet.
+- The E5 run and the failed DSpark run are being removed from the Hub by a separate task.
