@@ -124,9 +124,10 @@ def _build_run(
     keys = GlobalKeys()
     output_path = stage / "overlap.parquet"
     labelled_path = stage / "labelled-eunis.parquet"
-    writer = pq.ParquetWriter(output_path, OVERLAP_SCHEMA, compression="zstd")
-    labelled_writer = pq.ParquetWriter(labelled_path, LABELLED_SCHEMA, compression="zstd")
-    try:
+    with (
+        pq.ParquetWriter(output_path, OVERLAP_SCHEMA, compression="zstd") as writer,
+        pq.ParquetWriter(labelled_path, LABELLED_SCHEMA, compression="zstd") as labelled_writer,
+    ):
         for partition in partitions:
             result = _process_source_partition(
                 source,
@@ -137,9 +138,6 @@ def _build_run(
             )
             _write_partition(writer, labelled_writer, result.overlap_rows)
             audit.merge(result.audit)
-    finally:
-        writer.close()
-        labelled_writer.close()
     summary = _summary(audit, keys, partitions, manifest, expected_counts)
     summary_path = stage / "summary.json"
     _write_json(summary_path, summary)
