@@ -335,6 +335,16 @@ EQUIVALENT_RATIONALES = {
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_8": (
         "_true_positives runs only after single-label validation checks equal gold and prediction lengths, so strict=False has the same aligned iteration."
     ),
+    "georeset_text_label_benchmark.pilot.geo_sampling.x__leaves_groups_feasible__mutmut_13": (
+        "Every group keeps at least its remaining quota of available cells: the other-group check "
+        "keeps each surplus non-negative after every pick, and a pick never lowers its own group's "
+        "surplus. The own-group bound therefore never rejects a candidate, and loosening it by one "
+        "changes no outcome."
+    ),
+    "georeset_text_label_benchmark.pilot.geo_sampling.x__take__mutmut_2": (
+        "The selected lists are only counted with len() and never read, so appending None instead "
+        "of the chosen cell changes no outcome."
+    ),
 }
 
 
@@ -425,6 +435,8 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_4": "e79eeed54d1dbac09488bcf4bc198118b11b5746c4570e8a65c9d8fa8eb94da5",
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_7": "825f4587b2e13db3bbc83d24ec9944ef136a29e90d3b008d3a2984b34186c99d",
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_8": "9e98b84cc1aa08ca5dd153aeb44dca92b0e71f75ccae8d58415c473a141b3f75",
+    "georeset_text_label_benchmark.pilot.geo_sampling.x__leaves_groups_feasible__mutmut_13": "85be0de3401ef8bf6f0e5f6f625f5071b41887caa659959148139010566946fa",
+    "georeset_text_label_benchmark.pilot.geo_sampling.x__take__mutmut_2": "dfdf99530d94db7edb5aec8c72b797d59f1a3cc7ee625cb46259a2a151ab6049",
 }
 
 REVIEWED_EXEMPTIONS = {
