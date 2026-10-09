@@ -317,6 +317,18 @@ EQUIVALENT_RATIONALES = {
         "Python resolves UTF-8 and utf-8 to the same codec, so encoding the canonical patch "
         "text produces the same fingerprint bytes."
     ),
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_13": (
+        "json.dumps treats ensure_ascii=None as false, so CLI results have identical Unicode serialization to ensure_ascii=False."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_4": (
+        "_true_positives runs only after single-label validation checks equal gold and prediction lengths, so strict=None has the same aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_7": (
+        "_true_positives runs only after single-label validation checks equal gold and prediction lengths, so omitting strict has the same aligned iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_8": (
+        "_true_positives runs only after single-label validation checks equal gold and prediction lengths, so strict=False has the same aligned iteration."
+    ),
 }
 
 
@@ -401,6 +413,10 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.sampling.x__validate_sentence_hash__mutmut_5": "93966eb39dc54e4d89032ccbf73e97f7181a1fcd05085e63a2b85e6a5c170a39",
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_21": "232cbfe1f08997724580af277de72347433894da72c82a47008ca4c24537d435",
     "georeset_text_label_benchmark.quality.mutation.x__mutation_fingerprint__mutmut_20": "db9169a83216ba1277b993ce9540f311abe9026c6756032073b3c82ecf8a743c",
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_13": "9cf9a4c27094fcb51453ad8ecd02cfbc09a32ee7c9b6fed43bd155892ecc4eb0",
+    "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_4": "e79eeed54d1dbac09488bcf4bc198118b11b5746c4570e8a65c9d8fa8eb94da5",
+    "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_7": "825f4587b2e13db3bbc83d24ec9944ef136a29e90d3b008d3a2984b34186c99d",
+    "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_8": "9e98b84cc1aa08ca5dd153aeb44dca92b0e71f75ccae8d58415c473a141b3f75",
 }
 
 REVIEWED_EXEMPTIONS = {
