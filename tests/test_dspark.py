@@ -23,11 +23,7 @@ import pytest
 from georeset_text_label_benchmark.pilot import cli, dspark, dspark_runner, publication, runner
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
-    OVERLAP_DATASET,
-    OVERLAP_PARQUET_SHA256,
-    OVERLAP_REVISION,
 )
-from georeset_text_label_benchmark.pilot.sampling import select_distinct_sample
 
 
 def _candidate_file() -> Path:
@@ -56,61 +52,81 @@ def _row(index: int) -> dict[str, Any]:
 
 
 def _write_frozen_run(run_dir: Path, size: int = 100) -> list[dict[str, Any]]:
-    candidate_path = _candidate_file()
-    with candidate_path.open(encoding="utf-8", newline="") as stream:
-        candidate_rows = list(csv.DictReader(stream))
-    t11_name = next(row["eunis_name"] for row in candidate_rows if row["eunis_code"] == "T11")
-    source_rows = [_row(index) for index in range(1, size + 1)]
-    for row in source_rows:
-        row["eunis_name"] = t11_name
-    selected = select_distinct_sample(source_rows, size=size, seed=42)
-    shutil.copyfile(candidate_path, run_dir / "candidate_labels.csv")
-    ids = [row["sample_id"] for row in selected]
-    sample = {
-        "format_version": 1,
-        "source": {
-            "dataset": OVERLAP_DATASET,
-            "revision": OVERLAP_REVISION,
-            "file": "overlap.parquet",
-            "sha256": OVERLAP_PARQUET_SHA256,
-            "license": "OpenStreetMap ODbL-1.0; European Environment Agency CC-BY-4.0",
-        },
-        "source_coverage": {"row_count": 224789},
-        "selection": {
-            "seed": 42,
-            "sample_size": size,
-            "sample_ids_sha256": runner._sha256_json(ids),
-            "unique_sentence_hash_count": size,
-            "unique_polygon_count": size,
-        },
-        "candidate_labels": {
-            "file": "candidate_labels.csv",
-            "sha256": CANDIDATE_LABELS_SHA256,
-            "count": len(candidate_rows),
-            "codes": [row["eunis_code"] for row in candidate_rows],
-            "text_method": "Exact pinned EUNIS English name, newline, exact EEA description.",
-        },
-        "selected_rows": selected,
-    }
-    runner._write_json_exclusive(run_dir / "frozen_sample.json", sample)
-    runner._write_json_exclusive(
-        run_dir / "manifest.json",
-        {
-            "format_version": 1,
-            "source": sample["source"],
-            "sample": sample["selection"],
-            "candidate_labels": sample["candidate_labels"],
-            "model": {
-                "repository": dspark_runner.MODEL_REPOSITORY,
-                "revision": dspark_runner.MODEL_REVISION,
+    """Freeze a synthetic labelled pool through the real freeze and move it into run_dir."""
+    pool_dir = run_dir.parent / f"{run_dir.name}-pool"
+    pool_dir.mkdir()
+    labelled, manifest = _write_labelled_pool(pool_dir)
+    frozen = pool_dir / "frozen"
+    runner.freeze_sample(labelled, _candidate_file(), manifest, frozen, per_group=size // 2)
+    run_dir.mkdir(exist_ok=True)
+    for name in ("frozen_sample.json", "candidate_labels.csv", "manifest.json"):
+        shutil.move(frozen / name, run_dir / name)
+    sample = json.loads((run_dir / "frozen_sample.json").read_text(encoding="utf-8"))
+    return sample["selected_rows"]
+
+
+def _write_labelled_pool(directory: Path) -> tuple[Path, Path]:
+    """Give every candidate code one yes and one no sentence at a seeded place on Earth."""
+    import random
+
+    from georeset_text_label_benchmark.output_schema import LABELLED_SCHEMA
+
+    rng = random.Random(11)
+    rows: list[dict[str, Any]] = []
+    with _candidate_file().open(encoding="utf-8", newline="") as stream:
+        candidates = list(csv.DictReader(stream))
+    english_index = 0
+    for candidate in candidates:
+        # English T11 rows form the sample; every other code gets one French row so the
+        # candidate table still covers all 158 observed codes.
+        english = candidate["eunis_code"] == "T11"
+        decisions = ("yes", "no") * 50 if english else ("yes",)
+        for decision in decisions:
+            lat = rng.uniform(-60.0, 70.0)
+            lon = rng.uniform(-170.0, 170.0)
+            if english:
+                english_index += 1
+                sentence = f"Frozen EUNIS overlap sentence {english_index}."
+            else:
+                sentence = f"Frozen French sentence {candidate['eunis_code']}."
+            rows.append(
+                {
+                    "source_pbf": "test-latest.osm.pbf",
+                    "osm_type": "way",
+                    "osm_id": len(rows) + 1,
+                    "description_identity": f"description-{len(rows)}",
+                    "tag_key": "description",
+                    "sentence_index": 0,
+                    "sentence": sentence,
+                    "text_sha256": hashlib.sha256(sentence.encode("utf-8")).hexdigest(),
+                    "language_code": "eng" if english else "fra",
+                    "eunis_code": candidate["eunis_code"],
+                    "eunis_name": candidate["eunis_name"],
+                    "eunis_overlap_percentage": 80.0,
+                    "eunis_source_version": "maps-v1",
+                    "decision": decision,
+                    "bbox_min_x": lon - 0.1,
+                    "bbox_min_y": lat - 0.1,
+                    "bbox_max_x": lon + 0.1,
+                    "bbox_max_y": lat + 0.1,
+                }
+            )
+    labelled = directory / "labelled-eunis.parquet"
+    pq.write_table(pa.Table.from_pylist(rows, schema=LABELLED_SCHEMA), labelled)
+    manifest = directory / "pipeline-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "computation_commit": "a" * 40,
+                "validation_commit": "b" * 40,
+                "input_snapshots": {"shared_input_revision": "shared-revision"},
+                "artifact_sha256": {"labelled-eunis.parquet": runner.sha256_file(labelled)},
             },
-            "outputs_sha256": {
-                "frozen_sample.json": runner.sha256_file(run_dir / "frozen_sample.json"),
-                "candidate_labels.csv": runner.sha256_file(run_dir / "candidate_labels.csv"),
-            },
-        },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
     )
-    return selected
+    return labelled, manifest
 
 
 def _mock_cuda_preflight(_gpu: dict[str, Any]) -> dict[str, Any]:
@@ -288,7 +304,7 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
     assert dspark.RUNTIME_CONTEXT_TOKENS == 128_000
     assert dspark.MODEL_CONTEXT_TOKENS == 131_072
     assert dspark.EXPECTED_SAMPLE_IDS_SHA256 == (
-        "74ab5826b51806947215b0e1635f173ce99af13577e41a431c263cd6a8e57e72"
+        "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d"
     )
     assert dspark.engine_kwargs() == {
         "model_path": "LiquidAI/LFM2.5-2.6B",
@@ -417,7 +433,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     output_arg, output_dir = _output_arguments(tmp_path, output_mode)
     selected = _write_frozen_run(run_dir)
     frozen_before = (run_dir / "frozen_sample.json").read_bytes()
-    (run_dir / "predictions.parquet").write_bytes(b"existing E5 predictions")
+    (run_dir / "predictions.parquet").write_bytes(b"existing predictions")
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
     engine_construction: list[tuple[Any, ...]] = []
@@ -609,8 +625,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             {"reason": "unknown_code", "count": 1},
         ],
         "comparison_note": (
-            "Compare top1_accuracy and macro_f1_all_candidates with the E5 run. This direct-label "
-            "generation produces one code, so it has no top-5 ranking metric."
+            "Direct-label generation produces one code per row, so it has no top-5 ranking metric."
         ),
         "scope_note": (
             "This reports agreement with existing polygon-level EUNIS assignments, not sentence "
@@ -629,7 +644,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "computation_commit": "a" * 40,
         "validation_commit": "b" * 40,
         "source": sample["source"],
-        "frozen_e5_manifest_sha256": runner.sha256_file(run_dir / "manifest.json"),
+        "frozen_manifest_sha256": runner.sha256_file(run_dir / "manifest.json"),
         "source_coverage": sample["source_coverage"],
         "sample": sample["selection"],
         "run_scope": {
@@ -683,14 +698,14 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "The source is the fixed 100-sentence positive-overlap pilot.",
             "Gold labels are existing polygon-level EUNIS assignments, not sentence-level truth.",
             "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
-            "The sample is occurrence-weighted before unique-text and unique-polygon filtering.",
-            "Compare top-1 and macro-F1 only with E5; direct generation has no top-5 ranking.",
+            "The sample has one sentence per H3 cell, 50 yes and 50 no, with unique sentence hashes and polygons.",
+            "Direct generation has no top-5 ranking.",
             "Generation uses the target model card's sampled decoding settings.",
             "The DSpark vendor parity benchmarks use greedy decoding; this sampled run does not claim greedy parity.",
         ],
     }
     assert (run_dir / "frozen_sample.json").read_bytes() == frozen_before
-    assert (run_dir / "predictions.parquet").read_bytes() == b"existing E5 predictions"
+    assert (run_dir / "predictions.parquet").read_bytes() == b"existing predictions"
 
 
 def _output_arguments(tmp_path: Path, mode: str) -> tuple[Path | None, Path]:
@@ -1544,7 +1559,7 @@ def test_run_dspark_pilot_uses_scope_specific_default_and_resumes_scope(
         dspark_runner, "read_frozen_pilot_inputs", lambda _path: (sample, rows, candidates)
     )
     monkeypatch.setattr(dspark_runner, "_validate_published_sample", lambda *_args: None)
-    monkeypatch.setattr(dspark_runner, "_validate_frozen_e5_manifest", lambda *_args: "c" * 64)
+    monkeypatch.setattr(dspark_runner, "_validate_frozen_manifest", lambda *_args: "c" * 64)
     monkeypatch.setattr(dspark_runner, "_rows_for_run", lambda _rows, _smoke: rows)
     monkeypatch.setattr(dspark_runner, "_run_scope", lambda *_args: scope)
 
@@ -1780,9 +1795,9 @@ def test_dspark_run_option_validator_reports_exact_commit_and_path_errors(
         dspark_runner._validate_run_options(run_dir, output_dir, "a" * 40, "B" * 40)
     assert str(error.value) == ("validation_commit must be a 40-character lowercase Git commit SHA")
 
-    with pytest.raises(ValueError, match="must be separate from frozen E5 inputs") as error:
+    with pytest.raises(ValueError, match="must be separate from frozen inputs") as error:
         dspark_runner._validate_run_options(run_dir, run_dir, "a" * 40, "b" * 40)
-    assert str(error.value) == "DSpark output directory must be separate from frozen E5 inputs"
+    assert str(error.value) == "DSpark output directory must be separate from frozen inputs"
 
 
 def test_dspark_output_availability_error_is_exact(tmp_path: Path) -> None:
@@ -1841,7 +1856,7 @@ def test_dspark_staged_protocol_rejects_a_frozen_input_mismatch(tmp_path: Path) 
         "source": sample["source"],
         "sample": sample["selection"],
         "candidate_labels": runner._candidate_provenance(sample, candidate_rows),
-        "frozen_e5_manifest_sha256": "c" * 64,
+        "frozen_manifest_sha256": "c" * 64,
     }
 
     dspark_runner._validate_staged_dspark_protocol(
@@ -1851,7 +1866,7 @@ def test_dspark_staged_protocol_rejects_a_frozen_input_mismatch(tmp_path: Path) 
     with pytest.raises(ValueError, match="does not match this frozen run") as error:
         dspark_runner._validate_staged_dspark_protocol(
             staging,
-            {**manifest, "frozen_e5_manifest_sha256": "d" * 64},
+            {**manifest, "frozen_manifest_sha256": "d" * 64},
             sample,
             candidate_rows,
             "a" * 40,
@@ -2005,27 +2020,14 @@ def test_runner_verifies_full_frozen_inputs_before_gpu_preflight(
         lambda: pytest.fail("frozen inputs must be verified before GPU admission"),
     )
 
-    with pytest.raises(ValueError, match=r"^E5 manifest hash mismatch for frozen_sample\.json$"):
+    with pytest.raises(
+        ValueError, match=r"^frozen manifest hash mismatch for frozen_sample\.json$"
+    ):
         dspark_runner.run_dspark_pilot(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
         )
-
-
-def test_frozen_e5_manifest_binds_the_candidate_csv_bytes(tmp_path: Path) -> None:
-    run_dir = tmp_path / "pilot"
-    run_dir.mkdir()
-    _write_frozen_run(run_dir)
-    sample = json.loads((run_dir / "frozen_sample.json").read_text(encoding="utf-8"))
-    with (run_dir / "candidate_labels.csv").open("a", encoding="utf-8") as stream:
-        stream.write("\n")
-
-    with pytest.raises(
-        ValueError,
-        match=r"^E5 manifest hash mismatch for candidate_labels\.csv$",
-    ):
-        dspark_runner._validate_frozen_e5_manifest(run_dir, sample)
 
 
 def test_runner_requires_published_e5_manifest_before_gpu_preflight(
@@ -2047,105 +2049,13 @@ def test_runner_requires_published_e5_manifest_before_gpu_preflight(
     )
 
     with pytest.raises(
-        ValueError, match=r"^frozen E5 manifest\.json is required to verify the published inputs$"
+        ValueError, match=r"^frozen manifest\.json is required to verify the published inputs$"
     ):
         dspark_runner.run_dspark_pilot(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
         )
-
-
-@pytest.mark.parametrize(
-    ("manifest_edit", "message"),
-    [
-        (
-            lambda manifest: manifest.update(source={"dataset": "different"}),
-            "frozen E5 manifest source does not match frozen_sample.json",
-        ),
-        (
-            lambda manifest: manifest.update(sample={"seed": 41}),
-            "frozen E5 manifest sample does not match frozen_sample.json",
-        ),
-        (
-            lambda manifest: manifest.update(candidate_labels=None),
-            "frozen E5 manifest candidate provenance is missing",
-        ),
-        (
-            lambda manifest: manifest.update(model={"repository": dspark_runner.MODEL_REPOSITORY}),
-            "frozen inputs are not from the pinned E5 model run",
-        ),
-        (
-            lambda manifest: manifest.update(outputs_sha256=None),
-            "frozen E5 manifest has no outputs_sha256 object",
-        ),
-    ],
-)
-def test_frozen_e5_manifest_rejects_provenance_drift(
-    tmp_path: Path,
-    manifest_edit: Any,
-    message: str,
-) -> None:
-    run_dir = tmp_path / "pilot"
-    run_dir.mkdir()
-    _write_frozen_run(run_dir)
-    sample = json.loads((run_dir / "frozen_sample.json").read_text(encoding="utf-8"))
-    manifest_path = run_dir / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest_edit(manifest)
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-    with pytest.raises(ValueError, match=f"^{message}$"):
-        dspark_runner._validate_frozen_e5_manifest(run_dir, sample)
-
-
-@pytest.mark.parametrize(
-    ("field", "different_value"),
-    [
-        ("file", "other.csv"),
-        ("sha256", "0" * 64),
-        ("count", 1),
-        ("codes", ["T99"]),
-    ],
-)
-def test_frozen_e5_manifest_rejects_each_candidate_field_drift(
-    tmp_path: Path,
-    field: str,
-    different_value: Any,
-) -> None:
-    run_dir = tmp_path / "pilot"
-    run_dir.mkdir()
-    _write_frozen_run(run_dir)
-    sample = json.loads((run_dir / "frozen_sample.json").read_text(encoding="utf-8"))
-    manifest_path = run_dir / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["candidate_labels"][field] = different_value
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-    with pytest.raises(
-        ValueError,
-        match=r"^frozen E5 manifest candidate provenance does not match frozen inputs$",
-    ):
-        dspark_runner._validate_frozen_e5_manifest(run_dir, sample)
-
-
-@pytest.mark.parametrize("contents", ["not JSON", "[]"])
-def test_frozen_e5_manifest_rejects_invalid_json_objects(
-    tmp_path: Path,
-    contents: str,
-) -> None:
-    run_dir = tmp_path / "pilot"
-    run_dir.mkdir()
-    manifest_path = run_dir / "manifest.json"
-    manifest_path.write_text(contents, encoding="utf-8")
-
-    expected = (
-        "frozen E5 manifest.json is unreadable"
-        if contents == "not JSON"
-        else "frozen E5 manifest.json must contain a JSON object"
-    )
-    with pytest.raises(ValueError, match=f"^{expected}$"):
-        dspark_runner._read_frozen_e5_manifest(manifest_path)
 
 
 @pytest.mark.parametrize(
@@ -2263,12 +2173,12 @@ def test_runner_validates_run_paths_and_both_commit_identifiers(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="output directory must be separate") as error:
         dspark_runner._validate_run_inputs(run_dir, run_dir, "a" * 40, "b" * 40)
-    assert str(error.value) == "DSpark output directory must be separate from frozen E5 inputs"
+    assert str(error.value) == "DSpark output directory must be separate from frozen inputs"
 
     nested_output = run_dir / "predictions" / "dspark"
     with pytest.raises(ValueError, match="output directory must be separate") as error:
         dspark_runner._validate_run_inputs(run_dir, nested_output, "a" * 40, "b" * 40)
-    assert str(error.value) == "DSpark output directory must be separate from frozen E5 inputs"
+    assert str(error.value) == "DSpark output directory must be separate from frozen inputs"
 
     output_dir.mkdir()
     with pytest.raises(FileExistsError) as error:
@@ -2754,28 +2664,6 @@ def test_flashinfer_smoke_rejects_jit_or_result_failure(
     ) as error:
         dspark_runner._run_flashinfer_smoke(torch)
     assert str(error.value.__cause__) == cause
-
-
-def test_frozen_e5_manifest_read_uses_explicit_utf8(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text("{}", encoding="utf-8")
-    original_read_text = Path.read_text
-    encodings: list[str | None] = []
-
-    def read_text(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
-        if path == manifest_path:
-            encodings.append(encoding)
-        return original_read_text(path, encoding=encoding, errors=errors)
-
-    monkeypatch.setattr(Path, "read_text", read_text)
-    dspark_runner._read_frozen_e5_manifest(manifest_path)
-
-    assert len(encodings) == 1
-    assert isinstance(encodings[0], str)
-    assert encodings[0].lower() == "utf-8"
 
 
 def test_nvcc_release_reader_requires_the_compiler_binary(
@@ -3347,8 +3235,8 @@ def test_smoke_runner_generates_only_eight_rows_and_keeps_inputs_untouched(
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
     frozen_before = (run_dir / "frozen_sample.json").read_bytes()
-    e5_predictions = run_dir / "predictions.parquet"
-    e5_predictions.write_bytes(b"preserve the E5 output")
+    prior_predictions = run_dir / "predictions.parquet"
+    prior_predictions.write_bytes(b"preserve the prior output")
     output_dir = tmp_path / "dspark-smoke"
     seed_dir = tmp_path / "verified-hub-cache"
     seed_calls: list[tuple[Path, Path]] = []
@@ -3453,7 +3341,7 @@ def test_smoke_runner_generates_only_eight_rows_and_keeps_inputs_untouched(
         in manifest["limitations"]
     )
     assert (run_dir / "frozen_sample.json").read_bytes() == frozen_before
-    assert e5_predictions.read_bytes() == b"preserve the E5 output"
+    assert prior_predictions.read_bytes() == b"preserve the prior output"
 
 
 def test_parser_strips_only_the_pinned_target_eos_token() -> None:

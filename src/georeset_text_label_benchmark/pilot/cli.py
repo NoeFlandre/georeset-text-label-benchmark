@@ -9,12 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from georeset_text_label_benchmark.pilot.dspark_runner import run_dspark_pilot
-from georeset_text_label_benchmark.pilot.protocol import (
-    OVERLAP_PARQUET_SHA256,
-    OVERLAP_REVISION,
-    SAMPLE_SEED,
-    SAMPLE_SIZE,
-)
+from georeset_text_label_benchmark.pilot.protocol import SAMPLE_SEED, SAMPLE_SIZE
 from georeset_text_label_benchmark.pilot.runner import freeze_sample
 
 PILOT_RUN_DIR = Path("artifacts/pilot-100-seed42")
@@ -23,13 +18,14 @@ PILOT_RUN_DIR = Path("artifacts/pilot-100-seed42")
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="georeset-pilot")
     commands = parser.add_subparsers(dest="command", required=True)
-    freeze = commands.add_parser("freeze", help="freeze selected rows before inference")
-    freeze.add_argument("--source-parquet", type=Path, required=True)
+    freeze = commands.add_parser("freeze", help="freeze the geographic yes/no sample")
+    freeze.add_argument("--labelled-parquet", type=Path, required=True)
+    freeze.add_argument("--pipeline-manifest", type=Path, required=True)
     freeze.add_argument(
         "--candidate-csv", type=Path, default=Path("pilot_data/eunis_candidate_labels.csv")
     )
     freeze.add_argument("--output-dir", type=Path, default=PILOT_RUN_DIR)
-    freeze.add_argument("--sample-size", type=int, default=SAMPLE_SIZE)
+    freeze.add_argument("--per-group", type=int, default=SAMPLE_SIZE // 2)
     freeze.add_argument("--seed", type=int, default=SAMPLE_SEED)
     dspark = commands.add_parser(
         "run-dspark", help="predict one EUNIS code per row with pinned LFM2.5 + DSpark"
@@ -62,14 +58,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _freeze_sample_command(args: argparse.Namespace) -> dict[str, Any]:
-    """Freeze the requested source rows before inference."""
+    """Freeze the geographic yes/no sample before inference."""
     return freeze_sample(
-        args.source_parquet,
+        args.labelled_parquet,
         args.candidate_csv,
+        args.pipeline_manifest,
         args.output_dir,
-        expected_source_sha256=OVERLAP_PARQUET_SHA256,
-        source_revision=OVERLAP_REVISION,
-        size=args.sample_size,
+        per_group=args.per_group,
         seed=args.seed,
     )
 

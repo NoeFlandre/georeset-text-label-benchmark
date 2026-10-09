@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 import shutil
 from collections.abc import Callable
@@ -159,87 +158,4 @@ def test_candidate_rows_reject_a_changed_candidate_file(tmp_path: Path) -> None:
     _assert_error(
         lambda: runner._candidate_rows(tmp_path, sample),
         "candidate label file checksum mismatch",
-    )
-
-
-def _source_row(index: int) -> dict[str, Any]:
-    sentence = f"Pinned validator sentence {index}."
-    return {
-        "source_pbf": "test-latest.osm.pbf",
-        "osm_type": "way",
-        "osm_id": index,
-        "description_identity": f"description-{index}",
-        "tag_key": "description",
-        "sentence_index": 0,
-        "sentence": sentence,
-        "text_sha256": hashlib.sha256(sentence.encode("utf-8")).hexdigest(),
-        "language_code": "eng",
-        "eunis_code": "T11",
-        "eunis_name": "Temperate forest",
-    }
-
-
-def test_freeze_inputs_must_match_the_pinned_revision_and_hashes(tmp_path: Path) -> None:
-    source = tmp_path / "overlap.parquet"
-    candidates = tmp_path / "candidates.csv"
-    source.write_bytes(b"overlap")
-    candidates.write_bytes(b"candidates")
-    source_hash = hashlib.sha256(b"overlap").hexdigest()
-    candidate_hash = hashlib.sha256(b"candidates").hexdigest()
-
-    assert runner._validate_freeze_inputs(
-        source, candidates, source_hash, candidate_hash, runner.OVERLAP_REVISION
-    ) == (source_hash, candidate_hash)
-    assert runner._validate_freeze_inputs(
-        source, candidates, source_hash, None, runner.OVERLAP_REVISION
-    ) == (source_hash, candidate_hash)
-
-    _assert_error(
-        lambda: runner._validate_freeze_inputs(source, candidates, source_hash, None, "other"),
-        "source revision is not the pinned overlap snapshot",
-    )
-    _assert_error(
-        lambda: runner._validate_freeze_inputs(
-            source, candidates, "0" * 64, None, runner.OVERLAP_REVISION
-        ),
-        "overlap Parquet SHA-256 does not match the pinned input",
-    )
-    _assert_error(
-        lambda: runner._validate_freeze_inputs(
-            source, candidates, source_hash, "0" * 64, runner.OVERLAP_REVISION
-        ),
-        "candidate CSV SHA-256 does not match the pinned input",
-    )
-
-
-def test_frozen_source_must_name_the_pinned_overlap_snapshot() -> None:
-    source = {
-        "dataset": runner.OVERLAP_DATASET,
-        "revision": runner.OVERLAP_REVISION,
-        "sha256": runner.OVERLAP_PARQUET_SHA256,
-    }
-    runner._validate_frozen_source(source)
-
-    _assert_error(
-        lambda: runner._validate_frozen_source({**source, "revision": "other"}),
-        "frozen sample uses a different overlap dataset revision",
-    )
-    _assert_error(
-        lambda: runner._validate_frozen_source({**source, "sha256": "0" * 64}),
-        "frozen sample uses a different overlap Parquet hash",
-    )
-
-
-def test_frozen_rows_must_follow_the_deterministic_protocol() -> None:
-    from georeset_text_label_benchmark.pilot.sampling import select_distinct_sample
-
-    rows = [_source_row(index) for index in range(1, 11)]
-    selected = select_distinct_sample(rows, size=3, seed=42)
-    other = select_distinct_sample(rows, size=3, seed=7)
-    assert selected != other
-
-    runner._validate_frozen_selection(selected, {"sample_size": 3, "seed": 42})
-    _assert_error(
-        lambda: runner._validate_frozen_selection(other, {"sample_size": 3, "seed": 42}),
-        "frozen rows do not match the deterministic sampling protocol",
     )

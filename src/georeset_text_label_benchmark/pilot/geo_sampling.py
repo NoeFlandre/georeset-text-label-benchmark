@@ -8,6 +8,7 @@ maximin spacing, as in the landuse-sentence-relevance-golden-human-set sampler.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -43,6 +44,13 @@ def h3_centre_of(cell: str) -> tuple[float, float]:
     """Return the latitude and longitude of an H3 cell centre."""
     lat, lon = h3.cell_to_latlng(cell)
     return float(lat), float(lon)
+
+
+def sample_id_of(row: Mapping[str, Any]) -> str:
+    """Return a stable identifier for one sentence occurrence."""
+    identity = [row[field] for field in _OCCURRENCE_FIELDS]
+    payload = json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def bbox_centre(row: Mapping[str, Any]) -> tuple[float, float]:

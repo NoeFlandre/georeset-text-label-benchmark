@@ -19,14 +19,6 @@ EQUIVALENT_RATIONALES = {
         "In _verify_sentence_hash, Python's codec registry resolves utf-8 and UTF-8 to the "
         "same codec and identical bytes; exact sentence SHA-256 validation is tested."
     ),
-    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": (
-        "json.dumps treats ensure_ascii=None as false, so CLI results have identical "
-        "Unicode serialization to ensure_ascii=False."
-    ),
-    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_17": (
-        "json.dumps treats ensure_ascii=None as false, so CLI results have identical "
-        "Unicode serialization to ensure_ascii=False."
-    ),
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_22": (
         "build_prompt constructs codes by iterating the same candidate sequence immediately "
         "before this zip, so both iterables always have equal lengths; strict=None cannot "
@@ -289,26 +281,6 @@ EQUIVALENT_RATIONALES = {
         "hashlib accepts sha256 and SHA256 as case-insensitive algorithm names; the digest "
         "is identical for the same file bytes."
     ),
-    "georeset_text_label_benchmark.pilot.sampling.x__rank_rows__mutmut_5": (
-        "Python resolves ascii and ASCII to the same codec; the deterministic ranking "
-        "digest is unchanged."
-    ),
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_11": (
-        "The sample identity payload is always a JSON list, which has no key/value "
-        "separator; changing the unused colon separator cannot change its serialized bytes."
-    ),
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_15": (
-        "Python resolves utf-8 and UTF-8 to the same codec, so stable sample identity "
-        "hashes are unchanged."
-    ),
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_4": (
-        "json.dumps treats ensure_ascii=None as false, so the stable identity JSON bytes "
-        "match ensure_ascii=False."
-    ),
-    "georeset_text_label_benchmark.pilot.sampling.x__validate_sentence_hash__mutmut_5": (
-        "Python resolves utf-8 and UTF-8 to the same codec, so the sentence bytes and "
-        "SHA-256 are unchanged."
-    ),
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_21": (
         "In _build_run, PyArrow accepts zstd and ZSTD as the same compression codec; the "
         "produced Parquet metadata is verified to report ZSTD."
@@ -345,6 +317,33 @@ EQUIVALENT_RATIONALES = {
         "The selected lists are only counted with len() and never read, so appending None instead "
         "of the chosen cell changes no outcome."
     ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_manifest__mutmut_9": (
+        'read_text(encoding="UTF-8") resolves to the same utf-8 codec as "utf-8", so the manifest decodes identically.'
+    ),
+    "georeset_text_label_benchmark.pilot.geo_sampling.x_sample_id_of__mutmut_4": (
+        "json.dumps tests ensure_ascii for truthiness, so None produces the same output as False for this payload."
+    ),
+    "georeset_text_label_benchmark.pilot.geo_sampling.x_sample_id_of__mutmut_11": (
+        "The payload is a JSON array, so json never emits a key separator; changing it cannot change the serialized bytes."
+    ),
+    "georeset_text_label_benchmark.pilot.geo_sampling.x_sample_id_of__mutmut_15": (
+        'encode("UTF-8") and encode("utf-8") use the same codec, so the digest is unchanged.'
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_40": (
+        "pathlib tests exist_ok by truth value, so None behaves like False in mkdir."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_42": (
+        "Path.mkdir defaults exist_ok to False, so omitting the explicit False keeps exclusive creation."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__read_source_rows__mutmut_7": (
+        "Removing batch_size only changes how many rows PyArrow returns per batch; the concatenated rows and their order are identical."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__read_source_rows__mutmut_9": (
+        "A batch size of 16385 instead of 16384 only changes batch boundaries; the concatenated rows and their order are identical."
+    ),
+    "georeset_text_label_benchmark.pilot.runner.x__read_pipeline_manifest__mutmut_5": (
+        'read_text(encoding="UTF-8") resolves to the same utf-8 codec, so the manifest decodes identically.'
+    ),
 }
 
 
@@ -359,8 +358,6 @@ class MutationExemption:
 EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.join.x__validate_text_hash__mutmut_18": "c3b9b40fd4e77b6cd037e55b3e755087df8532ce6d1909c311c01dba11913cf5",
     "georeset_text_label_benchmark.join.x__verify_sentence_hash__mutmut_6": "897e9d2066e18847fa513aba786d30d3400d297aa6e0bfd89ae586daeff87be4",
-    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_50": "e317e803cb4a0b9adac8aa69a4db7090b923ebd5e75956ec4f7bf73e013419f4",
-    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_17": "fbd9a3a182d4af3531d16921fd819b6a0f11ed3f0e18a0b01cb7d86dcffb9f14",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_22": "66e4967360377605713309559bad5ba7744f86f6543608975a63392e55aabee5",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_25": "63f0450d9da1af7695b5194c67202188a4a6056fdeba50bbf62728ff0e4f2ec9",
     "georeset_text_label_benchmark.pilot.dspark.x_build_prompt__mutmut_26": "70760f50df9058bf4d75191b5da89c349db7d913da18cb8f90105be5370ec6ed",
@@ -422,11 +419,6 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_34": "f592f802595ace7e53bd468682dc98ba83a06d70700bd6932106884570f36dcf",
     "georeset_text_label_benchmark.pilot.runner.x_run_pilot__mutmut_98": "bdbe1bd04e8b0974f0d4e3dbd60cda07e15d3e72104d1d48193373cf424350fa",
     "georeset_text_label_benchmark.pilot.runner.x_sha256_file__mutmut_9": "3678fd7c4955e8b29dba31c6185d2bb948418be50482141a9019fedf93c407de",
-    "georeset_text_label_benchmark.pilot.sampling.x__rank_rows__mutmut_5": "a0d87273a7f12e7e5b9e47105fd97be3413da5d8c7c5467c37cd9db17d00bb03",
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_11": "15828e13b1733bacc4e8aa688123d4e388339035c82008162bcd41b4dd7d993f",
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_15": "5590a66e243ab9ee9a7b3cc68a1a049aef203b8d688c9f5c72e55376fd354b74",
-    "georeset_text_label_benchmark.pilot.sampling.x__sample_id__mutmut_4": "036e478e6eda1562c04e91c457bba2d6ad3450857b201f044061ef52761f64be",
-    "georeset_text_label_benchmark.pilot.sampling.x__validate_sentence_hash__mutmut_5": "93966eb39dc54e4d89032ccbf73e97f7181a1fcd05085e63a2b85e6a5c170a39",
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_21": "232cbfe1f08997724580af277de72347433894da72c82a47008ca4c24537d435",
     "georeset_text_label_benchmark.quality.mutation.x__mutation_fingerprint__mutmut_20": "db9169a83216ba1277b993ce9540f311abe9026c6756032073b3c82ecf8a743c",
     "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_13": "9cf9a4c27094fcb51453ad8ecd02cfbc09a32ee7c9b6fed43bd155892ecc4eb0",
@@ -437,6 +429,15 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_32": "699c21092f951b20e21d039a29f1bc579fdbe8ca32d2646eec9a379fb58b71c0",
     "georeset_text_label_benchmark.pilot.geo_sampling.x__leaves_groups_feasible__mutmut_13": "85be0de3401ef8bf6f0e5f6f625f5071b41887caa659959148139010566946fa",
     "georeset_text_label_benchmark.pilot.geo_sampling.x__take__mutmut_2": "dfdf99530d94db7edb5aec8c72b797d59f1a3cc7ee625cb46259a2a151ab6049",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_manifest__mutmut_9": "1c1ad6f302f6de86e88f8da28a3761105ab1c220c7848b46b8a64724b176fdee",
+    "georeset_text_label_benchmark.pilot.geo_sampling.x_sample_id_of__mutmut_4": "4fedc13e3bd7e4f44e50defebbfcf2436b3b21e4cf4651715cc9fb2b0a8ab531",
+    "georeset_text_label_benchmark.pilot.geo_sampling.x_sample_id_of__mutmut_11": "e75de3df83e764a3e94d88a9c122cd6b5911ed730e42ef9c6c5f5ef16fff0932",
+    "georeset_text_label_benchmark.pilot.geo_sampling.x_sample_id_of__mutmut_15": "ed33d00a1d7bf48aa953b3c1bd43a35a647f131c785ad7fc3a4889cf76752f9b",
+    "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_40": "bb21612948208729a12bc0e116883618216b2e2469c4e5efb29273668bd3b2dd",
+    "georeset_text_label_benchmark.pilot.runner.x_freeze_sample__mutmut_42": "5423a37bf7b71358be6477eed2874eb80ccc363bba9795f9f925c4a6fbc9a6fa",
+    "georeset_text_label_benchmark.pilot.runner.x__read_source_rows__mutmut_7": "870ed624c570811e4fa395118427ff46a4964161d70e63160f253f7b1f0c4a4a",
+    "georeset_text_label_benchmark.pilot.runner.x__read_source_rows__mutmut_9": "6a77630566425e50a963e9f4021db6963204075f9f2ad72971e43a01c07a2a08",
+    "georeset_text_label_benchmark.pilot.runner.x__read_pipeline_manifest__mutmut_5": "1c92600e744d6fe3c5cc445b705786c7b2646faba0c7713f56a7f1cb094995e8",
 }
 
 REVIEWED_EXEMPTIONS = {
