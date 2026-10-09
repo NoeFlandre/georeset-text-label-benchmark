@@ -44,12 +44,10 @@ summary and manifest. A separate mismatch test confirms the diagnostic is
 saved before staging cleanup. Tests use tiny local fixtures; no model or EUNIS
 geometry is executed.
 
-For the zero-shot pilot, the first 13 new tests were run red against unimplemented
-stubs (13 failures), then passed after the sampler, E5 embedding, metrics, and
-runner implementation was added. Subsequent tests exercise fixed input hashes,
-distinct sentence/polygon sampling, candidate provenance, model loader flags,
-metrics, and a fully mocked run before any real inference. The pilot has a
-separate frozen-sample step to keep the selected IDs fixed before model loading.
+For the pilot, new behaviour was written test-first. Tests exercise fixed input
+hashes, the geographic yes/no sample, candidate provenance, metrics, and a fully
+mocked run before any real inference. The pilot has a separate frozen-sample step
+to keep the selected IDs fixed before model loading.
 
 ## Static, complexity, and mutation checks
 
