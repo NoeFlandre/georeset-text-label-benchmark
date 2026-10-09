@@ -19,9 +19,7 @@ def test_top5_ranking_metrics_are_removed(name: str) -> None:
     assert not hasattr(metrics, name)
 
 
-@pytest.mark.parametrize(
-    "name", ["MODEL_REPOSITORY", "MODEL_REVISION", "MAX_LENGTH", "BATCH_SIZE"]
-)
+@pytest.mark.parametrize("name", ["MODEL_REPOSITORY", "MODEL_REVISION", "MAX_LENGTH", "BATCH_SIZE"])
 def test_e5_protocol_constants_are_removed(name: str) -> None:
     assert not hasattr(protocol, name)
 

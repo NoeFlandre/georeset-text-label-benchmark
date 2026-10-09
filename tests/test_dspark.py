@@ -101,8 +101,8 @@ def _write_frozen_run(run_dir: Path, size: int = 100) -> list[dict[str, Any]]:
             "sample": sample["selection"],
             "candidate_labels": sample["candidate_labels"],
             "model": {
-                "repository": runner.MODEL_REPOSITORY,
-                "revision": runner.MODEL_REVISION,
+                "repository": dspark_runner.MODEL_REPOSITORY,
+                "revision": dspark_runner.MODEL_REVISION,
             },
             "outputs_sha256": {
                 "frozen_sample.json": runner.sha256_file(run_dir / "frozen_sample.json"),
@@ -2072,7 +2072,7 @@ def test_runner_requires_published_e5_manifest_before_gpu_preflight(
             "frozen E5 manifest candidate provenance is missing",
         ),
         (
-            lambda manifest: manifest.update(model={"repository": runner.MODEL_REPOSITORY}),
+            lambda manifest: manifest.update(model={"repository": dspark_runner.MODEL_REPOSITORY}),
             "frozen inputs are not from the pinned E5 model run",
         ),
         (
@@ -3571,7 +3571,7 @@ def test_dspark_smoke_cli_requires_a_distinct_output_directory() -> None:
             "b" * 40,
         ]
     )
-    assert defaults.run_dir == Path("artifacts/e5-small-100-seed42")
+    assert defaults.run_dir == Path("artifacts/pilot-100-seed42")
     assert defaults.model_cache == Path(".cache/model-dspark")
     assert defaults.model_cache_seed is None
 
