@@ -188,10 +188,13 @@ def test_main_rejects_an_unknown_command_with_the_valid_choices(
         cli.main(["freeze-typo"])
 
     assert error.value.code == 2
-    assert capsys.readouterr().err.splitlines()[-1] == (
+    # argparse quotes the choices differently across CPython 3.12 patch releases; accept both exact forms.
+    assert capsys.readouterr().err.splitlines()[-1] in {
         "georeset-pilot: error: argument command: invalid choice: 'freeze-typo' "
-        "(choose from freeze, run-dspark, run-dspark-smoke)"
-    )
+        "(choose from freeze, run-dspark, run-dspark-smoke)",
+        "georeset-pilot: error: argument command: invalid choice: 'freeze-typo' "
+        "(choose from 'freeze', 'run-dspark', 'run-dspark-smoke')",
+    }
 
 
 def test_run_dspark_defaults_name_the_pilot_run_and_model_cache() -> None:
