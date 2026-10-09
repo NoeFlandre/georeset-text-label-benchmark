@@ -31,6 +31,10 @@ POLYGON_COLUMNS = (
     "eunis_name",
     "eunis_overlap_percentage",
     "eunis_source_version",
+    "bbox_min_x",
+    "bbox_min_y",
+    "bbox_max_x",
+    "bbox_max_y",
 )
 DESCRIPTION_COLUMNS = (
     "description_identity",

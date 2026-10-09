@@ -317,6 +317,12 @@ EQUIVALENT_RATIONALES = {
         "Python resolves UTF-8 and utf-8 to the same codec, so encoding the canonical patch "
         "text produces the same fingerprint bytes."
     ),
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_24": (
+        "PyArrow accepts zstd and ZSTD as the same compression codec; the overlap output's compression is asserted to report ZSTD."
+    ),
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_32": (
+        "PyArrow accepts zstd and ZSTD as the same compression codec; the labelled output's compression is asserted to report ZSTD."
+    ),
 }
 
 
@@ -401,6 +407,8 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.sampling.x__validate_sentence_hash__mutmut_5": "93966eb39dc54e4d89032ccbf73e97f7181a1fcd05085e63a2b85e6a5c170a39",
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_21": "232cbfe1f08997724580af277de72347433894da72c82a47008ca4c24537d435",
     "georeset_text_label_benchmark.quality.mutation.x__mutation_fingerprint__mutmut_20": "db9169a83216ba1277b993ce9540f311abe9026c6756032073b3c82ecf8a743c",
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_24": "84802b8003a2654212197f8868156ba32dd3437085cf89cd153ed5d27dae655d",
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_32": "699c21092f951b20e21d039a29f1bc579fdbe8ca32d2646eec9a379fb58b71c0",
 }
 
 REVIEWED_EXEMPTIONS = {
