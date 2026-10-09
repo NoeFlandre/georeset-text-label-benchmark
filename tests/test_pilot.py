@@ -359,27 +359,6 @@ def test_json_hash_uses_canonical_utf8_for_unicode() -> None:
     )
 
 
-def _inject_e5_output_failure(monkeypatch: pytest.MonkeyPatch, failing_name: str) -> None:
-    if failing_name == "predictions.parquet":
-        write_table = runner.pq.write_table
-
-        def write_then_fail(table: Any, path: Path, **kwargs: Any) -> None:
-            write_table(table, path, **kwargs)
-            raise OSError("injected publication failure")
-
-        monkeypatch.setattr(runner.pq, "write_table", write_then_fail)
-        return
-
-    write_json = runner._write_json_exclusive
-
-    def write_then_fail(path: Path, payload: Mapping[str, Any]) -> None:
-        write_json(path, payload)
-        if path.name == failing_name:
-            raise OSError("injected publication failure")
-
-    monkeypatch.setattr(runner, "_write_json_exclusive", write_then_fail)
-
-
 def test_staged_hash_validation_reports_input_and_output_context(tmp_path: Path) -> None:
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -396,23 +375,23 @@ def test_staged_hash_validation_reports_input_and_output_context(tmp_path: Path)
                 "frozen_sample.json": "0" * 64,
                 "predictions.parquet": runner.sha256_file(output_path),
             },
-            f"retained E5 staging input hash mismatch for frozen_sample.json: {staging}",
+            f"retained DSpark staging input hash mismatch for frozen_sample.json: {staging}",
         ),
         (
             {
                 "frozen_sample.json": runner.sha256_file(input_path),
                 "predictions.parquet": "0" * 64,
             },
-            f"retained E5 staging output hash mismatch for predictions.parquet: {staging}",
+            f"retained DSpark staging output hash mismatch for predictions.parquet: {staging}",
         ),
     ):
-        with pytest.raises(ValueError, match="retained E5 staging") as error:
+        with pytest.raises(ValueError, match="retained DSpark staging") as error:
             runner._validate_staged_hashes(
                 staging,
                 {"outputs_sha256": hashes},
                 input_paths,
                 output_paths,
-                "E5",
+                "DSpark",
             )
         assert str(error.value) == expected
 
@@ -421,9 +400,9 @@ def test_staged_hash_validation_requires_a_hash_mapping(tmp_path: Path) -> None:
     staging = tmp_path / "staging"
 
     with pytest.raises(ValueError, match="has no output hashes") as error:
-        runner._validate_staged_hashes(staging, {}, {}, {}, "E5")
+        runner._validate_staged_hashes(staging, {}, {}, {}, "DSpark")
 
-    assert str(error.value) == f"retained E5 staging manifest has no output hashes: {staging}"
+    assert str(error.value) == f"retained DSpark staging manifest has no output hashes: {staging}"
 
 
 def _identity_embedding_vectors(

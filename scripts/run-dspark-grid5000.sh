@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 /persistent/path/to/e5-small-100-seed42 /persistent/path/to/new-dspark-output [--smoke] [--model-cache-seed /persistent/path/to/hf-hub-cache] [--expected-commit COMMIT_SHA]" >&2
+  echo "Usage: $0 /persistent/path/to/pilot-100-seed42 /persistent/path/to/new-dspark-output [--smoke] [--model-cache-seed /persistent/path/to/hf-hub-cache] [--expected-commit COMMIT_SHA]" >&2
 }
 
 if [[ $# -lt 2 ]]; then
