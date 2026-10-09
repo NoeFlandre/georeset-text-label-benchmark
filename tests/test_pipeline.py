@@ -19,6 +19,7 @@ from georeset_text_label_benchmark import pipeline as pipeline_module
 from georeset_text_label_benchmark.config import EXPECTED_SOURCE_COUNTS, DatasetSnapshots
 from georeset_text_label_benchmark.errors import DataValidationError, ProvenanceError
 from georeset_text_label_benchmark.models import SourcePartition
+from georeset_text_label_benchmark.output_schema import LABELLED_SCHEMA
 from georeset_text_label_benchmark.pipeline import (
     DESCRIPTION_COLUMNS,
     LABEL_COLUMNS,
@@ -191,6 +192,10 @@ def _polygon(osm_id: int, code: str | None) -> dict[str, Any]:
         "eunis_name": f"Habitat {code}" if code else None,
         "eunis_overlap_percentage": 80.0 if code else None,
         "eunis_source_version": "maps-v1" if code else None,
+        "bbox_min_x": 10.0 + osm_id,
+        "bbox_min_y": 20.0 + osm_id,
+        "bbox_max_x": 10.5 + osm_id,
+        "bbox_max_y": 20.5 + osm_id,
     }
 
 
@@ -334,8 +339,9 @@ def test_run_baseline_mismatch_cleans_staging_output(
         "pinned source baseline mismatch: polygon_rows: expected 999, observed 5"
     )
     assert "_verify_expected_counts" in diagnostic["traceback"]
-    assert diagnostic["staged_files"][0]["path"] == "overlap.parquet"
-    assert diagnostic["staged_files"][0]["size_bytes"] > 0
+    staged = {entry["path"]: entry["size_bytes"] for entry in diagnostic["staged_files"]}
+    assert set(staged) == {"labelled-eunis.parquet", "overlap.parquet"}
+    assert all(size > 0 for size in staged.values())
     assert diagnostics[0].read_text(encoding="utf-8") == (
         json.dumps(diagnostic, indent=2, sort_keys=True) + "\n"
     )
@@ -566,9 +572,16 @@ def test_run_records_expected_and_observed_baseline_counts(tmp_path: Path) -> No
             for name, data_type, nullable in expected_schema
         ],
         "output_row_count": 1,
+        "labelled_output_schema": [
+            {"name": field.name, "type": str(field.type), "nullable": field.nullable}
+            for field in LABELLED_SCHEMA
+        ],
         "artifact_sha256": {
             "overlap.parquet": hashlib.sha256(
                 (output / "overlap.parquet").read_bytes()
+            ).hexdigest(),
+            "labelled-eunis.parquet": hashlib.sha256(
+                (output / "labelled-eunis.parquet").read_bytes()
             ).hexdigest(),
             "summary.json": hashlib.sha256((output / "summary.json").read_bytes()).hexdigest(),
         },
@@ -608,6 +621,7 @@ def test_run_creates_nested_directory_and_uses_canonical_artifact_names(
     assert names == ["summary.json", "manifest.json"]
     assert {path.name for path in output.iterdir()} == {
         "overlap.parquet",
+        "labelled-eunis.parquet",
         "summary.json",
         "manifest.json",
     }
@@ -762,3 +776,43 @@ def test_write_json_uses_sorted_utf8_and_one_trailing_newline(
 
     assert observed_encoding == ["utf-8"]
     assert output.read_bytes() == b'{\n  "z": 1,\n  "\\u00e9": 2\n}\n'
+
+
+def test_run_writes_labelled_pool_with_yes_and_no_rows_beside_yes_only_overlap(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "run"
+    _run_pipeline(TinySource(), output, expected_counts=TINY_BASELINE_COUNTS)
+
+    labelled = pq.read_table(output / "labelled-eunis.parquet").to_pylist()
+    overlap = pq.read_table(output / "overlap.parquet")
+
+    assert sorted((row["decision"], row["osm_id"]) for row in labelled) == [
+        ("no", 1),
+        ("yes", 1),
+    ]
+    assert (labelled[0]["bbox_min_x"], labelled[0]["bbox_min_y"]) == (11.0, 21.0)
+    assert "decision" not in overlap.column_names
+    assert overlap.num_rows == 1
+
+
+def test_labelled_pool_is_listed_in_the_manifest_with_its_checksum(tmp_path: Path) -> None:
+    output = tmp_path / "run"
+    _run_pipeline(TinySource(), output, expected_counts=TINY_BASELINE_COUNTS)
+
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    checksums = manifest["artifact_sha256"]
+    assert checksums["labelled-eunis.parquet"] == _sha256_file(output / "labelled-eunis.parquet")
+
+
+def test_polygon_projection_includes_the_bbox_columns() -> None:
+    assert {"bbox_min_x", "bbox_min_y", "bbox_max_x", "bbox_max_y"} <= set(POLYGON_COLUMNS)
+
+
+def test_both_pipeline_outputs_are_zstd_compressed(tmp_path: Path) -> None:
+    output = tmp_path / "run"
+    _run_pipeline(TinySource(), output, expected_counts=TINY_BASELINE_COUNTS)
+
+    for name in ("overlap.parquet", "labelled-eunis.parquet"):
+        column = pq.ParquetFile(output / name).metadata.row_group(0).column(0)
+        assert column.compression == "ZSTD"

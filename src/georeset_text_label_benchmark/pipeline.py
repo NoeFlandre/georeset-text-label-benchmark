@@ -23,7 +23,7 @@ from georeset_text_label_benchmark.config import (
 from georeset_text_label_benchmark.errors import DataValidationError
 from georeset_text_label_benchmark.join import process_partition
 from georeset_text_label_benchmark.models import AuditCounts, GlobalKeys, SourcePartition
-from georeset_text_label_benchmark.output_schema import OVERLAP_SCHEMA
+from georeset_text_label_benchmark.output_schema import LABELLED_SCHEMA, OVERLAP_SCHEMA
 from georeset_text_label_benchmark.source import (
     DESCRIPTION_COLUMNS,
     LABEL_COLUMNS,
@@ -123,8 +123,11 @@ def _build_run(
     audit = AuditCounts()
     keys = GlobalKeys()
     output_path = stage / "overlap.parquet"
-    writer = pq.ParquetWriter(output_path, OVERLAP_SCHEMA, compression="zstd")
-    try:
+    labelled_path = stage / "labelled-eunis.parquet"
+    with (
+        pq.ParquetWriter(output_path, OVERLAP_SCHEMA, compression="zstd") as writer,
+        pq.ParquetWriter(labelled_path, LABELLED_SCHEMA, compression="zstd") as labelled_writer,
+    ):
         for partition in partitions:
             result = _process_source_partition(
                 source,
@@ -133,16 +136,14 @@ def _build_run(
                 source.snapshots.input_revision,
                 manifest["eunis_reference_version"],
             )
-            if result.overlap_rows:
-                writer.write_table(pa.Table.from_pylist(result.overlap_rows, schema=OVERLAP_SCHEMA))
+            _write_partition(writer, labelled_writer, result.overlap_rows)
             audit.merge(result.audit)
-    finally:
-        writer.close()
     summary = _summary(audit, keys, partitions, manifest, expected_counts)
     summary_path = stage / "summary.json"
     _write_json(summary_path, summary)
     artifact_sha256 = {
         "overlap.parquet": _sha256_file(output_path),
+        "labelled-eunis.parquet": _sha256_file(labelled_path),
         "summary.json": _sha256_file(summary_path),
     }
     _write_json(
@@ -157,6 +158,22 @@ def _build_run(
         ),
     )
     return summary
+
+
+def _write_partition(
+    writer: pq.ParquetWriter,
+    labelled_writer: pq.ParquetWriter,
+    rows: Sequence[Mapping[str, Any]],
+) -> None:
+    yes_rows = [_overlap_only(row) for row in rows if row["decision"] == "yes"]
+    if yes_rows:
+        writer.write_table(pa.Table.from_pylist(yes_rows, schema=OVERLAP_SCHEMA))
+    if rows:
+        labelled_writer.write_table(pa.Table.from_pylist(list(rows), schema=LABELLED_SCHEMA))
+
+
+def _overlap_only(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {field.name: row[field.name] for field in OVERLAP_SCHEMA}
 
 
 def _sha256_file(path: Path) -> str:
@@ -187,6 +204,7 @@ def _process_source_partition(
         partition_name=partition.name,
         expected_eunis_source_version=expected_eunis_source_version,
         global_keys=keys,
+        labelled=True,
     )
 
 
@@ -319,6 +337,10 @@ def _manifest(
         "output_schema": [
             {"name": field.name, "type": str(field.type), "nullable": field.nullable}
             for field in OVERLAP_SCHEMA
+        ],
+        "labelled_output_schema": [
+            {"name": field.name, "type": str(field.type), "nullable": field.nullable}
+            for field in LABELLED_SCHEMA
         ],
         "output_row_count": summary["stages"]["retained_overlap_rows"],
         "artifact_sha256": dict(artifact_sha256),

@@ -418,6 +418,7 @@ def test_label_phase_polygon_lookup_keeps_context() -> None:
             AuditCounts(),
             INPUT_REVISION,
             "tuvalu-latest.parquet",
+            labelled=False,
         )
 
     assert str(caught.value) == (
@@ -787,4 +788,81 @@ def test_global_description_key_uniqueness_carries_across_partitions() -> None:
             [second],
             [polygon],
             global_keys=registry,
+        )
+
+
+def _bbox_polygon(osm_id: int, *, code: str | None = "T11") -> dict[str, Any]:
+    return {
+        **_polygon(osm_id, code=code),
+        "bbox_min_x": 1.0,
+        "bbox_min_y": 2.0,
+        "bbox_max_x": 1.5,
+        "bbox_max_y": 2.5,
+    }
+
+
+def _labelled(
+    labels: list[dict[str, Any]],
+    descriptions: list[dict[str, Any]],
+    polygons: list[dict[str, Any]],
+) -> Any:
+    return process_partition(
+        labels,
+        descriptions,
+        polygons,
+        input_revision=INPUT_REVISION,
+        partition_name="tuvalu-latest.parquet",
+        expected_eunis_source_version=EUNIS_REFERENCE_VERSION,
+        labelled=True,
+    )
+
+
+def test_default_mode_keeps_yes_rows_only_without_labelled_fields() -> None:
+    result = _process(
+        [_label("desc-1", 0, "Meadow.", "yes"), _label("desc-2", 0, "Town.", "no")],
+        [_description("desc-1", 42, ["Meadow."]), _description("desc-2", 43, ["Town."])],
+        [_polygon(42), _polygon(43)],
+    )
+
+    assert [row["osm_id"] for row in result.overlap_rows] == [42]
+    assert "decision" not in result.overlap_rows[0]
+    assert "bbox_min_x" not in result.overlap_rows[0]
+
+
+def test_labelled_mode_keeps_assigned_yes_and_no_rows_with_decision_and_bbox() -> None:
+    result = _labelled(
+        [_label("desc-1", 0, "Meadow.", "yes"), _label("desc-2", 0, "Town.", "no")],
+        [_description("desc-1", 42, ["Meadow."]), _description("desc-2", 43, ["Town."])],
+        [_bbox_polygon(42), _bbox_polygon(43)],
+    )
+
+    assert [(row["decision"], row["osm_id"]) for row in result.overlap_rows] == [
+        ("yes", 42),
+        ("no", 43),
+    ]
+    no_row = result.overlap_rows[1]
+    assert no_row["sentence"] == "Town."
+    assert no_row["eunis_code"] == "T11"
+    assert (no_row["bbox_min_x"], no_row["bbox_min_y"]) == (1.0, 2.0)
+    assert (no_row["bbox_max_x"], no_row["bbox_max_y"]) == (1.5, 2.5)
+
+
+def test_labelled_mode_drops_unassigned_rows_and_counts_only_yes_as_overlap() -> None:
+    result = _labelled(
+        [_label("desc-1", 0, "Meadow.", "yes"), _label("desc-2", 0, "Town.", "no")],
+        [_description("desc-1", 42, ["Meadow."]), _description("desc-2", 43, ["Town."])],
+        [_bbox_polygon(42, code=None), _bbox_polygon(43, code=None)],
+    )
+
+    assert result.overlap_rows == []
+    assert result.audit.yes_without_eunis_rows == 1
+    assert result.audit.retained_rows == 0
+
+
+def test_labelled_mode_requires_polygon_bbox_fields() -> None:
+    with pytest.raises(DataValidationError, match="bbox_min_x"):
+        _labelled(
+            [_label("desc-1", 0, "Meadow.", "yes")],
+            [_description("desc-1", 42, ["Meadow."])],
+            [_polygon(42)],
         )

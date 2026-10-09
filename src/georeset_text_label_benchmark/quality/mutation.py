@@ -329,6 +329,12 @@ EQUIVALENT_RATIONALES = {
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_8": (
         "_true_positives runs only after single-label validation checks equal gold and prediction lengths, so strict=False has the same aligned iteration."
     ),
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_24": (
+        "PyArrow accepts zstd and ZSTD as the same compression codec; the overlap output's compression is asserted to report ZSTD."
+    ),
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_32": (
+        "PyArrow accepts zstd and ZSTD as the same compression codec; the labelled output's compression is asserted to report ZSTD."
+    ),
 }
 
 
@@ -417,6 +423,8 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_4": "e79eeed54d1dbac09488bcf4bc198118b11b5746c4570e8a65c9d8fa8eb94da5",
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_7": "825f4587b2e13db3bbc83d24ec9944ef136a29e90d3b008d3a2984b34186c99d",
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_8": "9e98b84cc1aa08ca5dd153aeb44dca92b0e71f75ccae8d58415c473a141b3f75",
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_24": "84802b8003a2654212197f8868156ba32dd3437085cf89cd153ed5d27dae655d",
+    "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_32": "699c21092f951b20e21d039a29f1bc579fdbe8ca32d2646eec9a379fb58b71c0",
 }
 
 REVIEWED_EXEMPTIONS = {
