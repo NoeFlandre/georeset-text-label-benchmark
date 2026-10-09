@@ -304,7 +304,7 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
     assert dspark.RUNTIME_CONTEXT_TOKENS == 128_000
     assert dspark.MODEL_CONTEXT_TOKENS == 131_072
     assert dspark.EXPECTED_SAMPLE_IDS_SHA256 == (
-        "74ab5826b51806947215b0e1635f173ce99af13577e41a431c263cd6a8e57e72"
+        "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d"
     )
     assert dspark.engine_kwargs() == {
         "model_path": "LiquidAI/LFM2.5-2.6B",
