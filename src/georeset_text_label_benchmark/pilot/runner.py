@@ -204,8 +204,10 @@ def freeze_sample(
     labelled_hash, candidate_hash, manifest = _validate_freeze_inputs(
         labelled_parquet, candidate_csv, pipeline_manifest, expected_candidate_sha256
     )
-    source_rows, _ = _read_source_rows(labelled_parquet)
-    candidates = build_candidate_labels(source_rows, _read_taxonomy(candidate_csv))
+    all_rows, _ = _read_source_rows(labelled_parquet)
+    taxonomy = _read_taxonomy(candidate_csv)
+    source_rows = [row for row in all_rows if row["eunis_code"] in taxonomy]
+    candidates = build_candidate_labels(source_rows, taxonomy)
     _validate_candidate_count(candidates)
     selected = [
         {**row, "sample_id": sample_id_of(row)}
@@ -231,6 +233,9 @@ def freeze_sample(
         selected,
         per_group,
         seed,
+    )
+    sample["source_coverage"]["rows_outside_candidate_vocabulary"] = len(all_rows) - len(
+        source_rows
     )
     _write_json_exclusive(output_dir / "frozen_sample.json", sample)
     _write_json_exclusive(

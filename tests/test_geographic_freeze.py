@@ -7,6 +7,7 @@ import hashlib
 import json
 import random
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +38,7 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _write_pool(directory: Path) -> tuple[Path, Path]:
+def _write_pool(directory: Path, extra: Sequence[dict[str, Any]] = ()) -> tuple[Path, Path]:
     """Every candidate code gets one yes and one no sentence at a random place on Earth."""
     rng = random.Random(7)
     rows: list[dict[str, Any]] = []
@@ -69,6 +70,7 @@ def _write_pool(directory: Path) -> tuple[Path, Path]:
                     "bbox_max_y": lat + 0.1,
                 }
             )
+    rows.extend(extra)
     rows = [{key: row.get(key) for key in LABELLED_SCHEMA.names} for row in rows]
     labelled = directory / "labelled-eunis.parquet"
     pq.write_table(pa.Table.from_pylist(rows, schema=LABELLED_SCHEMA), labelled)
@@ -283,3 +285,36 @@ def test_reader_rejects_a_sample_without_pipeline_checksum(
 
     with pytest.raises(ValueError, match=r"source checksums are missing"):
         read_frozen_pilot_inputs(output)
+
+
+def test_freeze_leaves_out_sentences_outside_the_candidate_vocabulary(tmp_path: Path) -> None:
+    sentence = "Snow-bed sentence."
+    outside = {
+        "source_pbf": "austria-latest.osm.pbf",
+        "osm_type": "way",
+        "osm_id": 900001,
+        "description_identity": "description-outside",
+        "tag_key": "description",
+        "sentence_index": 0,
+        "sentence": sentence,
+        "text_sha256": hashlib.sha256(sentence.encode("utf-8")).hexdigest(),
+        "language_code": "eng",
+        "eunis_code": "R41",
+        "eunis_name": "Snow-bed vegetation",
+        "eunis_overlap_percentage": 80.0,
+        "eunis_source_version": "maps-v1",
+        "decision": "no",
+        "bbox_min_x": 10.0,
+        "bbox_min_y": 47.0,
+        "bbox_max_x": 10.2,
+        "bbox_max_y": 47.2,
+    }
+    labelled, manifest = _write_pool(tmp_path, extra=[outside])
+    output = tmp_path / "run"
+
+    freeze_sample(labelled, _candidate_file(), manifest, output)
+
+    sample = json.loads((output / "frozen_sample.json").read_text(encoding="utf-8"))
+    assert all(row["eunis_code"] != "R41" for row in sample["selected_rows"])
+    assert sample["source_coverage"]["rows_outside_candidate_vocabulary"] == 1
+    assert sample["selection"]["decision_counts"] == {"yes": 50, "no": 50}
