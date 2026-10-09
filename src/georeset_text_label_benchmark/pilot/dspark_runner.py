@@ -30,8 +30,6 @@ from georeset_text_label_benchmark.pilot.metrics import (
 )
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
-    MODEL_REPOSITORY,
-    MODEL_REVISION,
     SAMPLE_SEED,
     SAMPLE_SIZE,
 )
@@ -63,6 +61,10 @@ PREDICTIONS_NAME = "dspark_predictions.parquet"
 METRICS_NAME = "dspark_metrics.json"
 MANIFEST_NAME = "dspark_manifest.json"
 _clock = perf_counter
+# Identity of the retired E5 manifest that frozen inputs still carry. Removed with the
+# frozen-input contract in the DSpark input issue.
+MODEL_REPOSITORY = "intfloat/multilingual-e5-small"
+MODEL_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
 
 
 def run_dspark_pilot(
