@@ -201,3 +201,15 @@ def test_default_grid_uses_h3_resolution_three_cells() -> None:
     lat, lon = h3_centre_of(cell)
     assert abs(lat - 48.85) < 3.0
     assert abs(lon - 2.35) < 3.0
+
+
+def test_groups_that_cannot_take_disjoint_cells_fail_closed() -> None:
+    rows = [_row(1, "yes", 5.0, 5.0), _row(2, "no", 5.0, 5.0)]
+
+    with pytest.raises(ValueError, match="cannot choose 1 disjoint cells for yes"):
+        _select(rows, per_group=1)
+
+
+def test_per_group_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="per_group must be positive"):
+        _select(_grid_rows(), per_group=0)
