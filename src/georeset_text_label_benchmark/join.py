@@ -376,7 +376,7 @@ def _record_label(
     text_hash: str,
     index: int,
     audit: AuditCounts,
-    labelled: bool = False,
+    labelled: bool,
 ) -> dict[str, Any] | None:
     code = polygon.get("eunis_code")
     _count_label(audit, decision, _assignment_name(code))
@@ -465,7 +465,7 @@ def _join_labels(
     audit: AuditCounts,
     input_revision: str,
     partition_name: str,
-    labelled: bool = False,
+    labelled: bool,
 ) -> list[dict[str, Any]]:
     observed_by_description: Counter[DescriptionKey] = Counter()
     overlaps: list[dict[str, Any]] = []

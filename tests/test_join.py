@@ -418,6 +418,7 @@ def test_label_phase_polygon_lookup_keeps_context() -> None:
             AuditCounts(),
             INPUT_REVISION,
             "tuvalu-latest.parquet",
+            labelled=False,
         )
 
     assert str(caught.value) == (

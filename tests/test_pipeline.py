@@ -807,3 +807,12 @@ def test_labelled_pool_is_listed_in_the_manifest_with_its_checksum(tmp_path: Pat
 
 def test_polygon_projection_includes_the_bbox_columns() -> None:
     assert {"bbox_min_x", "bbox_min_y", "bbox_max_x", "bbox_max_y"} <= set(POLYGON_COLUMNS)
+
+
+def test_both_pipeline_outputs_are_zstd_compressed(tmp_path: Path) -> None:
+    output = tmp_path / "run"
+    _run_pipeline(TinySource(), output, expected_counts=TINY_BASELINE_COUNTS)
+
+    for name in ("overlap.parquet", "labelled-eunis.parquet"):
+        column = pq.ParquetFile(output / name).metadata.row_group(0).column(0)
+        assert column.compression == "ZSTD"
