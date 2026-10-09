@@ -140,7 +140,7 @@ def test_freeze_rejects_a_labelled_pool_that_differs_from_the_pipeline_manifest(
     labelled, _manifest, _candidate = pool
     labelled.write_bytes(labelled.read_bytes() + b"tampered")
 
-    with pytest.raises(ValueError, match="labelled-eunis.parquet SHA-256"):
+    with pytest.raises(ValueError, match=r"labelled-eunis\.parquet SHA-256"):
         _freeze(pool, tmp_path / "run")
     assert not (tmp_path / "run").exists()
 
@@ -153,7 +153,7 @@ def test_freeze_rejects_a_candidate_table_that_is_not_the_pinned_one(
     changed.write_bytes(changed.read_bytes() + b"\n")
     labelled, manifest, _candidate = pool
 
-    with pytest.raises(ValueError, match="candidate CSV SHA-256"):
+    with pytest.raises(ValueError, match=r"candidate CSV SHA-256"):
         freeze_sample(labelled, changed, manifest, tmp_path / "run")
 
 
@@ -199,7 +199,7 @@ def test_reader_rejects_a_sample_that_is_not_fifty_fifty(
     first_yes["decision"] = "no"
     path.write_text(json.dumps(sample), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="must have 50 yes and 50 no"):
+    with pytest.raises(ValueError, match=r"must have 50 yes and 50 no"):
         read_frozen_pilot_inputs(output)
 
 
@@ -212,7 +212,11 @@ def test_reader_rejects_a_cell_that_does_not_match_its_centre(
     sample = json.loads(path.read_text(encoding="utf-8"))
     row = sample["selected_rows"][0]
     lat, lon = row["cell_centre_lat"], row["cell_centre_lon"]
-    row["h3_cell"] = h3_cell_of(lat + 20.0, lon) if h3_cell_of(lat + 20.0, lon) != row["h3_cell"] else h3_cell_of(lat - 20.0, lon)
+    row["h3_cell"] = (
+        h3_cell_of(lat + 20.0, lon)
+        if h3_cell_of(lat + 20.0, lon) != row["h3_cell"]
+        else h3_cell_of(lat - 20.0, lon)
+    )
     path.write_text(json.dumps(sample), encoding="utf-8")
 
     with pytest.raises(ValueError, match="H3 cell does not match its centre"):
@@ -236,3 +240,46 @@ def test_cli_freeze_takes_the_labelled_pool_and_pipeline_manifest(tmp_path: Path
     assert args.per_group == 50
     assert args.seed == 42
     assert h3_centre_of(h3_cell_of(0.0, 0.0)) is not None
+
+
+def test_cli_help_lists_the_geographic_freeze_and_dspark_commands() -> None:
+    assert cli._parser().format_help() == (
+        "usage: georeset-pilot [-h] {freeze,run-dspark,run-dspark-smoke} ...\n\n"
+        "positional arguments:\n"
+        "  {freeze,run-dspark,run-dspark-smoke}\n"
+        "    freeze              freeze the geographic yes/no sample\n"
+        "    run-dspark          predict one EUNIS code per row with pinned LFM2.5 +\n"
+        "                        DSpark\n"
+        "    run-dspark-smoke    run a bounded eight-row LFM2.5 + DSpark readiness\n"
+        "                        smoke\n\n"
+        "options:\n"
+        "  -h, --help            show this help message and exit\n"
+    )
+
+
+def test_reader_rejects_a_sample_that_does_not_name_the_labelled_pool(
+    pool: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    output = tmp_path / "run"
+    _freeze(pool, output)
+    path = output / "frozen_sample.json"
+    sample = json.loads(path.read_text(encoding="utf-8"))
+    sample["source"]["file"] = "overlap.parquet"
+    path.write_text(json.dumps(sample), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"not from the labelled EUNIS pool"):
+        read_frozen_pilot_inputs(output)
+
+
+def test_reader_rejects_a_sample_without_pipeline_checksum(
+    pool: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    output = tmp_path / "run"
+    _freeze(pool, output)
+    path = output / "frozen_sample.json"
+    sample = json.loads(path.read_text(encoding="utf-8"))
+    del sample["source"]["pipeline_manifest_sha256"]
+    path.write_text(json.dumps(sample), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"source checksums are missing"):
+        read_frozen_pilot_inputs(output)

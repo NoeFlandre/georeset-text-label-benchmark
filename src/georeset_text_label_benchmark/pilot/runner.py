@@ -1,4 +1,4 @@
-"""Freeze an audit-ready sample for the pilot."""
+"""Freeze an audit-ready geographic yes/no sample for the pilot."""
 
 from __future__ import annotations
 
@@ -6,37 +6,36 @@ import csv
 import hashlib
 import json
 import shutil
+from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pyarrow.parquet as pq
 
+from georeset_text_label_benchmark.output_schema import LABELLED_SCHEMA
+from georeset_text_label_benchmark.pilot.geo_sampling import (
+    H3_RESOLUTION,
+    h3_cell_of,
+    h3_centre_of,
+    sample_id_of,
+    select_geographic_sample,
+)
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
-    OVERLAP_DATASET,
-    OVERLAP_PARQUET_SHA256,
-    OVERLAP_REVISION,
     SAMPLE_SEED,
     SAMPLE_SIZE,
 )
-from georeset_text_label_benchmark.pilot.sampling import (
-    build_candidate_labels,
-    select_distinct_sample,
-)
+from georeset_text_label_benchmark.pilot.sampling import build_candidate_labels
 
-SOURCE_COLUMNS = (
-    "source_pbf",
-    "osm_type",
-    "osm_id",
-    "description_identity",
-    "tag_key",
-    "sentence_index",
-    "sentence",
-    "text_sha256",
-    "language_code",
-    "eunis_code",
-    "eunis_name",
+LABELLED_NAME = "labelled-eunis.parquet"
+PIPELINE_MANIFEST_NAME = "pipeline-manifest.json"
+SOURCE_COLUMNS = tuple(LABELLED_SCHEMA.names)
+SELECTION_METHOD = (
+    "H3 resolution 3 cells with maximin spacing and a seeded tie-break; one sentence per "
+    "cell; 50 yes and 50 no on disjoint cells; English only; one occurrence per exact "
+    "sentence hash and per polygon; occurrences ordered by SHA256(seed:occurrence)."
 )
 CANDIDATE_FIELDS = (
     "eunis_code",
@@ -48,8 +47,15 @@ CANDIDATE_FIELDS = (
     "source_sha256",
     "license",
 )
-EXPECTED_SOURCE_ROWS = 224_789
 EXPECTED_CANDIDATES = 158
+
+
+@dataclass(frozen=True)
+class _FreezeInputs:
+    manifest: Mapping[str, Any]
+    labelled_hash: str
+    pipeline_hash: str
+    candidate_hash: str
 
 
 def sha256_file(path: Path) -> str:
@@ -150,26 +156,31 @@ def _sample_metadata(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
 
 
 def _validate_freeze_inputs(
-    source_parquet: Path,
+    labelled_parquet: Path,
     candidate_csv: Path,
-    expected_source_sha256: str,
+    pipeline_manifest: Path,
     expected_candidate_sha256: str | None,
-    source_revision: str,
-) -> tuple[str, str]:
-    if source_revision != OVERLAP_REVISION:
-        raise ValueError("source revision is not the pinned overlap snapshot")
-    source_hash = sha256_file(source_parquet)
-    if source_hash != expected_source_sha256:
-        raise ValueError("overlap Parquet SHA-256 does not match the pinned input")
+) -> tuple[str, str, Mapping[str, Any]]:
+    labelled_hash = sha256_file(labelled_parquet)
+    manifest = _read_pipeline_manifest(pipeline_manifest)
+    if manifest["artifact_sha256"].get(LABELLED_NAME) != labelled_hash:
+        raise ValueError("labelled-eunis.parquet SHA-256 does not match the pipeline manifest")
     candidate_hash = sha256_file(candidate_csv)
     if expected_candidate_sha256 is not None and candidate_hash != expected_candidate_sha256:
         raise ValueError("candidate CSV SHA-256 does not match the pinned input")
-    return source_hash, candidate_hash
+    return labelled_hash, candidate_hash, manifest
 
 
-def _validate_source_row_count(parquet_row_count: int) -> None:
-    if parquet_row_count != EXPECTED_SOURCE_ROWS:
-        raise ValueError(f"expected {EXPECTED_SOURCE_ROWS} overlap rows, got {parquet_row_count}")
+def _read_pipeline_manifest(path: Path) -> Mapping[str, Any]:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("pipeline manifest.json is unreadable") from error
+    if not isinstance(manifest, Mapping) or not isinstance(
+        manifest.get("artifact_sha256"), Mapping
+    ):
+        raise ValueError("pipeline manifest.json must record artifact checksums")
+    return manifest
 
 
 def _validate_candidate_count(candidates: Sequence[Mapping[str, Any]]) -> None:
@@ -178,90 +189,139 @@ def _validate_candidate_count(candidates: Sequence[Mapping[str, Any]]) -> None:
 
 
 def freeze_sample(
-    source_parquet: Path,
+    labelled_parquet: Path,
     candidate_csv: Path,
+    pipeline_manifest: Path,
     output_dir: Path,
     *,
-    expected_source_sha256: str = OVERLAP_PARQUET_SHA256,
     expected_candidate_sha256: str | None = CANDIDATE_LABELS_SHA256,
-    source_revision: str = OVERLAP_REVISION,
-    size: int = SAMPLE_SIZE,
+    per_group: int = SAMPLE_SIZE // 2,
     seed: int = SAMPLE_SEED,
 ) -> dict[str, Any]:
-    """Write immutable selected rows and candidate text before predictions."""
+    """Write the geographic yes/no sample and its candidate table before inference."""
     if output_dir.exists():
         raise FileExistsError(f"pilot directory already exists: {output_dir}")
-    source_hash, candidate_hash = _validate_freeze_inputs(
-        source_parquet,
-        candidate_csv,
-        expected_source_sha256,
-        expected_candidate_sha256,
-        source_revision,
+    labelled_hash, candidate_hash, manifest = _validate_freeze_inputs(
+        labelled_parquet, candidate_csv, pipeline_manifest, expected_candidate_sha256
     )
-    source_rows, parquet_row_count = _read_source_rows(source_parquet)
-    _validate_source_row_count(parquet_row_count)
-    taxonomy = _read_taxonomy(candidate_csv)
-    candidates = build_candidate_labels(source_rows, taxonomy)
+    source_rows, _ = _read_source_rows(labelled_parquet)
+    candidates = build_candidate_labels(source_rows, _read_taxonomy(candidate_csv))
     _validate_candidate_count(candidates)
-    selected = select_distinct_sample(source_rows, size=size, seed=seed)
+    selected = [
+        {**row, "sample_id": sample_id_of(row)}
+        for row in select_geographic_sample(
+            source_rows,
+            cell_of=h3_cell_of,
+            centre_of=h3_centre_of,
+            per_group=per_group,
+            seed=seed,
+        )
+    ]
     output_dir.mkdir(parents=True, exist_ok=False)
-    candidate_output = output_dir / "candidate_labels.csv"
-    shutil.copyfile(candidate_csv, candidate_output)
+    shutil.copyfile(candidate_csv, output_dir / "candidate_labels.csv")
     sample = _frozen_sample(
-        source_revision, source_hash, candidate_hash, source_rows, candidates, selected, size, seed
+        _FreezeInputs(
+            manifest=manifest,
+            labelled_hash=labelled_hash,
+            pipeline_hash=sha256_file(pipeline_manifest),
+            candidate_hash=candidate_hash,
+        ),
+        source_rows,
+        candidates,
+        selected,
+        per_group,
+        seed,
     )
     _write_json_exclusive(output_dir / "frozen_sample.json", sample)
-    return _freeze_summary(output_dir, size, len(candidates), sample)
+    _write_json_exclusive(
+        output_dir / "manifest.json",
+        _freeze_manifest(
+            output_dir, sample, labelled_hash, sample["source"]["pipeline_manifest_sha256"]
+        ),
+    )
+    return _freeze_summary(output_dir, per_group * 2, len(candidates), sample)
 
 
 def _selection_metadata(
-    selected: Sequence[Mapping[str, Any]], size: int, seed: int
+    selected: Sequence[Mapping[str, Any]], per_group: int, seed: int
 ) -> dict[str, Any]:
-    ids = [row["sample_id"] for row in selected]
     return {
-        "method": (
-            "Sort occurrences by SHA256(seed + ':' + stable occurrence ID), then retain "
-            "the first rows with unseen exact text hashes and unseen polygon keys."
-        ),
+        "method": SELECTION_METHOD,
         "seed": seed,
-        "sample_size": size,
-        "sample_ids_sha256": _sha256_json(ids),
-        "unique_sentence_hash_count": len({row["text_sha256"] for row in selected}),
+        "per_group": per_group,
+        "sample_size": 2 * per_group,
+        "decision_counts": dict(sorted(Counter(row["decision"] for row in selected).items())),
+        "h3_resolution": H3_RESOLUTION,
+        "cell_count": len({row["h3_cell"] for row in selected}),
+        "sample_ids_sha256": _sha256_json([row["sample_id"] for row in selected]),
+        **_unique_counts(selected),
+    }
+
+
+def _unique_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    return {
+        "unique_sentence_hash_count": len({row["text_sha256"] for row in rows}),
         "unique_polygon_count": len(
-            {(row["source_pbf"], row["osm_type"], row["osm_id"]) for row in selected}
+            {(row["source_pbf"], row["osm_type"], row["osm_id"]) for row in rows}
         ),
     }
 
 
+def _frozen_source(
+    manifest: Mapping[str, Any], labelled_hash: str, pipeline_hash: str
+) -> dict[str, Any]:
+    return {
+        "file": LABELLED_NAME,
+        "sha256": labelled_hash,
+        "pipeline_manifest": PIPELINE_MANIFEST_NAME,
+        "pipeline_manifest_sha256": pipeline_hash,
+        "computation_commit": manifest.get("computation_commit"),
+        "validation_commit": manifest.get("validation_commit"),
+        "input_snapshots": manifest.get("input_snapshots"),
+        "license": "OpenStreetMap ODbL-1.0; European Environment Agency CC-BY-4.0",
+    }
+
+
 def _frozen_sample(
-    source_revision: str,
-    source_hash: str,
-    candidate_hash: str,
+    inputs: _FreezeInputs,
     source_rows: Sequence[Mapping[str, Any]],
     candidates: Sequence[Mapping[str, Any]],
     selected: Sequence[Mapping[str, Any]],
-    size: int,
+    per_group: int,
     seed: int,
 ) -> dict[str, Any]:
     return {
-        "format_version": 1,
-        "source": {
-            "dataset": OVERLAP_DATASET,
-            "revision": source_revision,
-            "file": "overlap.parquet",
-            "sha256": source_hash,
-            "license": "OpenStreetMap ODbL-1.0; European Environment Agency CC-BY-4.0",
-        },
+        "format_version": 2,
+        "source": _frozen_source(inputs.manifest, inputs.labelled_hash, inputs.pipeline_hash),
         "source_coverage": _sample_metadata(source_rows),
-        "selection": _selection_metadata(selected, size, seed),
+        "selection": _selection_metadata(selected, per_group, seed),
         "candidate_labels": {
             "file": "candidate_labels.csv",
-            "sha256": candidate_hash,
+            "sha256": inputs.candidate_hash,
             "count": len(candidates),
             "codes": [row["eunis_code"] for row in candidates],
             "text_method": "Exact pinned EUNIS English name, newline, exact EEA description.",
         },
         "selected_rows": list(selected),
+    }
+
+
+def _freeze_manifest(
+    output_dir: Path, sample: Mapping[str, Any], labelled_hash: str, pipeline_hash: str
+) -> dict[str, Any]:
+    selection = sample["selection"]
+    return {
+        "format_version": 2,
+        "method": selection["method"],
+        "seed": selection["seed"],
+        "per_group": selection["per_group"],
+        "sample_size": selection["sample_size"],
+        "sample_ids_sha256": selection["sample_ids_sha256"],
+        "source_sha256": {LABELLED_NAME: labelled_hash, PIPELINE_MANIFEST_NAME: pipeline_hash},
+        "outputs_sha256": {
+            name: sha256_file(output_dir / name)
+            for name in ("frozen_sample.json", "candidate_labels.csv")
+        },
     }
 
 
@@ -283,10 +343,15 @@ def _validate_commit(commit: str, name: str) -> None:
 
 
 def _validate_frozen_source(source: Mapping[str, Any]) -> None:
-    if source["dataset"] != OVERLAP_DATASET or source["revision"] != OVERLAP_REVISION:
-        raise ValueError("frozen sample uses a different overlap dataset revision")
-    if source["sha256"] != OVERLAP_PARQUET_SHA256:
-        raise ValueError("frozen sample uses a different overlap Parquet hash")
+    if source.get("file") != LABELLED_NAME:
+        raise ValueError("frozen sample is not from the labelled EUNIS pool")
+    checksums = (source.get("sha256"), source.get("pipeline_manifest_sha256"))
+    if not all(_is_sha256(value) for value in checksums):
+        raise ValueError("frozen sample source checksums are missing")
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and set(value) <= set("0123456789abcdef")
 
 
 def _validate_frozen_rows(rows: list[dict[str, Any]], selection: Mapping[str, Any]) -> None:
@@ -318,9 +383,20 @@ def _validate_frozen_ids(ids: Sequence[str], selection: Mapping[str, Any]) -> No
 
 
 def _validate_frozen_selection(rows: list[dict[str, Any]], selection: Mapping[str, Any]) -> None:
-    expected = select_distinct_sample(rows, size=selection["sample_size"], seed=selection["seed"])
-    if expected != rows:
-        raise ValueError("frozen rows do not match the deterministic sampling protocol")
+    _require_balanced_decisions(rows, selection["per_group"])
+    _require_cell_centres(rows)
+
+
+def _require_balanced_decisions(rows: Sequence[Mapping[str, Any]], per_group: int) -> None:
+    counts = Counter(row["decision"] for row in rows)
+    if counts.get("yes") != per_group or counts.get("no") != per_group:
+        raise ValueError(f"frozen sample must have {per_group} yes and {per_group} no")
+
+
+def _require_cell_centres(rows: Sequence[Mapping[str, Any]]) -> None:
+    for row in rows:
+        if h3_centre_of(row["h3_cell"]) != (row["cell_centre_lat"], row["cell_centre_lon"]):
+            raise ValueError("frozen sample H3 cell does not match its centre")
 
 
 def _read_frozen_sample(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:

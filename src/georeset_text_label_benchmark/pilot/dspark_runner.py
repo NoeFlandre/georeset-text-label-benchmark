@@ -61,10 +61,6 @@ PREDICTIONS_NAME = "dspark_predictions.parquet"
 METRICS_NAME = "dspark_metrics.json"
 MANIFEST_NAME = "dspark_manifest.json"
 _clock = perf_counter
-# Identity of the retired E5 manifest that frozen inputs still carry. Removed with the
-# frozen-input contract in the DSpark input issue.
-MODEL_REPOSITORY = "intfloat/multilingual-e5-small"
-MODEL_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
 
 
 def run_dspark_pilot(
@@ -83,7 +79,7 @@ def run_dspark_pilot(
     staging = _find_staged_dspark_run(destination)
     sample, frozen_rows, candidates = read_frozen_pilot_inputs(run_dir)
     _validate_published_sample(sample, frozen_rows)
-    frozen_e5_manifest_sha256 = _validate_frozen_e5_manifest(run_dir, sample)
+    frozen_manifest_sha256 = _validate_frozen_manifest(run_dir, sample)
     rows = _rows_for_run(frozen_rows, smoke)
     smoke_gate = None
     run_scope = _run_scope(sample, rows, smoke)
@@ -96,7 +92,7 @@ def run_dspark_pilot(
             candidates,
             computation_commit,
             validation_commit,
-            frozen_e5_manifest_sha256,
+            frozen_manifest_sha256,
             run_scope,
         )
     ensure_publication_supported(destination.parent)
@@ -151,7 +147,7 @@ def run_dspark_pilot(
             engine_seconds,
             generation_seconds,
             engine.version,
-            frozen_e5_manifest_sha256,
+            frozen_manifest_sha256,
             cuda_preflight,
             model_cache_seed_dir,
         )
@@ -373,8 +369,7 @@ def _metrics_payload(
         "by_language": single_label_group_breakdown(languages, gold, predicted),
         "invalid_output_reasons": _invalid_output_reasons(predictions),
         "comparison_note": (
-            "Compare top1_accuracy and macro_f1_all_candidates with the E5 run. This direct-label "
-            "generation produces one code, so it has no top-5 ranking metric."
+            "Direct-label generation produces one code per row, so it has no top-5 ranking metric."
         ),
         "scope_note": (
             "This reports agreement with existing polygon-level EUNIS assignments, not sentence "
@@ -428,7 +423,7 @@ def _build_manifest(
     engine_seconds: float,
     generation_seconds: float,
     engine_version: str,
-    frozen_e5_manifest_sha256: str,
+    frozen_manifest_sha256: str,
     cuda_preflight: Mapping[str, Any],
     model_cache_seed_dir: Path | None,
 ) -> dict[str, Any]:
@@ -438,7 +433,7 @@ def _build_manifest(
         "computation_commit": computation_commit,
         "validation_commit": validation_commit,
         "source": sample["source"],
-        "frozen_e5_manifest_sha256": frozen_e5_manifest_sha256,
+        "frozen_manifest_sha256": frozen_manifest_sha256,
         "source_coverage": sample["source_coverage"],
         "sample": sample["selection"],
         "run_scope": dict(run_scope),
@@ -483,8 +478,8 @@ def _build_manifest(
             "The source is the fixed 100-sentence positive-overlap pilot.",
             "Gold labels are existing polygon-level EUNIS assignments, not sentence-level truth.",
             "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
-            "The sample is occurrence-weighted before unique-text and unique-polygon filtering.",
-            "Compare top-1 and macro-F1 only with E5; direct generation has no top-5 ranking.",
+            "The sample has one sentence per H3 cell, 50 yes and 50 no, with unique sentence hashes and polygons.",
+            "Direct generation has no top-5 ranking.",
             "Generation uses the target model card's sampled decoding settings.",
             "The DSpark vendor parity benchmarks use greedy decoding; this sampled run does not claim greedy parity.",
             *(
@@ -532,7 +527,7 @@ def _validate_run_options(
     resolved_run_dir = run_dir.resolve()
     resolved_output_dir = output_dir.resolve()
     if resolved_output_dir == resolved_run_dir or resolved_run_dir in resolved_output_dir.parents:
-        raise ValueError("DSpark output directory must be separate from frozen E5 inputs")
+        raise ValueError("DSpark output directory must be separate from frozen inputs")
 
 
 def _validate_output_is_available(output_dir: Path) -> None:
@@ -555,7 +550,7 @@ def _resume_staged_dspark_run(
     candidates: Sequence[Mapping[str, str]],
     computation_commit: str,
     validation_commit: str,
-    frozen_e5_manifest_sha256: str,
+    frozen_manifest_sha256: str,
     run_scope: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     manifest = _read_staged_dspark_manifest(staging)
@@ -566,7 +561,7 @@ def _resume_staged_dspark_run(
         candidates,
         computation_commit,
         validation_commit,
-        frozen_e5_manifest_sha256,
+        frozen_manifest_sha256,
         run_scope,
     )
     _validate_staged_dspark_hashes(run_dir, staging, manifest)
@@ -596,7 +591,7 @@ def _validate_staged_dspark_protocol(
     candidates: Sequence[Mapping[str, str]],
     computation_commit: str,
     validation_commit: str,
-    frozen_e5_manifest_sha256: str,
+    frozen_manifest_sha256: str,
     run_scope: Mapping[str, Any] | None = None,
 ) -> None:
     expected = {
@@ -605,7 +600,7 @@ def _validate_staged_dspark_protocol(
         "source": sample["source"],
         "sample": sample["selection"],
         "candidate_labels": _candidate_provenance(sample, candidates),
-        "frozen_e5_manifest_sha256": frozen_e5_manifest_sha256,
+        "frozen_manifest_sha256": frozen_manifest_sha256,
     }
     if run_scope is not None:
         expected["run_scope"] = dict(run_scope)
@@ -760,70 +755,41 @@ def _validate_published_sample(
     _validate_sample_digests(sample)
 
 
-def _validate_frozen_e5_manifest(run_dir: Path, sample: Mapping[str, Any]) -> str:
-    """Bind all frozen rows and candidates to the published E5 output manifest."""
+def _validate_frozen_manifest(run_dir: Path, sample: Mapping[str, Any]) -> str:
+    """Bind the frozen sample and candidate table to the freeze manifest."""
     manifest_path = run_dir / "manifest.json"
-    manifest = _read_frozen_e5_manifest(manifest_path)
+    manifest = _read_frozen_manifest(manifest_path)
     _verify_frozen_input_hashes(run_dir, manifest)
-    _verify_frozen_e5_provenance(manifest, sample)
-    _verify_frozen_e5_model(manifest)
+    _verify_frozen_selection(manifest, sample)
     return sha256_file(manifest_path)
 
 
-def _read_frozen_e5_manifest(manifest_path: Path) -> Mapping[str, Any]:
+def _read_frozen_manifest(manifest_path: Path) -> Mapping[str, Any]:
     if not manifest_path.is_file():
-        raise ValueError("frozen E5 manifest.json is required to verify the published inputs")
+        raise ValueError("frozen manifest.json is required to verify the published inputs")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError("frozen E5 manifest.json is unreadable") from error
+        raise ValueError("frozen manifest.json is unreadable") from error
     if not isinstance(manifest, Mapping):
-        raise ValueError("frozen E5 manifest.json must contain a JSON object")
+        raise ValueError("frozen manifest.json must contain a JSON object")
     return manifest
 
 
 def _verify_frozen_input_hashes(run_dir: Path, manifest: Mapping[str, Any]) -> None:
     outputs = manifest.get("outputs_sha256")
     if not isinstance(outputs, Mapping):
-        raise ValueError("frozen E5 manifest has no outputs_sha256 object")
+        raise ValueError("frozen manifest has no outputs_sha256 object")
     for filename in ("frozen_sample.json", "candidate_labels.csv"):
-        actual = sha256_file(run_dir / filename)
-        if outputs.get(filename) != actual:
-            raise ValueError(f"E5 manifest hash mismatch for {filename}")
+        if outputs.get(filename) != sha256_file(run_dir / filename):
+            raise ValueError(f"frozen manifest hash mismatch for {filename}")
 
 
-def _verify_frozen_e5_provenance(manifest: Mapping[str, Any], sample: Mapping[str, Any]) -> None:
-    if manifest.get("source") != sample.get("source"):
-        raise ValueError("frozen E5 manifest source does not match frozen_sample.json")
-    if manifest.get("sample") != sample.get("selection"):
-        raise ValueError("frozen E5 manifest sample does not match frozen_sample.json")
-    _verify_frozen_candidate_provenance(manifest, sample)
-
-
-def _verify_frozen_candidate_provenance(
-    manifest: Mapping[str, Any], sample: Mapping[str, Any]
-) -> None:
-    source_candidates = manifest.get("candidate_labels")
-    sample_candidates = sample.get("candidate_labels")
-    if not isinstance(source_candidates, Mapping) or not isinstance(sample_candidates, Mapping):
-        raise ValueError("frozen E5 manifest candidate provenance is missing")
-    _verify_frozen_candidate_fields(source_candidates, sample_candidates)
-
-
-def _verify_frozen_candidate_fields(
-    source_candidates: Mapping[str, Any], sample_candidates: Mapping[str, Any]
-) -> None:
-    for key in ("file", "sha256", "count", "codes"):
-        if source_candidates.get(key) != sample_candidates.get(key):
-            raise ValueError("frozen E5 manifest candidate provenance does not match frozen inputs")
-
-
-def _verify_frozen_e5_model(manifest: Mapping[str, Any]) -> None:
-    model = manifest.get("model")
-    if not isinstance(model, Mapping) or (
-        model.get("repository") != MODEL_REPOSITORY or model.get("revision") != MODEL_REVISION
-    ):
-        raise ValueError("frozen inputs are not from the pinned E5 model run")
+def _verify_frozen_selection(manifest: Mapping[str, Any], sample: Mapping[str, Any]) -> None:
+    selection = sample["selection"]
+    for key in ("sample_ids_sha256", "seed", "sample_size"):
+        if manifest.get(key) != selection.get(key):
+            raise ValueError("frozen manifest does not match frozen_sample.json")
 
 
 def _validate_sample_selection(
