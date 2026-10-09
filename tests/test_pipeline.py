@@ -191,6 +191,10 @@ def _polygon(osm_id: int, code: str | None) -> dict[str, Any]:
         "eunis_name": f"Habitat {code}" if code else None,
         "eunis_overlap_percentage": 80.0 if code else None,
         "eunis_source_version": "maps-v1" if code else None,
+        "bbox_min_x": 10.0 + osm_id,
+        "bbox_min_y": 20.0 + osm_id,
+        "bbox_max_x": 10.5 + osm_id,
+        "bbox_max_y": 20.5 + osm_id,
     }
 
 
@@ -762,3 +766,34 @@ def test_write_json_uses_sorted_utf8_and_one_trailing_newline(
 
     assert observed_encoding == ["utf-8"]
     assert output.read_bytes() == b'{\n  "z": 1,\n  "\\u00e9": 2\n}\n'
+
+
+def test_run_writes_labelled_pool_with_yes_and_no_rows_beside_yes_only_overlap(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "run"
+    _run_pipeline(TinySource(), output)
+
+    labelled = pq.read_table(output / "labelled-eunis.parquet").to_pylist()
+    overlap = pq.read_table(output / "overlap.parquet")
+
+    assert sorted((row["decision"], row["osm_id"]) for row in labelled) == [
+        ("no", 1),
+        ("yes", 1),
+    ]
+    assert (labelled[0]["bbox_min_x"], labelled[0]["bbox_min_y"]) == (11.0, 21.0)
+    assert "decision" not in overlap.column_names
+    assert overlap.num_rows == 1
+
+
+def test_labelled_pool_is_listed_in_the_manifest_with_its_checksum(tmp_path: Path) -> None:
+    output = tmp_path / "run"
+    _run_pipeline(TinySource(), output)
+
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    checksums = manifest["artifact_sha256"]
+    assert checksums["labelled-eunis.parquet"] == _sha256_file(output / "labelled-eunis.parquet")
+
+
+def test_polygon_projection_includes_the_bbox_columns() -> None:
+    assert {"bbox_min_x", "bbox_min_y", "bbox_max_x", "bbox_max_y"} <= set(POLYGON_COLUMNS)
