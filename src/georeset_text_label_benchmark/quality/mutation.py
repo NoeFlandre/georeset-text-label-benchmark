@@ -307,12 +307,6 @@ EQUIVALENT_RATIONALES = {
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_32": (
         "PyArrow accepts zstd and ZSTD as the same compression codec; the labelled output's compression is asserted to report ZSTD."
     ),
-    "georeset_text_label_benchmark.pilot.geo_sampling.x__leaves_groups_feasible__mutmut_13": (
-        "Every group keeps at least its remaining quota of available cells: the other-group check "
-        "keeps each surplus non-negative after every pick, and a pick never lowers its own group's "
-        "surplus. The own-group bound therefore never rejects a candidate, and loosening it by one "
-        "changes no outcome."
-    ),
     "georeset_text_label_benchmark.pilot.geo_sampling.x__take__mutmut_2": (
         "The selected lists are only counted with len() and never read, so appending None instead "
         "of the chosen cell changes no outcome."
@@ -427,7 +421,6 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.metrics.x__true_positives__mutmut_8": "9e98b84cc1aa08ca5dd153aeb44dca92b0e71f75ccae8d58415c473a141b3f75",
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_24": "84802b8003a2654212197f8868156ba32dd3437085cf89cd153ed5d27dae655d",
     "georeset_text_label_benchmark.pipeline.x__build_run__mutmut_32": "699c21092f951b20e21d039a29f1bc579fdbe8ca32d2646eec9a379fb58b71c0",
-    "georeset_text_label_benchmark.pilot.geo_sampling.x__leaves_groups_feasible__mutmut_13": "85be0de3401ef8bf6f0e5f6f625f5071b41887caa659959148139010566946fa",
     "georeset_text_label_benchmark.pilot.geo_sampling.x__take__mutmut_2": "dfdf99530d94db7edb5aec8c72b797d59f1a3cc7ee625cb46259a2a151ab6049",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__read_frozen_manifest__mutmut_9": "1c1ad6f302f6de86e88f8da28a3761105ab1c220c7848b46b8a64724b176fdee",
     "georeset_text_label_benchmark.pilot.geo_sampling.x_sample_id_of__mutmut_4": "4fedc13e3bd7e4f44e50defebbfcf2436b3b21e4cf4651715cc9fb2b0a8ab531",
