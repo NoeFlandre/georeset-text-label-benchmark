@@ -144,4 +144,7 @@ Direct generation gives one code per row, so there is no top-5 metric.
 - Four pool rows have codes outside the 158-code table (`R41`, `R1K`). They are left
   out before sampling and counted in `source_coverage`.
 - The GPU inference run has not been done yet.
+- The three frozen inputs are committed under `artifacts/pilot-100-seed42/`:
+  `frozen_sample.json`, `candidate_labels.csv` and `manifest.json`. Use that directory as
+  `--run-dir`.
 - The E5 run and the failed DSpark run are being removed from the Hub by a separate task.

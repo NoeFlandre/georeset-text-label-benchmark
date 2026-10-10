@@ -6,7 +6,8 @@ htmlcov/
 mutants/
 mutmut-cache/
 site/
-artifacts/
+artifacts/*
+!artifacts/pilot-100-seed42/
 *.egg-info/
 __pycache__/
 .pytest_cache/

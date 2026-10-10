@@ -1,0 +1,16 @@
+{
+  "format_version": 2,
+  "method": "H3 resolution 3 cells with maximin spacing and a seeded tie-break; one sentence per cell; 50 yes and 50 no on disjoint cells; English only; one occurrence per exact sentence hash and per polygon; occurrences ordered by SHA256(seed:occurrence).",
+  "outputs_sha256": {
+    "candidate_labels.csv": "2e6cc694da7baa8edf9debeed08a0adda719518be74e659a0533b3ae9e56afa8",
+    "frozen_sample.json": "4c62ea9bd15839a80515eae344698acdad9b2cfc3b3ce2e90649d12f9c163a24"
+  },
+  "per_group": 50,
+  "sample_ids_sha256": "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d",
+  "sample_size": 100,
+  "seed": 42,
+  "source_sha256": {
+    "labelled-eunis.parquet": "c3e6e8b726f41a1f9b71217767c1be94d8779a42b6b6b6fffc38d917fcfda6f4",
+    "pipeline-manifest.json": "67dd8b4d0c420496c03d897dab4ff13a0e3b1e03a459607defc1306a95478ae7"
+  }
+}
