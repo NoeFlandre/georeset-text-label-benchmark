@@ -33,7 +33,7 @@ TARGET_CHAT_TEMPLATE_SHA256 = "ea663864491de7ade391839479860ca95541f892f72665c73
 EXPECTED_SAMPLE_IDS_SHA256 = "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d"
 MODEL_CONTEXT_TOKENS = 131_072
 RUNTIME_CONTEXT_TOKENS = 128_000
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 8192
 MAX_CONCURRENCY = 1
 MAX_SMOKE_ROWS = 8
 MIN_SMOKE_VALID_OUTPUTS = 6
@@ -81,7 +81,7 @@ GENERATION_SETTING_PROVENANCE = {
         "sets repetition_penalty=1.1."
     ),
     "sampling.max_new_tokens": (
-        "The pinned model card's Quick start example sets max_new_tokens=512; length-finished "
+        "The pinned model card's Quick start example sets max_new_tokens=512; the pilot raises the budget to 8192 because 512 truncated every smoke output; length-finished "
         "outputs remain truncated and invalid."
     ),
     "sampling.stop_token_ids": (

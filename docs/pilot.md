@@ -77,7 +77,7 @@ does not re-run the sampler, because the pool is not part of the frozen run.
 | Draft | `LiquidAI/LFM2.5-2.6B-DSpark` at `458cedab07d0f7b2b05700c77e1aa463d43d6f04` |
 | Runtime | SGLang `0.5.20`, FlashInfer `0.6.18`, BF16, one request at a time |
 | Decoding | temperature `0.1`, top-k `50`, repetition penalty `1.1` |
-| New tokens | at most `512`; stop at `<|im_end|>` (token ID `124900`) |
+| New tokens | at most `8192`; stop at `<|im_end|>` (token ID `124900`) |
 | Seed | `42` |
 
 The pinned chat template opens assistant turns with `<think>`. The parser reads only

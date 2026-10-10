@@ -285,7 +285,7 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
         "temperature": 0.1,
         "top_k": 50,
         "repetition_penalty": 1.1,
-        "max_new_tokens": 512,
+        "max_new_tokens": 8192,
         "stop_token_ids": [124900],
         "skip_special_tokens": False,
         "no_stop_trim": True,
@@ -573,7 +573,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             "temperature": 0.1,
             "top_k": 50,
             "repetition_penalty": 1.1,
-            "max_new_tokens": 512,
+            "max_new_tokens": 8192,
             "stop_token_ids": [124_900],
             "skip_special_tokens": False,
             "no_stop_trim": True,
@@ -590,7 +590,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         },
         "setting_provenance": dspark.GENERATION_SETTING_PROVENANCE,
         "runtime_context_limit_tokens": 128_000,
-        "maximum_new_tokens": 512,
+        "maximum_new_tokens": 8192,
         "candidate_count": 158,
         "candidate_csv_sha256": CANDIDATE_LABELS_SHA256,
         "sample_ids_sha256": sample["selection"]["sample_ids_sha256"],
@@ -3109,13 +3109,13 @@ def test_generation_settings_match_pinned_model_and_sglang_contract() -> None:
     assert generation_config["eos_token_id"] == [model_config["eos_token_id"]]
     assert tokenizer_config["eos_token"] == dspark.TARGET_EOS_TOKEN
     assert model_config["eos_token_id"] == dspark.TARGET_EOS_TOKEN_ID
-    assert dspark.MAX_NEW_TOKENS == 512
+    assert dspark.MAX_NEW_TOKENS == 8192
     assert dspark.CHAT_TEMPLATE_KWARGS == {}
     expected_sampling = {
         "temperature": generation_config["temperature"],
         "top_k": generation_config["top_k"],
         "repetition_penalty": generation_config["repetition_penalty"],
-        "max_new_tokens": 512,
+        "max_new_tokens": 8192,
         "stop_token_ids": [model_config["eos_token_id"]],
         "skip_special_tokens": False,
         "no_stop_trim": True,
