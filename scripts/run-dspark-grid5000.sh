@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 /persistent/path/to/pilot-100-seed42 /persistent/path/to/new-dspark-output [--smoke] [--model-cache-seed /persistent/path/to/hf-hub-cache] [--expected-commit COMMIT_SHA]" >&2
+  echo "Usage: $0 /persistent/path/to/pilot-100-seed42 /persistent/path/to/new-dspark-output [--smoke] [--smoke-evidence /persistent/path/to/passing-smoke-output] [--model-cache-seed /persistent/path/to/hf-hub-cache] [--expected-commit COMMIT_SHA]" >&2
 }
 
 if [[ $# -lt 2 ]]; then
@@ -16,6 +16,7 @@ shift 2
 RUN_COMMAND=run-dspark
 MODEL_CACHE_SEED=
 EXPECTED_COMMIT=
+SMOKE_EVIDENCE=
 SMOKE_REQUESTED=false
 SEED_REQUESTED=false
 while (($#)); do
@@ -50,12 +51,24 @@ while (($#)); do
       EXPECTED_COMMIT=$2
       shift 2
       ;;
+    --smoke-evidence)
+      if [[ -n "$SMOKE_EVIDENCE" || $# -lt 2 || -z "$2" ]]; then
+        usage
+        exit 2
+      fi
+      SMOKE_EVIDENCE=$2
+      shift 2
+      ;;
     *)
       usage
       exit 2
       ;;
   esac
 done
+if [[ "$SMOKE_REQUESTED" == true && -n "$SMOKE_EVIDENCE" ]]; then
+  echo "--smoke-evidence applies only to full runs; omit it with --smoke." >&2
+  exit 2
+fi
 if [[ -n "$MODEL_CACHE_SEED" && ( "$MODEL_CACHE_SEED" != /* || ! -d "$MODEL_CACHE_SEED" ) ]]; then
   echo "--model-cache-seed must name an existing absolute HF Hub cache directory." >&2
   exit 2
@@ -89,6 +102,71 @@ fi
 if [[ -n "$EXPECTED_COMMIT" && "$COMMIT_SHA" != "$EXPECTED_COMMIT" ]]; then
   echo "Checkout commit $COMMIT_SHA does not match expected commit $EXPECTED_COMMIT." >&2
   exit 2
+fi
+if [[ "$RUN_COMMAND" == run-dspark ]]; then
+  if [[ -z "$SMOKE_EVIDENCE" ]]; then
+    echo "Full DSpark runs require --smoke-evidence naming a passing bounded smoke for this checkout." >&2
+    exit 2
+  fi
+  if [[ "$SMOKE_EVIDENCE" != /* ]]; then
+    echo "--smoke-evidence must be an absolute path." >&2
+    exit 2
+  fi
+  # Stdlib-only pre-check before uv sync. georeset-pilot repeats the check after sync and
+  # before model loading, recomputing the smoke gate from the retained predictions.
+  python3 - "$RUN_DIR" "$OUTPUT_DIR" "$SMOKE_EVIDENCE" "$COMMIT_SHA" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+run_dir, output_dir, evidence_arg, commit = sys.argv[1:5]
+evidence = Path(evidence_arg).resolve()
+output = Path(output_dir).resolve()
+
+
+def reject(message):
+    print(f"--smoke-evidence {message}", file=sys.stderr)
+    sys.exit(2)
+
+
+def recorded_hash_matches(recorded, path):
+    try:
+        return recorded == hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return False
+
+
+def mapping(value):
+    return value if isinstance(value, dict) else {}
+
+
+if evidence == output or output in evidence.parents:
+    reject("must be outside the full-run output directory.")
+if not evidence.is_dir():
+    reject("must name an existing smoke output directory.")
+try:
+    manifest = mapping(json.loads((evidence / "dspark_manifest.json").read_text(encoding="utf-8")))
+    metrics = mapping(json.loads((evidence / "dspark_metrics.json").read_text(encoding="utf-8")))
+except (OSError, ValueError) as error:
+    reject(f"has an unreadable manifest or metrics file: {error}")
+scope = mapping(manifest.get("run_scope"))
+if scope.get("kind") != "bounded-smoke" or scope.get("processed_row_count") != 8:
+    reject("must be a bounded-smoke run of exactly 8 rows.")
+if manifest.get("computation_commit") != commit or manifest.get("validation_commit") != commit:
+    reject("must record this checkout as both its computation and validation commit.")
+if not recorded_hash_matches(manifest.get("frozen_manifest_sha256"), Path(run_dir) / "manifest.json"):
+    reject("was not produced from this frozen manifest.")
+hashes = mapping(manifest.get("outputs_sha256"))
+for name in ("frozen_sample.json", "candidate_labels.csv"):
+    if not recorded_hash_matches(hashes.get(name), Path(run_dir) / name):
+        reject(f"does not match the frozen input hash recorded for {name}.")
+for name in ("dspark_predictions.parquet", "dspark_metrics.json"):
+    if not recorded_hash_matches(hashes.get(name), evidence / name):
+        reject(f"does not match the output hash recorded for {name}.")
+if mapping(metrics.get("smoke_gate")).get("passed") is not True:
+    reject("does not record a passing smoke gate.")
+PY
 fi
 
 TMP_PARENT=${TMPDIR:-/tmp}
@@ -248,6 +326,9 @@ DS_PILOT_ARGS=(
 )
 if [[ -n "$MODEL_CACHE_SEED" ]]; then
   DS_PILOT_ARGS+=(--model-cache-seed "$MODEL_CACHE_SEED")
+fi
+if [[ "$RUN_COMMAND" == run-dspark ]]; then
+  DS_PILOT_ARGS+=(--smoke-evidence "$SMOKE_EVIDENCE")
 fi
 run_bounded uv run --locked georeset-pilot "$RUN_COMMAND" "${DS_PILOT_ARGS[@]}"
 

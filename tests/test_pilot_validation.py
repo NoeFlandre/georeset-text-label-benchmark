@@ -91,10 +91,47 @@ def test_full_run_exit_status_does_not_read_the_smoke_gate(
         "a" * 40,
         "--validation-commit",
         "b" * 40,
+        "--smoke-evidence",
+        "passing-smoke",
     ]
 
     assert cli.main(arguments) == 0
     capsys.readouterr()
+
+
+def test_full_run_cli_requires_smoke_evidence_and_passes_it_to_the_runner(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    arguments = [
+        "run-dspark",
+        "--computation-commit",
+        "a" * 40,
+        "--validation-commit",
+        "b" * 40,
+    ]
+    with pytest.raises(SystemExit) as error:
+        cli._parser().parse_args(arguments)
+    assert error.value.code == 2
+    assert "the following arguments are required: --smoke-evidence" in capsys.readouterr().err
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_run(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"run_dir": "out"}
+
+    monkeypatch.setattr(cli, "run_dspark_pilot", fake_run)
+    assert cli.main([*arguments, "--smoke-evidence", "passing-smoke"]) == 0
+    assert calls[0]["smoke"] is False
+    assert calls[0]["smoke_evidence"] == Path("passing-smoke")
+    capsys.readouterr()
+
+
+def test_smoke_cli_does_not_accept_smoke_evidence(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        cli._parser().parse_args([*_smoke_arguments(), "--smoke-evidence", "passing-smoke"])
+    assert error.value.code == 2
+    assert "unrecognized arguments: --smoke-evidence passing-smoke" in capsys.readouterr().err
 
 
 def test_taxonomy_header_must_match_the_pinned_schema() -> None:

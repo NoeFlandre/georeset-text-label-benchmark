@@ -72,14 +72,27 @@ def run_dspark_pilot(
     model_cache_dir: Path = Path(".cache/model-dspark"),
     model_cache_seed_dir: Path | None = None,
     smoke: bool = False,
+    smoke_evidence: Path | None = None,
 ) -> dict[str, Any]:
     """Run the frozen DSpark pilot or its fixed eight-row readiness smoke."""
     destination = _output_destination(run_dir, output_dir, smoke)
     _validate_run_options(run_dir, destination, computation_commit, validation_commit)
-    staging = _find_staged_dspark_run(destination)
     sample, frozen_rows, candidates = read_frozen_pilot_inputs(run_dir)
     _validate_published_sample(sample, frozen_rows)
     frozen_manifest_sha256 = _validate_frozen_manifest(run_dir, sample)
+    _validate_full_run_smoke_evidence(
+        smoke,
+        smoke_evidence,
+        destination=destination,
+        run_dir=run_dir,
+        sample=sample,
+        frozen_rows=frozen_rows,
+        candidates=candidates,
+        computation_commit=computation_commit,
+        validation_commit=validation_commit,
+        frozen_manifest_sha256=frozen_manifest_sha256,
+    )
+    staging = _find_staged_dspark_run(destination)
     rows = _rows_for_run(frozen_rows, smoke)
     smoke_gate = None
     run_scope = _run_scope(sample, rows, smoke)
@@ -439,19 +452,7 @@ def _build_manifest(
         "run_scope": dict(run_scope),
         "smoke_gate": dict(smoke_gate) if smoke_gate is not None else None,
         "candidate_labels": _candidate_provenance(sample, candidates),
-        "model": {
-            "repository": dspark.TARGET_MODEL,
-            "revision": dspark.TARGET_REVISION,
-            "license": "LFM1.0",
-            "context_tokens": dspark.MODEL_CONTEXT_TOKENS,
-        },
-        "draft": {
-            "repository": dspark.DRAFT_MODEL,
-            "revision": dspark.DRAFT_REVISION,
-            "license": "LFM1.0",
-            "parameters": 327_700_000,
-            "context_tokens": dspark.RUNTIME_CONTEXT_TOKENS,
-        },
+        **_model_sections(),
         "generation_config": generation_config,
         "generation_config_sha256": _sha256_json(generation_config),
         "runtime": {
@@ -490,6 +491,25 @@ def _build_manifest(
                 else []
             ),
         ],
+    }
+
+
+def _model_sections() -> dict[str, Any]:
+    """Pin the target and draft checkpoints that every DSpark manifest records."""
+    return {
+        "model": {
+            "repository": dspark.TARGET_MODEL,
+            "revision": dspark.TARGET_REVISION,
+            "license": "LFM1.0",
+            "context_tokens": dspark.MODEL_CONTEXT_TOKENS,
+        },
+        "draft": {
+            "repository": dspark.DRAFT_MODEL,
+            "revision": dspark.DRAFT_REVISION,
+            "license": "LFM1.0",
+            "parameters": 327_700_000,
+            "context_tokens": dspark.RUNTIME_CONTEXT_TOKENS,
+        },
     }
 
 
@@ -746,6 +766,89 @@ def _staged_dspark_summary(
         result["run_scope"] = dict(run_scope)
         result["smoke_gate"] = _validate_staged_smoke_gate(staging, manifest, run_scope, metrics)
     return result
+
+
+def _validate_full_run_smoke_evidence(
+    smoke: bool,
+    evidence: Path | None,
+    *,
+    destination: Path,
+    run_dir: Path,
+    sample: Mapping[str, Any],
+    frozen_rows: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, str]],
+    computation_commit: str,
+    validation_commit: str,
+    frozen_manifest_sha256: str,
+) -> None:
+    """Admit a full run only after a matching bounded smoke is revalidated from its predictions."""
+    if smoke:
+        return
+    if evidence is None:
+        raise ValueError("full DSpark runs require passing bounded-smoke evidence")
+    _validate_smoke_evidence_location(evidence, destination)
+    manifest = _read_staged_dspark_manifest(evidence)
+    _validate_smoke_evidence_shape(manifest, evidence)
+    smoke_scope = _run_scope(sample, _rows_for_run(frozen_rows, True), True)
+    _validate_staged_dspark_protocol(
+        evidence,
+        manifest,
+        sample,
+        candidates,
+        computation_commit,
+        validation_commit,
+        frozen_manifest_sha256,
+        smoke_scope,
+    )
+    _validate_smoke_evidence_model_config(evidence, manifest, sample)
+    _validate_staged_dspark_hashes(run_dir, evidence, manifest)
+    metrics = _read_staged_dspark_metrics(evidence)
+    _validate_staged_smoke_gate(evidence, manifest, smoke_scope, metrics)
+    _validate_smoke_metrics_match_predictions(evidence, metrics, candidates)
+
+
+def _validate_smoke_evidence_location(evidence: Path, destination: Path) -> None:
+    """Keep the evidence out of the full-run output it is meant to admit."""
+    resolved = evidence.resolve()
+    target = destination.resolve()
+    if resolved == target or target in resolved.parents:
+        raise ValueError("smoke evidence must be outside the full DSpark output directory")
+    if not evidence.is_dir():
+        raise ValueError(f"smoke evidence must be an existing directory: {evidence}")
+
+
+def _validate_smoke_evidence_shape(manifest: Mapping[str, Any], evidence: Path) -> None:
+    run_scope = manifest.get("run_scope")
+    if not isinstance(run_scope, Mapping) or run_scope.get("kind") != "bounded-smoke":
+        raise ValueError(f"smoke evidence must be a bounded-smoke run: {evidence}")
+    if run_scope.get("processed_row_count") != dspark.MAX_SMOKE_ROWS:
+        raise ValueError(
+            f"smoke evidence must process exactly {dspark.MAX_SMOKE_ROWS} rows: {evidence}"
+        )
+
+
+def _validate_smoke_evidence_model_config(
+    evidence: Path, manifest: Mapping[str, Any], sample: Mapping[str, Any]
+) -> None:
+    """Require the smoke to use the same pinned model, draft, sampling and engine settings."""
+    generation_config = _generation_config(dspark.TARGET_CHAT_TEMPLATE_SHA256, sample)
+    expected = {
+        **_model_sections(),
+        "generation_config": generation_config,
+        "generation_config_sha256": _sha256_json(generation_config),
+    }
+    if {key: manifest.get(key) for key in expected} != expected:
+        raise ValueError(f"smoke evidence model or engine config does not match: {evidence}")
+
+
+def _validate_smoke_metrics_match_predictions(
+    evidence: Path, metrics: Mapping[str, Any], candidates: Sequence[Mapping[str, str]]
+) -> None:
+    """Recompute the published smoke metrics from its predictions rather than trusting them."""
+    predictions = _read_staged_dspark_predictions(evidence)
+    expected = {**_metrics_payload(predictions, candidates), "smoke_gate": _smoke_gate(predictions)}
+    if metrics != expected:
+        raise ValueError(f"smoke evidence metrics do not match its predictions: {evidence}")
 
 
 def _validate_published_sample(

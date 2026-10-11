@@ -8,9 +8,10 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, ClassVar, cast
@@ -432,6 +433,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     run_dir.mkdir()
     output_arg, output_dir = _output_arguments(tmp_path, output_mode)
     selected = _write_frozen_run(run_dir)
+    evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
     frozen_before = (run_dir / "frozen_sample.json").read_bytes()
     (run_dir / "predictions.parquet").write_bytes(b"existing predictions")
     tokenizer = _PromptTokenizer()
@@ -474,6 +476,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
             output_dir=output_arg,
         )
 
@@ -721,6 +724,156 @@ def _output_arguments(tmp_path: Path, mode: str) -> tuple[Path | None, Path]:
     return output_arg, output_dir
 
 
+SMOKE_VALID_OUTPUT = "</think>T11<|im_end|>"
+SMOKE_INVALID_OUTPUT = "</think>NOT_A_CODE"
+
+
+def _write_smoke_evidence(
+    run_dir: Path,
+    evidence_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    outputs: Sequence[str] | None = None,
+    row_count: int = dspark.MAX_SMOKE_ROWS,
+) -> Path:
+    """Publish a bounded smoke with the records the runner writes, without a GPU."""
+    sample, frozen_rows, candidates = dspark_runner.read_frozen_pilot_inputs(run_dir)
+    rows = dspark_runner._rows_for_run(frozen_rows, True)[:row_count]
+    texts = list(outputs) if outputs is not None else [SMOKE_VALID_OUTPUT] * len(rows)
+    generated = [
+        (
+            {
+                "text": text,
+                "meta_info": {
+                    "completion_tokens": 3,
+                    "finish_reason": {"type": "stop"},
+                    "spec_num_correct_drafts": 1,
+                    "spec_num_proposed_drafts": 2,
+                },
+            },
+            0.5,
+        )
+        for text in texts
+    ]
+    predictions = dspark_runner._prediction_rows(
+        rows, candidates, [([1], 1)] * len(rows), ["0" * 64] * len(rows), generated
+    )
+    smoke_gate = dspark_runner._smoke_gate(predictions)
+    metrics = {**dspark_runner._metrics_payload(predictions, candidates), "smoke_gate": smoke_gate}
+    evidence_dir.mkdir()
+    prediction_path = evidence_dir / dspark_runner.PREDICTIONS_NAME
+    metrics_path = evidence_dir / dspark_runner.METRICS_NAME
+    pq.write_table(pa.Table.from_pylist(predictions), prediction_path, compression="zstd")
+    dspark_runner._write_json_exclusive(metrics_path, metrics)
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    manifest = dspark_runner._build_manifest(
+        run_dir,
+        sample,
+        dspark_runner._run_scope(sample, rows, True),
+        smoke_gate,
+        candidates,
+        prediction_path,
+        metrics_path,
+        "a" * 40,
+        "b" * 40,
+        {"name": "mock GPU"},
+        run_dir.parent / "cache",
+        dspark.TARGET_CHAT_TEMPLATE_SHA256,
+        0.0,
+        0.0,
+        0.0,
+        "0.5.20",
+        runner.sha256_file(run_dir / "manifest.json"),
+        {"status": "passed"},
+        None,
+    )
+    dspark_runner._write_json_exclusive(evidence_dir / dspark_runner.MANIFEST_NAME, manifest)
+    return evidence_dir
+
+
+def _full_run_with_smoke_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    outputs: Sequence[str] | None = None,
+    row_count: int = dspark.MAX_SMOKE_ROWS,
+) -> tuple[Path, Path]:
+    """Freeze a pilot and publish its smoke; any GPU or model load then fails the test."""
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    selected = _write_frozen_run(run_dir)
+    monkeypatch.setattr(
+        dspark,
+        "EXPECTED_SAMPLE_IDS_SHA256",
+        runner._sha256_json([row["sample_id"] for row in selected]),
+    )
+    evidence = _write_smoke_evidence(
+        run_dir,
+        tmp_path / "smoke-evidence",
+        monkeypatch,
+        outputs=outputs,
+        row_count=row_count,
+    )
+    monkeypatch.setattr(
+        dspark_runner,
+        "_require_supported_gpu",
+        lambda: pytest.fail("smoke evidence must be admitted before GPU admission"),
+    )
+    monkeypatch.setattr(
+        dspark,
+        "load_tokenizer",
+        lambda: pytest.fail("smoke evidence must be admitted before model loading"),
+    )
+    monkeypatch.setattr(
+        dspark,
+        "SGLangEngine",
+        lambda *_args: pytest.fail("smoke evidence must be admitted before engine loading"),
+    )
+    return run_dir, evidence
+
+
+def _admit_full_run(
+    run_dir: Path,
+    evidence: Path | None,
+    output_dir: Path,
+    *,
+    computation_commit: str = "a" * 40,
+    validation_commit: str = "b" * 40,
+) -> dict[str, Any]:
+    return dspark_runner.run_dspark_pilot(
+        run_dir,
+        computation_commit=computation_commit,
+        validation_commit=validation_commit,
+        output_dir=output_dir,
+        smoke_evidence=evidence,
+    )
+
+
+def _edit_json(path: Path, edit: Callable[[dict[str, Any]], None]) -> None:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    edit(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _set_manifest_field(evidence: Path, keys: tuple[str, ...], value: Any) -> None:
+    def set_field(manifest: dict[str, Any]) -> None:
+        target = manifest
+        for key in keys[:-1]:
+            target = target[key]
+        target[keys[-1]] = value
+
+    _edit_json(evidence / dspark_runner.MANIFEST_NAME, set_field)
+
+
+def _rehash_evidence_output(evidence: Path, name: str) -> None:
+    """Record a changed output hash, so only content recomputation can reject it."""
+
+    def record_hash(manifest: dict[str, Any]) -> None:
+        manifest["outputs_sha256"][name] = runner.sha256_file(evidence / name)
+
+    _edit_json(evidence / dspark_runner.MANIFEST_NAME, record_hash)
+
+
 def _identity_from_sentence(sentence: str) -> int:
     return int(sentence.rsplit(" ", maxsplit=1)[1].removesuffix("."))
 
@@ -884,6 +1037,7 @@ def test_runner_preserves_sample_prompt_generation_prediction_identity(
     output_dir = tmp_path / "dspark"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
     with (run_dir / "candidate_labels.csv").open(encoding="utf-8", newline="") as stream:
         candidate_rows = list(csv.DictReader(stream))
     code_by_identity = _identity_code_mapping(candidate_rows, len(selected))
@@ -908,6 +1062,7 @@ def test_runner_preserves_sample_prompt_generation_prediction_identity(
         run_dir,
         computation_commit="a" * 40,
         validation_commit="b" * 40,
+        smoke_evidence=evidence,
         output_dir=output_dir,
     )
 
@@ -934,6 +1089,7 @@ def test_runner_preserves_output_created_during_inference(
     run_dir.mkdir()
     output_dir.parent.mkdir()
     selected = _write_frozen_run(run_dir)
+    evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
     monkeypatch.setattr(dspark, "build_prompt", _test_prompt_for_sentence)
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
@@ -954,8 +1110,10 @@ def test_runner_preserves_output_created_during_inference(
 
     def create_output_race(predictions: Any, candidates: Any) -> dict[str, Any]:
         payload = original_metrics_payload(predictions, candidates)
-        output_dir.mkdir(parents=True)
-        (output_dir / "race-marker.txt").write_text("preserve", encoding="utf-8")
+        # Race only after inference; evidence admission also computes metrics, earlier.
+        if engine.shutdown_called and not output_dir.exists():
+            output_dir.mkdir(parents=True)
+            (output_dir / "race-marker.txt").write_text("preserve", encoding="utf-8")
         return payload
 
     monkeypatch.setattr(dspark_runner, "_metrics_payload", create_output_race)
@@ -965,6 +1123,7 @@ def test_runner_preserves_output_created_during_inference(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
             output_dir=output_dir,
         )
 
@@ -982,6 +1141,7 @@ def test_runner_preserves_output_created_during_inference(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
             output_dir=output_dir,
         )
     assert (output_dir / "race-marker.txt").read_text(encoding="utf-8") == "preserve"
@@ -998,6 +1158,7 @@ def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
     output_dir = tmp_path / "dspark"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
     monkeypatch.setattr(dspark, "build_prompt", _test_prompt_for_sentence)
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
@@ -1036,6 +1197,7 @@ def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
             output_dir=output_dir,
         )
 
@@ -1056,6 +1218,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
     output_dir = tmp_path / "dspark"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
     monkeypatch.setattr(dspark, "build_prompt", _test_prompt_for_sentence)
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
@@ -1092,6 +1255,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
             output_dir=output_dir,
         )
 
@@ -1126,6 +1290,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
         run_dir,
         computation_commit="a" * 40,
         validation_commit="b" * 40,
+        smoke_evidence=evidence,
         output_dir=output_dir,
     )
 
@@ -1155,6 +1320,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
             output_dir=output_dir,
         )
 
@@ -1907,6 +2073,7 @@ def test_runner_rejects_nfs_style_link_failure_before_gpu_admission(
     output_dir = tmp_path / "dspark"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
     monkeypatch.setattr(
         dspark,
         "EXPECTED_SAMPLE_IDS_SHA256",
@@ -1928,6 +2095,7 @@ def test_runner_rejects_nfs_style_link_failure_before_gpu_admission(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
             output_dir=output_dir,
         )
 
@@ -2108,6 +2276,7 @@ def test_runner_rejects_context_overflow_before_constructing_engine(
     run_dir = tmp_path / "pilot"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
     monkeypatch.setattr(dspark, "build_prompt", _test_prompt_for_sentence)
     monkeypatch.setattr(
         dspark,
@@ -2136,24 +2305,211 @@ def test_runner_rejects_context_overflow_before_constructing_engine(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
         )
     assert str(error.value) == "prompt plus generation cap exceeds SGLang context"
 
 
-def test_runner_refuses_to_overwrite_an_existing_dspark_run(tmp_path: Path) -> None:
-    run_dir = tmp_path / "pilot"
-    run_dir.mkdir()
+def test_runner_refuses_to_overwrite_an_existing_dspark_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
     output_dir = tmp_path / "dspark"
     output_dir.mkdir()
 
     with pytest.raises(FileExistsError, match="DSpark output directory already exists") as error:
-        dspark_runner.run_dspark_pilot(
-            run_dir,
-            computation_commit="a" * 40,
-            validation_commit="b" * 40,
-            output_dir=output_dir,
-        )
+        _admit_full_run(run_dir, evidence, output_dir)
     assert str(error.value) == "DSpark output directory already exists; choose a fresh path"
+
+
+def _assert_value_error(action: Callable[[], object], message: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)) as error:
+        action()
+    assert str(error.value) == message
+
+
+def test_full_run_requires_passing_smoke_evidence_before_gpu_or_model_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, _ = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    output_dir = tmp_path / "dspark"
+    (tmp_path / ".dspark.staging-retained").mkdir()
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, None, output_dir),
+        "full DSpark runs require passing bounded-smoke evidence",
+    )
+    assert not output_dir.exists()
+
+
+def test_full_run_rejects_smoke_evidence_that_is_not_a_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, _ = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    missing = tmp_path / "missing-smoke"
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, missing, tmp_path / "dspark"),
+        f"smoke evidence must be an existing directory: {missing}",
+    )
+
+
+@pytest.mark.parametrize("inside_output", [False, True])
+def test_full_run_rejects_smoke_evidence_equal_to_or_inside_its_output(
+    inside_output: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, _ = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    output_dir = tmp_path / "dspark"
+    output_dir.mkdir()
+    evidence = output_dir / "smoke" if inside_output else output_dir
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, output_dir),
+        "smoke evidence must be outside the full DSpark output directory",
+    )
+
+
+def test_full_run_rejects_smoke_evidence_whose_gate_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(
+        tmp_path,
+        monkeypatch,
+        outputs=[SMOKE_INVALID_OUTPUT] * 3 + [SMOKE_VALID_OUTPUT] * 5,
+    )
+
+    with pytest.raises(ValueError, match="smoke gate did not pass"):
+        _admit_full_run(run_dir, evidence, tmp_path / "dspark")
+
+
+@pytest.mark.parametrize(
+    ("computation_commit", "validation_commit"),
+    [("c" * 40, "b" * 40), ("a" * 40, "c" * 40)],
+)
+def test_full_run_rejects_smoke_evidence_from_another_commit(
+    computation_commit: str,
+    validation_commit: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+
+    _assert_value_error(
+        lambda: _admit_full_run(
+            run_dir,
+            evidence,
+            tmp_path / "dspark",
+            computation_commit=computation_commit,
+            validation_commit=validation_commit,
+        ),
+        f"retained DSpark staging manifest does not match this frozen run: {evidence}",
+    )
+
+
+def test_full_run_rejects_smoke_evidence_from_another_frozen_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    _edit_json(run_dir / "manifest.json", lambda manifest: manifest.update(reissued=True))
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"retained DSpark staging manifest does not match this frozen run: {evidence}",
+    )
+
+
+def test_full_run_rejects_smoke_evidence_for_other_frozen_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    _set_manifest_field(evidence, ("run_scope", "processed_sample_ids"), ["not-frozen"] * 8)
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"retained DSpark staging manifest does not match this frozen run: {evidence}",
+    )
+
+
+def test_full_run_rejects_smoke_evidence_that_is_not_eight_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch, row_count=7)
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"smoke evidence must process exactly 8 rows: {evidence}",
+    )
+
+
+def test_full_run_rejects_smoke_evidence_recorded_as_a_full_pilot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    _set_manifest_field(evidence, ("run_scope", "kind"), "full-pilot")
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"smoke evidence must be a bounded-smoke run: {evidence}",
+    )
+
+
+@pytest.mark.parametrize("record_new_hash", [False, True])
+def test_full_run_rejects_tampered_smoke_predictions(
+    record_new_hash: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    predictions_path = evidence / dspark_runner.PREDICTIONS_NAME
+    rows = pq.read_table(predictions_path).to_pylist()
+    for row in rows[:3]:
+        row["parse_status"] = "invalid"
+    pq.write_table(pa.Table.from_pylist(rows), predictions_path, compression="zstd")
+    if record_new_hash:
+        _rehash_evidence_output(evidence, dspark_runner.PREDICTIONS_NAME)
+        message = "smoke gate does not match staged predictions"
+    else:
+        message = "output hash mismatch for dspark_predictions.parquet"
+
+    with pytest.raises(ValueError, match=message):
+        _admit_full_run(run_dir, evidence, tmp_path / "dspark")
+
+
+def test_full_run_rejects_smoke_metrics_that_contradict_predictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+
+    def contradict(metrics: dict[str, Any]) -> None:
+        metrics["overall"]["top1_accuracy"] = 0.0
+
+    _edit_json(evidence / dspark_runner.METRICS_NAME, contradict)
+    _rehash_evidence_output(evidence, dspark_runner.METRICS_NAME)
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"smoke evidence metrics do not match its predictions: {evidence}",
+    )
+
+
+@pytest.mark.parametrize(
+    ("keys", "value"),
+    [
+        (("generation_config", "sampling", "temperature"), 0.2),
+        (("model", "revision"), "0" * 40),
+    ],
+)
+def test_full_run_rejects_smoke_evidence_with_another_model_or_engine_config(
+    keys: tuple[str, ...],
+    value: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    _set_manifest_field(evidence, keys, value)
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"smoke evidence model or engine config does not match: {evidence}",
+    )
 
 
 def test_runner_validates_run_paths_and_both_commit_identifiers(tmp_path: Path) -> None:
@@ -2897,6 +3253,8 @@ def test_dspark_cli_uses_frozen_run_directory_and_cache_settings(
                 "a" * 40,
                 "--validation-commit",
                 "b" * 40,
+                "--smoke-evidence",
+                "smoke-evidence",
             ]
         )
         == 0
@@ -2913,6 +3271,7 @@ def test_dspark_cli_uses_frozen_run_directory_and_cache_settings(
                 "computation_commit": "a" * 40,
                 "validation_commit": "b" * 40,
                 "smoke": False,
+                "smoke_evidence": Path("smoke-evidence"),
             },
         )
     ]
@@ -3410,6 +3769,7 @@ def test_dspark_smoke_cli_requires_separate_output_and_fails_closed(
                 "computation_commit": "a" * 40,
                 "validation_commit": "b" * 40,
                 "smoke": True,
+                "smoke_evidence": None,
             },
         )
     ]
@@ -4061,6 +4421,7 @@ def test_incomplete_cache_seed_fails_before_tokenizer_engine_or_publication(
     run_dir = tmp_path / "pilot"
     run_dir.mkdir()
     selected = _write_frozen_run(run_dir)
+    evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
     output_dir = tmp_path / "dspark-output"
     monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
     monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
@@ -4091,6 +4452,7 @@ def test_incomplete_cache_seed_fails_before_tokenizer_engine_or_publication(
             run_dir,
             computation_commit="a" * 40,
             validation_commit="b" * 40,
+            smoke_evidence=evidence,
             output_dir=output_dir,
             model_cache_seed_dir=tmp_path / "seed",
         )
