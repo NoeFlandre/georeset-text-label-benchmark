@@ -75,7 +75,8 @@ def test_run_dspark_help_lists_exactly_its_flags(monkeypatch: pytest.MonkeyPatch
         "                                 [--model-cache MODEL_CACHE]\n"
         "                                 [--model-cache-seed MODEL_CACHE_SEED]\n"
         "                                 --computation-commit COMPUTATION_COMMIT\n"
-        "                                 --validation-commit VALIDATION_COMMIT\n\n"
+        "                                 --validation-commit VALIDATION_COMMIT\n"
+        "                                 --smoke-evidence SMOKE_EVIDENCE\n\n"
         "options:\n"
         "  -h, --help            show this help message and exit\n"
         "  --run-dir RUN_DIR\n"
@@ -84,6 +85,7 @@ def test_run_dspark_help_lists_exactly_its_flags(monkeypatch: pytest.MonkeyPatch
         "  --model-cache-seed MODEL_CACHE_SEED\n"
         "  --computation-commit COMPUTATION_COMMIT\n"
         "  --validation-commit VALIDATION_COMMIT\n"
+        "  --smoke-evidence SMOKE_EVIDENCE\n"
     )
 
 
@@ -205,6 +207,8 @@ def test_run_dspark_defaults_name_the_pilot_run_and_model_cache() -> None:
             COMMIT,
             "--validation-commit",
             VALIDATION_COMMIT,
+            "--smoke-evidence",
+            "smoke-out",
         ]
     )
 
@@ -216,6 +220,7 @@ def test_run_dspark_defaults_name_the_pilot_run_and_model_cache() -> None:
         model_cache_seed=None,
         computation_commit=COMMIT,
         validation_commit=VALIDATION_COMMIT,
+        smoke_evidence=Path("smoke-out"),
     )
 
 
@@ -305,6 +310,8 @@ def test_main_run_dspark_exits_zero_even_when_the_smoke_gate_fails(
             COMMIT,
             "--validation-commit",
             VALIDATION_COMMIT,
+            "--smoke-evidence",
+            "smoke-out",
         ]
     )
 

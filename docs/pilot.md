@@ -101,16 +101,19 @@ with all 158 candidates.
 ## Run
 
 `run-dspark-smoke` runs eight rows and must pass its gate before the full run.
-`run-dspark` runs all 100 rows. Both need an NVIDIA GPU with at least 16 GiB of memory
+`run-dspark` runs all 100 rows and requires `--smoke-evidence` naming a passing smoke output
+for the same frozen inputs and commit. Both need an NVIDIA GPU with at least 16 GiB of memory
 and compute capability 8.0 or newer. Both write to a new output directory, separate
-from the frozen input. The Grid5000 wrapper is `scripts/run-dspark-grid5000.sh`.
+from the frozen input and from the smoke evidence. The Grid5000 wrapper is
+`scripts/run-dspark-grid5000.sh`.
 
 ```bash
 uv run georeset-pilot run-dspark \
   --run-dir artifacts/pilot-100-seed42 \
   --output-dir <new-output-dir> \
   --computation-commit <40-hex-commit> \
-  --validation-commit <40-hex-commit>
+  --validation-commit <40-hex-commit> \
+  --smoke-evidence <passing-smoke-output-dir>
 ```
 
 Output files: `dspark_predictions.parquet`, `dspark_metrics.json` and
