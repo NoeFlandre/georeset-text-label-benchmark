@@ -27,6 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     freeze.add_argument("--output-dir", type=Path, default=PILOT_RUN_DIR)
     freeze.add_argument("--per-group", type=int, default=SAMPLE_SIZE // 2)
     freeze.add_argument("--seed", type=int, default=SAMPLE_SEED)
+    freeze.add_argument("--extend-from", type=Path, default=None)
     dspark = commands.add_parser(
         "run-dspark", help="predict one EUNIS code per row with pinned LFM2.5 + DSpark"
     )
@@ -66,6 +67,7 @@ def _freeze_sample_command(args: argparse.Namespace) -> dict[str, Any]:
         args.output_dir,
         per_group=args.per_group,
         seed=args.seed,
+        extend_from=args.extend_from,
     )
 
 

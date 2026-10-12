@@ -20,6 +20,7 @@ from georeset_text_label_benchmark.pilot.geo_sampling import (
     h3_cell_of,
     h3_centre_of,
     sample_id_of,
+    extend_geographic_sample,
     select_geographic_sample,
 )
 from georeset_text_label_benchmark.pilot.protocol import (
@@ -32,6 +33,12 @@ from georeset_text_label_benchmark.pilot.sampling import build_candidate_labels
 LABELLED_NAME = "labelled-eunis.parquet"
 PIPELINE_MANIFEST_NAME = "pipeline-manifest.json"
 SOURCE_COLUMNS = tuple(LABELLED_SCHEMA.names)
+EXTENDED_SELECTION_METHOD = (
+    "H3 resolution 3 cells with maximin spacing; one sentence per cell within each group; "
+    "yes and no may share a cell; the first 50 yes and 50 no are the published pilot sample; "
+    "English only; one occurrence per exact sentence hash and per polygon; occurrences "
+    "ordered by SHA256(seed:occurrence)."
+)
 SELECTION_METHOD = (
     "H3 resolution 3 cells with maximin spacing and a seeded tie-break; one sentence per "
     "cell; 50 yes and 50 no on disjoint cells; English only; one occurrence per exact "
@@ -197,6 +204,7 @@ def freeze_sample(
     expected_candidate_sha256: str | None = CANDIDATE_LABELS_SHA256,
     per_group: int = SAMPLE_SIZE // 2,
     seed: int = SAMPLE_SEED,
+    extend_from: Path | None = None,
 ) -> dict[str, Any]:
     """Write the geographic yes/no sample and its candidate table before inference."""
     if output_dir.exists():
@@ -209,16 +217,30 @@ def freeze_sample(
     source_rows = [row for row in all_rows if row["eunis_code"] in taxonomy]
     candidates = build_candidate_labels(source_rows, taxonomy)
     _validate_candidate_count(candidates)
-    selected = [
-        {**row, "sample_id": sample_id_of(row)}
-        for row in select_geographic_sample(
+    if extend_from is None:
+        selected = [
+            {**row, "sample_id": sample_id_of(row)}
+            for row in select_geographic_sample(
+                source_rows,
+                cell_of=h3_cell_of,
+                centre_of=h3_centre_of,
+                per_group=per_group,
+                seed=seed,
+            )
+        ]
+        method = SELECTION_METHOD
+    else:
+        base = _read_base_sample(extend_from, per_group, seed)
+        added = extend_geographic_sample(
             source_rows,
             cell_of=h3_cell_of,
             centre_of=h3_centre_of,
+            existing=base,
             per_group=per_group,
             seed=seed,
         )
-    ]
+        selected = [*base, *({**row, "sample_id": sample_id_of(row)} for row in added)]
+        method = EXTENDED_SELECTION_METHOD
     output_dir.mkdir(parents=True, exist_ok=False)
     shutil.copyfile(candidate_csv, output_dir / "candidate_labels.csv")
     sample = _frozen_sample(
@@ -233,6 +255,7 @@ def freeze_sample(
         selected,
         per_group,
         seed,
+        method,
     )
     sample["source_coverage"]["rows_outside_candidate_vocabulary"] = len(all_rows) - len(
         source_rows
@@ -247,11 +270,27 @@ def freeze_sample(
     return _freeze_summary(output_dir, per_group * 2, len(candidates), sample)
 
 
+def _read_base_sample(path: Path, per_group: int, seed: int) -> list[dict[str, Any]]:
+    """Load the published pilot sample that an extension must keep unchanged."""
+    sample = json.loads(path.read_text(encoding="utf-8"))
+    selection = sample["selection"]
+    if selection["method"] != SELECTION_METHOD or selection["seed"] != seed:
+        raise ValueError("base sample must be the published pilot sample with the same seed")
+    if selection["per_group"] > per_group:
+        raise ValueError("requested per_group is smaller than the base sample")
+    rows = list(sample["selected_rows"])
+    _require_balanced_decisions(rows, selection["per_group"])
+    return rows
+
+
 def _selection_metadata(
-    selected: Sequence[Mapping[str, Any]], per_group: int, seed: int
+    selected: Sequence[Mapping[str, Any]],
+    per_group: int,
+    seed: int,
+    method: str = SELECTION_METHOD,
 ) -> dict[str, Any]:
     return {
-        "method": SELECTION_METHOD,
+        "method": method,
         "seed": seed,
         "per_group": per_group,
         "sample_size": 2 * per_group,
@@ -294,12 +333,13 @@ def _frozen_sample(
     selected: Sequence[Mapping[str, Any]],
     per_group: int,
     seed: int,
+    method: str = SELECTION_METHOD,
 ) -> dict[str, Any]:
     return {
         "format_version": 2,
         "source": _frozen_source(inputs.manifest, inputs.labelled_hash, inputs.pipeline_hash),
         "source_coverage": _sample_metadata(source_rows),
-        "selection": _selection_metadata(selected, per_group, seed),
+        "selection": _selection_metadata(selected, per_group, seed, method),
         "candidate_labels": {
             "file": "candidate_labels.csv",
             "sha256": inputs.candidate_hash,

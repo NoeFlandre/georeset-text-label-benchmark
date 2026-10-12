@@ -231,3 +231,58 @@ def _haversine_km(first: tuple[float, float], second: tuple[float, float]) -> fl
         + math.cos(lat_1) * math.cos(lat_2) * math.sin((lon_2 - lon_1) / 2) ** 2
     )
     return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(haversine))
+
+
+def extend_geographic_sample(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    cell_of: CellOf,
+    centre_of: CentreOf,
+    existing: Sequence[Mapping[str, Any]],
+    per_group: int,
+    seed: int = 42,
+) -> list[dict[str, Any]]:
+    """Add sentences until each group has ``per_group`` rows, keeping ``existing`` unchanged.
+
+    New cells are chosen per group by maximin spacing from that group's chosen cells.
+    Each group keeps one sentence per cell, but yes and no may share a cell.
+    """
+    if per_group < 1:
+        raise ValueError("per_group must be positive")
+    unique = _deduplicate(_eligible(rows), seed)
+    by_group = _candidates_by_cell(unique, cell_of)
+    added: list[dict[str, Any]] = []
+    for group in GROUPS:
+        chosen = [row["h3_cell"] for row in existing if row["decision"] == group]
+        needed = per_group - len(chosen)
+        if needed < 0:
+            raise ValueError(f"existing sample has more than {per_group} {group} rows")
+        taken = set(chosen)
+        candidates = [cell for cell in sorted(by_group[group]) if cell not in taken]
+        if len(candidates) < needed:
+            raise ValueError(f"need {needed} more {group} cells, found {len(candidates)}")
+        centres = {cell: centre_of(cell) for cell in set(candidates) | taken}
+        nearest = {
+            cell: min(
+                (_haversine_km(centres[cell], centres[other]) for other in chosen),
+                default=math.inf,
+            )
+            for cell in candidates
+        }
+        for _ in range(needed):
+            cell = max(candidates, key=lambda c: (nearest[c], _stable_key(seed, c)))
+            candidates.remove(cell)
+            chosen.append(cell)
+            for other in candidates:
+                nearest[other] = min(
+                    nearest[other], _haversine_km(centres[other], centres[cell])
+                )
+            added.append(
+                {
+                    **by_group[group][cell][0],
+                    "h3_cell": cell,
+                    "cell_centre_lat": centres[cell][0],
+                    "cell_centre_lon": centres[cell][1],
+                }
+            )
+    return added

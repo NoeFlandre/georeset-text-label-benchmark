@@ -31,7 +31,6 @@ from georeset_text_label_benchmark.pilot.metrics import (
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
     SAMPLE_SEED,
-    SAMPLE_SIZE,
 )
 from georeset_text_label_benchmark.pilot.publication import (
     ensure_publication_supported,
@@ -795,15 +794,17 @@ def _verify_frozen_selection(manifest: Mapping[str, Any], sample: Mapping[str, A
 def _validate_sample_selection(
     selection: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]
 ) -> None:
-    if selection["sample_size"] != SAMPLE_SIZE or len(rows) != SAMPLE_SIZE:
-        raise ValueError("DSpark evaluation requires the published 100-row pilot sample")
+    size = selection["sample_size"]
+    if size not in dspark.PUBLISHED_SAMPLE_SIZES or len(rows) != size:
+        raise ValueError("DSpark evaluation requires a published pilot sample size")
     if selection["seed"] != SAMPLE_SEED:
         raise ValueError("frozen sample seed does not match the published pilot")
 
 
 def _validate_sample_digests(sample: Mapping[str, Any]) -> None:
     selection = sample["selection"]
-    if selection["sample_ids_sha256"] != dspark.EXPECTED_SAMPLE_IDS_SHA256:
+    expected = dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE.get(selection["sample_size"])
+    if expected is None or selection["sample_ids_sha256"] != expected:
         raise ValueError("frozen sample IDs do not match the published pilot")
     if sample["candidate_labels"]["sha256"] != CANDIDATE_LABELS_SHA256:
         raise ValueError("candidate CSV hash does not match the published pilot")
