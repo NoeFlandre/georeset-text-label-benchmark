@@ -134,6 +134,17 @@ def _mock_cuda_preflight(_gpu: dict[str, Any]) -> dict[str, Any]:
     return {"status": "passed", "torch_cuda": "13.0"}
 
 
+def _mock_runtime_metadata() -> dict[str, str]:
+    return {
+        "python": "3.12.0",
+        "platform": "linux-test-platform",
+        "sglang": "0.5.20",
+        "flashinfer_python": "0.6.18",
+        "transformers": "5.18.0",
+        "pyarrow": "25.0.1",
+    }
+
+
 def _test_prompt_for_sentence(sentence: str, _candidates: Any) -> str:
     if not isinstance(sentence, str) or not sentence.strip():
         raise ValueError("prompt sentence must be non-empty text")
@@ -423,6 +434,20 @@ def test_sglang_engine_uses_explicit_unknown_version_fallback(
     engine = dspark.SGLangEngine({}, {})
 
     assert engine.version == "unknown"
+    assert dspark_runner._current_sglang_engine_version() == "unknown"
+
+
+def test_current_sglang_engine_version_requires_the_dspark_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(__import__("sys").modules, "sglang", None)
+
+    with pytest.raises(
+        RuntimeError, match=r"^SGLang is required to validate DSpark smoke evidence$"
+    ) as error:
+        dspark_runner._current_sglang_engine_version()
+
+    assert str(error.value) == "SGLang is required to validate DSpark smoke evidence"
 
 
 @pytest.mark.parametrize("output_mode", ["default", "nested"])
@@ -434,6 +459,12 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     output_arg, output_dir = _output_arguments(tmp_path, output_mode)
     selected = _write_frozen_run(run_dir)
     evidence = _write_smoke_evidence(run_dir, tmp_path / "smoke-evidence", monkeypatch)
+    _set_manifest_field(evidence, ("runtime", "model_cache"), "/smoke/cache")
+    _set_manifest_field(
+        evidence,
+        ("runtime", "model_cache_seed"),
+        {"source_hub_cache": "/smoke/seed-cache"},
+    )
     frozen_before = (run_dir / "frozen_sample.json").read_bytes()
     (run_dir / "predictions.parquet").write_bytes(b"existing predictions")
     tokenizer = _PromptTokenizer()
@@ -466,7 +497,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "EXPECTED_SAMPLE_IDS_SHA256",
         runner._sha256_json([row["sample_id"] for row in selected]),
     )
-    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", _mock_runtime_metadata)
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
     expected_prompts = [f"prompt:{row['sentence']}" for row in selected]
     monkeypatch.setattr(dspark, "build_prompt", lambda sentence, _candidates: f"prompt:{sentence}")
@@ -676,10 +707,10 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "generation_config": expected_generation_config,
         "generation_config_sha256": runner._sha256_json(expected_generation_config),
         "runtime": {
-            "python": "3.12.0",
+            **_mock_runtime_metadata(),
             "engine_version": "0.5.20",
             "gpu": {"name": "mock GPU"},
-            "cuda_preflight": {"status": "passed", "torch_cuda": "13.0"},
+            "cuda_preflight": _mock_cuda_preflight({"name": "mock GPU"}),
             "model_cache": str(tmp_path / "cache"),
             "model_cache_seed": None,
         },
@@ -765,7 +796,8 @@ def _write_smoke_evidence(
     metrics_path = evidence_dir / dspark_runner.METRICS_NAME
     pq.write_table(pa.Table.from_pylist(predictions), prediction_path, compression="zstd")
     dspark_runner._write_json_exclusive(metrics_path, metrics)
-    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", _mock_runtime_metadata)
+    monkeypatch.setattr(dspark_runner, "_current_sglang_engine_version", lambda: "0.5.20")
     manifest = dspark_runner._build_manifest(
         run_dir,
         sample,
@@ -784,7 +816,7 @@ def _write_smoke_evidence(
         0.0,
         "0.5.20",
         runner.sha256_file(run_dir / "manifest.json"),
-        {"status": "passed"},
+        _mock_cuda_preflight({"name": "mock GPU"}),
         None,
     )
     dspark_runner._write_json_exclusive(evidence_dir / dspark_runner.MANIFEST_NAME, manifest)
@@ -1055,7 +1087,7 @@ def test_runner_preserves_sample_prompt_generation_prediction_identity(
         "EXPECTED_SAMPLE_IDS_SHA256",
         runner._sha256_json([row["sample_id"] for row in selected]),
     )
-    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", _mock_runtime_metadata)
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
 
     dspark_runner.run_dspark_pilot(
@@ -1104,7 +1136,7 @@ def test_runner_preserves_output_created_during_inference(
         "EXPECTED_SAMPLE_IDS_SHA256",
         runner._sha256_json([row["sample_id"] for row in selected]),
     )
-    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", _mock_runtime_metadata)
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
     original_metrics_payload = dspark_runner._metrics_payload
 
@@ -1172,7 +1204,7 @@ def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
         "EXPECTED_SAMPLE_IDS_SHA256",
         runner._sha256_json([row["sample_id"] for row in selected]),
     )
-    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", _mock_runtime_metadata)
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
     if failing_name == dspark_runner.PREDICTIONS_NAME:
         write_table = dspark_runner.pq.write_table
@@ -1232,7 +1264,7 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
         "EXPECTED_SAMPLE_IDS_SHA256",
         runner._sha256_json([row["sample_id"] for row in selected]),
     )
-    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", _mock_runtime_metadata)
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(500, 10_500)).__next__)
     original_link = publication.os.link
     failed_once = False
@@ -1729,8 +1761,9 @@ def test_run_dspark_pilot_uses_scope_specific_default_and_resumes_scope(
     monkeypatch.setattr(dspark_runner, "_rows_for_run", lambda _rows, _smoke: rows)
     monkeypatch.setattr(dspark_runner, "_run_scope", lambda *_args: scope)
 
-    def resume(*args: Any) -> dict[str, bool]:
+    def resume(*args: Any, **kwargs: Any) -> dict[str, bool]:
         captured["args"] = args
+        captured["kwargs"] = kwargs
         return returned
 
     monkeypatch.setattr(dspark_runner, "_resume_staged_dspark_run", resume)
@@ -1745,6 +1778,7 @@ def test_run_dspark_pilot_uses_scope_specific_default_and_resumes_scope(
     assert result is returned
     assert captured["args"][1] == tmp_path / "lfm2.5-2.6b-dspark-smoke-8-seed42"
     assert captured["args"][-1] == scope
+    assert captured["kwargs"] == {"smoke_evidence_manifest": None, "smoke_evidence_path": None}
 
 
 @pytest.mark.parametrize(
@@ -2512,6 +2546,295 @@ def test_full_run_rejects_smoke_evidence_with_another_model_or_engine_config(
     )
 
 
+@pytest.mark.parametrize("missing_side", ["smoke", "expected"])
+def test_runtime_config_rejects_missing_runtime_mappings(missing_side: str, tmp_path: Path) -> None:
+    runtime = {
+        **_mock_runtime_metadata(),
+        "engine_version": "0.5.20",
+        "gpu": {"name": "mock GPU"},
+        "cuda_preflight": _mock_cuda_preflight({"name": "mock GPU"}),
+    }
+    smoke_manifest = {"runtime": runtime}
+    expected_manifest = {"runtime": runtime}
+    if missing_side == "smoke":
+        smoke_manifest["runtime"] = None
+    else:
+        expected_manifest["runtime"] = None
+
+    _assert_value_error(
+        lambda: dspark_runner._validate_smoke_evidence_runtime_config(
+            tmp_path / "smoke", smoke_manifest, expected_manifest
+        ),
+        "smoke evidence runtime config does not match "
+        f"({', '.join(dspark_runner.RUNTIME_CONFIG_FIELDS)}): {tmp_path / 'smoke'}",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("python", None),
+        ("gpu", "not-a-gpu-record"),
+        ("gpu", {}),
+        ("cuda_preflight", None),
+        ("cuda_preflight", {"status": "failed"}),
+    ],
+)
+def test_runtime_config_rejects_incomplete_values(field: str, value: Any, tmp_path: Path) -> None:
+    expected_runtime = {
+        **_mock_runtime_metadata(),
+        "engine_version": "0.5.20",
+        "gpu": {"name": "mock GPU"},
+        "cuda_preflight": _mock_cuda_preflight({"name": "mock GPU"}),
+    }
+    smoke_manifest = {"runtime": {**expected_runtime, field: value}}
+    expected_manifest = {"runtime": expected_runtime}
+
+    _assert_value_error(
+        lambda: dspark_runner._validate_smoke_evidence_runtime_config(
+            tmp_path / "smoke", smoke_manifest, expected_manifest
+        ),
+        f"smoke evidence runtime config does not match ({field}): {tmp_path / 'smoke'}",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("python", 123),
+        ("gpu", "not-a-mapping"),
+        ("gpu", {"name": 123}),
+    ],
+)
+def test_runtime_config_rejects_matching_but_malformed_values(
+    field: str, value: Any, tmp_path: Path
+) -> None:
+    runtime = {
+        **_mock_runtime_metadata(),
+        "engine_version": "0.5.20",
+        "gpu": {"name": "mock GPU"},
+        "cuda_preflight": _mock_cuda_preflight({"name": "mock GPU"}),
+    }
+    runtime[field] = value
+
+    _assert_value_error(
+        lambda: dspark_runner._validate_smoke_evidence_runtime_config(
+            tmp_path / "smoke", {"runtime": runtime}, {"runtime": runtime}
+        ),
+        f"smoke evidence runtime config does not match ({field}): {tmp_path / 'smoke'}",
+    )
+
+
+@pytest.mark.parametrize("missing_side", ["manifest", "path"])
+def test_staged_resume_skips_runtime_check_without_complete_evidence_pair(
+    missing_side: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence_path = tmp_path / "smoke-evidence"
+    evidence_manifest: Mapping[str, Any] | None = {"runtime": {}}
+    evidence_path_value: Path | None = evidence_path
+    if missing_side == "manifest":
+        evidence_manifest = None
+    else:
+        evidence_path_value = None
+    published: list[Path] = []
+    summary = {"resumed": True}
+    monkeypatch.setattr(dspark_runner, "_read_staged_dspark_manifest", lambda _path: {})
+    monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_protocol", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_hashes", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "_read_staged_dspark_metrics", lambda _path: {})
+    monkeypatch.setattr(dspark_runner, "_validate_staged_smoke_gate", lambda *_args: None)
+    monkeypatch.setattr(
+        dspark_runner,
+        "_validate_smoke_evidence_runtime_config",
+        lambda *_args: pytest.fail("runtime comparison requires both evidence references"),
+    )
+    monkeypatch.setattr(dspark_runner, "ensure_publication_supported", lambda _path: None)
+    monkeypatch.setattr(
+        dspark_runner,
+        "publish_directory",
+        lambda _source, destination: published.append(destination),
+    )
+    monkeypatch.setattr(dspark_runner, "_staged_dspark_summary", lambda *_args: summary)
+
+    result = dspark_runner._resume_staged_dspark_run(
+        tmp_path / "pilot",
+        tmp_path / "destination",
+        tmp_path / ".destination.staging-run",
+        {"source": {}, "selection": {}, "candidate_labels": {}},
+        [{"classification_release": "release"}],
+        "a" * 40,
+        "b" * 40,
+        "c" * 64,
+        {"kind": "full-pilot"},
+        smoke_evidence_manifest=evidence_manifest,
+        smoke_evidence_path=evidence_path_value,
+    )
+
+    assert result is summary
+    assert published == [tmp_path / "destination"]
+
+
+@pytest.mark.parametrize(
+    ("evidence", "smoke_manifest"),
+    [(None, None), (Path("smoke"), None), (None, {"runtime": {}})],
+)
+def test_current_smoke_runtime_validation_is_noop_without_complete_evidence(
+    evidence: Path | None,
+    smoke_manifest: Mapping[str, Any] | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dspark_runner,
+        "_validate_smoke_evidence_runtime_config",
+        lambda *_args: pytest.fail("runtime comparison requires both evidence references"),
+    )
+
+    dspark_runner._validate_current_smoke_evidence_runtime(
+        evidence,
+        smoke_manifest,
+        {"name": "mock GPU"},
+        {"status": "passed"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("python", "3.13.0"),
+        ("platform", "different-platform"),
+        ("sglang", "0.5.21"),
+        ("flashinfer_python", "0.6.19"),
+        ("transformers", "5.18.1"),
+        ("pyarrow", "25.0.2"),
+        ("engine_version", "0.5.21"),
+    ],
+)
+def test_full_run_rejects_smoke_evidence_from_another_software_runtime_before_model_load(
+    field: str, value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    _set_manifest_field(evidence, ("runtime", field), value)
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"smoke evidence runtime config does not match ({field}): {evidence}",
+    )
+
+
+def test_full_run_rejects_smoke_evidence_from_another_gpu_runtime_before_model_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "other GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"smoke evidence runtime config does not match (gpu): {evidence}",
+    )
+
+
+def test_full_run_rejects_smoke_evidence_from_another_cuda_runtime_before_model_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    _set_manifest_field(evidence, ("runtime", "cuda_preflight", "torch_cuda"), "12.0")
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
+
+    _assert_value_error(
+        lambda: _admit_full_run(run_dir, evidence, tmp_path / "dspark"),
+        f"smoke evidence runtime config does not match (cuda_preflight): {evidence}",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("gpu", {"name": "different GPU"}),
+        ("platform", None),
+        ("cuda_preflight", {"status": "failed"}),
+    ],
+)
+def test_full_run_resume_rejects_staged_output_from_another_runtime_before_publication(
+    field: str, value: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence_path = tmp_path / "smoke-evidence"
+    evidence_manifest = {
+        "runtime": {
+            **_mock_runtime_metadata(),
+            "engine_version": "0.5.20",
+            "gpu": {"name": "mock GPU"},
+            "cuda_preflight": _mock_cuda_preflight({"name": "mock GPU"}),
+        }
+    }
+    staged_runtime = {**evidence_manifest["runtime"], field: value}
+    staged_manifest = {"runtime": staged_runtime}
+    published: list[Path] = []
+    monkeypatch.setattr(
+        dspark_runner, "_read_staged_dspark_manifest", lambda _path: staged_manifest
+    )
+    monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_protocol", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_hashes", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "_read_staged_dspark_metrics", lambda _path: {})
+    monkeypatch.setattr(dspark_runner, "_validate_staged_smoke_gate", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "ensure_publication_supported", lambda _path: None)
+    monkeypatch.setattr(
+        dspark_runner,
+        "publish_directory",
+        lambda _source, destination: published.append(destination),
+    )
+
+    _assert_value_error(
+        lambda: dspark_runner._resume_staged_dspark_run(
+            tmp_path / "pilot",
+            tmp_path / "destination",
+            tmp_path / ".destination.staging-run",
+            {"source": {}, "selection": {}, "candidate_labels": {}},
+            [{"classification_release": "release"}],
+            "a" * 40,
+            "b" * 40,
+            "c" * 64,
+            {"kind": "full-pilot"},
+            smoke_evidence_manifest=evidence_manifest,
+            smoke_evidence_path=evidence_path,
+        ),
+        f"smoke evidence runtime config does not match ({field}): {evidence_path}",
+    )
+
+    assert published == []
+
+
+def test_full_run_passes_validated_smoke_evidence_to_staged_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, evidence = _full_run_with_smoke_evidence(tmp_path, monkeypatch)
+    staging = tmp_path / ".dspark.staging-run"
+    returned = {"resumed": True}
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(dspark_runner, "_find_staged_dspark_run", lambda _path: staging)
+
+    def resume(*args: Any, **kwargs: Any) -> dict[str, bool]:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return returned
+
+    monkeypatch.setattr(dspark_runner, "_resume_staged_dspark_run", resume)
+
+    result = _admit_full_run(run_dir, evidence, tmp_path / "dspark")
+
+    assert result is returned
+    assert captured["kwargs"]["smoke_evidence_path"] == evidence
+    assert (
+        captured["kwargs"]["smoke_evidence_manifest"]["runtime"]
+        == json.loads((evidence / dspark_runner.MANIFEST_NAME).read_text(encoding="utf-8"))[
+            "runtime"
+        ]
+    )
+
+
 def test_runner_validates_run_paths_and_both_commit_identifiers(tmp_path: Path) -> None:
     run_dir = tmp_path / "pilot"
     run_dir.mkdir()
@@ -2627,6 +2950,7 @@ def test_sglang_engine_adapter_forwards_exact_generation_contract(
 
     assert result == {"text": "</think>T11"}
     assert engine.version == "0.5.20"
+    assert dspark_runner._current_sglang_engine_version() == "0.5.20"
     assert calls["engine_kwargs"] == dspark.engine_kwargs()
     assert calls["generation_kwargs"] == {
         "input_ids": [1, 2, 3],
@@ -3644,7 +3968,7 @@ def test_smoke_runner_generates_only_eight_rows_and_keeps_inputs_untouched(
         "EXPECTED_SAMPLE_IDS_SHA256",
         runner._sha256_json([row["sample_id"] for row in selected]),
     )
-    monkeypatch.setattr(dspark_runner, "_runtime_metadata", lambda: {"python": "3.12.0"})
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", _mock_runtime_metadata)
     monkeypatch.setattr(dspark_runner, "_clock", iter(range(1_000)).__next__)
 
     result = dspark_runner.run_dspark_pilot(
