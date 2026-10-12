@@ -60,6 +60,17 @@ MAX_CACHE_HASH_CHUNK_BYTES = 1024**2
 PREDICTIONS_NAME = "dspark_predictions.parquet"
 METRICS_NAME = "dspark_metrics.json"
 MANIFEST_NAME = "dspark_manifest.json"
+RUNTIME_CONFIG_FIELDS = (
+    "python",
+    "platform",
+    "sglang",
+    "flashinfer_python",
+    "transformers",
+    "pyarrow",
+    "engine_version",
+    "gpu",
+    "cuda_preflight",
+)
 _clock = perf_counter
 
 
@@ -80,7 +91,7 @@ def run_dspark_pilot(
     sample, frozen_rows, candidates = read_frozen_pilot_inputs(run_dir)
     _validate_published_sample(sample, frozen_rows)
     frozen_manifest_sha256 = _validate_frozen_manifest(run_dir, sample)
-    _validate_full_run_smoke_evidence(
+    smoke_evidence_manifest = _validate_full_run_smoke_evidence(
         smoke,
         smoke_evidence,
         destination=destination,
@@ -107,10 +118,18 @@ def run_dspark_pilot(
             validation_commit,
             frozen_manifest_sha256,
             run_scope,
+            smoke_evidence_manifest=smoke_evidence_manifest,
+            smoke_evidence_path=smoke_evidence,
         )
     ensure_publication_supported(destination.parent)
     gpu = _require_supported_gpu()
     cuda_preflight = _runtime_compatibility_preflight(gpu)
+    _validate_current_smoke_evidence_runtime(
+        smoke_evidence,
+        smoke_evidence_manifest,
+        gpu,
+        cuda_preflight,
+    )
     cache_dir = _prepare_model_cache(model_cache_dir)
     if model_cache_seed_dir is not None:
         _seed_model_cache_from_hub_cache(model_cache_seed_dir, cache_dir)
@@ -572,6 +591,9 @@ def _resume_staged_dspark_run(
     validation_commit: str,
     frozen_manifest_sha256: str,
     run_scope: Mapping[str, Any] | None = None,
+    *,
+    smoke_evidence_manifest: Mapping[str, Any] | None = None,
+    smoke_evidence_path: Path | None = None,
 ) -> dict[str, Any]:
     manifest = _read_staged_dspark_manifest(staging)
     _validate_staged_dspark_protocol(
@@ -587,6 +609,12 @@ def _resume_staged_dspark_run(
     _validate_staged_dspark_hashes(run_dir, staging, manifest)
     metrics = _read_staged_dspark_metrics(staging)
     _validate_staged_smoke_gate(staging, manifest, run_scope, metrics)
+    if smoke_evidence_manifest is not None and smoke_evidence_path is not None:
+        _validate_smoke_evidence_runtime_config(
+            smoke_evidence_path,
+            smoke_evidence_manifest,
+            manifest,
+        )
     ensure_publication_supported(destination.parent)
     publish_directory(staging, destination)
     return _staged_dspark_summary(destination, run_dir, staging, sample, candidates, manifest)
@@ -780,10 +808,10 @@ def _validate_full_run_smoke_evidence(
     computation_commit: str,
     validation_commit: str,
     frozen_manifest_sha256: str,
-) -> None:
+) -> Mapping[str, Any] | None:
     """Admit a full run only after a matching bounded smoke is revalidated from its predictions."""
     if smoke:
-        return
+        return None
     if evidence is None:
         raise ValueError("full DSpark runs require passing bounded-smoke evidence")
     _validate_smoke_evidence_location(evidence, destination)
@@ -805,6 +833,81 @@ def _validate_full_run_smoke_evidence(
     metrics = _read_staged_dspark_metrics(evidence)
     _validate_staged_smoke_gate(evidence, manifest, smoke_scope, metrics)
     _validate_smoke_metrics_match_predictions(evidence, metrics, candidates)
+    return manifest
+
+
+def _validate_smoke_evidence_runtime_config(
+    evidence: Path,
+    smoke_manifest: Mapping[str, Any],
+    expected_manifest: Mapping[str, Any],
+) -> None:
+    """Require matching software, GPU and CUDA settings while ignoring per-run cache paths."""
+    mismatches = _smoke_runtime_config_mismatches(
+        smoke_manifest.get("runtime"),
+        expected_manifest.get("runtime"),
+    )
+    if mismatches:
+        raise ValueError(
+            f"smoke evidence runtime config does not match ({', '.join(mismatches)}): {evidence}"
+        )
+
+
+def _validate_current_smoke_evidence_runtime(
+    evidence: Path | None,
+    smoke_manifest: Mapping[str, Any] | None,
+    gpu: Mapping[str, Any],
+    cuda_preflight: Mapping[str, Any],
+) -> None:
+    if evidence is None or smoke_manifest is None:
+        return
+    current_runtime = {
+        **_runtime_metadata(),
+        "engine_version": _current_sglang_engine_version(),
+        "gpu": dict(gpu),
+        "cuda_preflight": dict(cuda_preflight),
+    }
+    _validate_smoke_evidence_runtime_config(
+        evidence,
+        smoke_manifest,
+        {"runtime": current_runtime},
+    )
+
+
+def _runtime_config_value_is_valid(key: str, value: Any) -> bool:
+    if key in ("gpu", "cuda_preflight"):
+        return _runtime_mapping_value_is_valid(key, value)
+    return isinstance(value, str) and bool(value)
+
+
+def _runtime_mapping_value_is_valid(key: str, value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if key == "gpu":
+        name = value.get("name")
+        return isinstance(name, str) and bool(name)
+    return value.get("status") == "passed"
+
+
+def _smoke_runtime_config_mismatches(smoke_runtime: Any, expected_runtime: Any) -> list[str]:
+    if not isinstance(smoke_runtime, Mapping) or not isinstance(expected_runtime, Mapping):
+        return list(RUNTIME_CONFIG_FIELDS)
+    return [
+        key
+        for key in RUNTIME_CONFIG_FIELDS
+        if not _runtime_config_values_match(
+            key,
+            smoke_runtime.get(key),
+            expected_runtime.get(key),
+        )
+    ]
+
+
+def _runtime_config_values_match(key: str, smoke_value: Any, expected_value: Any) -> bool:
+    return (
+        _runtime_config_value_is_valid(key, smoke_value)
+        and _runtime_config_value_is_valid(key, expected_value)
+        and smoke_value == expected_value
+    )
 
 
 def _validate_smoke_evidence_location(evidence: Path, destination: Path) -> None:
@@ -1680,6 +1783,15 @@ def _runtime_metadata() -> dict[str, Any]:
         "transformers": version("transformers"),
         "pyarrow": version("pyarrow"),
     }
+
+
+def _current_sglang_engine_version() -> str:
+    """Read SGLang's module version without constructing an engine or loading weights."""
+    try:
+        import sglang  # ty: ignore[unresolved-import]  # the `dspark` extra is GPU-only
+    except ImportError as error:
+        raise RuntimeError("SGLang is required to validate DSpark smoke evidence") from error
+    return str(getattr(sglang, "__version__", "unknown"))
 
 
 def _optional_int(value: Any) -> int | None:

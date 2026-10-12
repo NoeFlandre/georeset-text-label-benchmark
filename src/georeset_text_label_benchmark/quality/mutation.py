@@ -88,6 +88,10 @@ EQUIVALENT_RATIONALES = {
         "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
         "test checks that the emitted metadata reports ZSTD."
     ),
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_178": (
+        "PyArrow treats zstd and ZSTD as aliases for the same Parquet codec; the adapter "
+        "test checks that the emitted metadata reports ZSTD."
+    ),
     "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": (
         "Tensor.unsqueeze accepts +1 and 1 as the same dimension index."
     ),
@@ -360,6 +364,7 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_63": "0bfd009d988450f6deb0484b26f11e169cc4858aaf9486b8e664cb9bc9bd644d",
     "georeset_text_label_benchmark.pilot.dspark_runner.x__seed_snapshot_entry__mutmut_64": "0a9fb48c9da4ce556c52551b3c944a3a381dbe05f8dbbc5e23928b83c49d1fbb",
     "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_165": "13dd86eac80235df85a2f584504ead5bdf8ae221c0c1b23e7638f1424253d143",
+    "georeset_text_label_benchmark.pilot.dspark_runner.x_run_dspark_pilot__mutmut_178": "f3a821487742d5692fbc9e722e1e05628f31f0cc55c156529d347f9d093e763a",
     "georeset_text_label_benchmark.pilot.embeddings.x_average_pool__mutmut_28": "6df3a896f6cea2f72dd0eab8273ac2447f1f8ad7219bc656d651e728ec548f6a",
     "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_46": "762fcd4391bf4f011b03d439abcd817c23b83fdbc386a50c5b090ce5363bf529",
     "georeset_text_label_benchmark.pilot.embeddings.x_encode_texts__mutmut_49": "52e595bb1289043f8ddb669f2998e8ad247382744d3a255ce445a728f3a32d84",
