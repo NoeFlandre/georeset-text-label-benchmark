@@ -17,10 +17,10 @@ import pyarrow.parquet as pq
 from georeset_text_label_benchmark.output_schema import LABELLED_SCHEMA
 from georeset_text_label_benchmark.pilot.geo_sampling import (
     H3_RESOLUTION,
+    extend_geographic_sample,
     h3_cell_of,
     h3_centre_of,
     sample_id_of,
-    extend_geographic_sample,
     select_geographic_sample,
 )
 from georeset_text_label_benchmark.pilot.protocol import (

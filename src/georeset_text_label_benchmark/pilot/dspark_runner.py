@@ -796,14 +796,18 @@ def _validate_sample_selection(
 ) -> None:
     size = selection["sample_size"]
     if size not in dspark.PUBLISHED_SAMPLE_SIZES or len(rows) != size:
-        raise ValueError("DSpark evaluation requires a published pilot sample size")
+        raise ValueError("DSpark evaluation requires the published 100-row pilot sample")
     if selection["seed"] != SAMPLE_SEED:
         raise ValueError("frozen sample seed does not match the published pilot")
 
 
 def _validate_sample_digests(sample: Mapping[str, Any]) -> None:
     selection = sample["selection"]
-    expected = dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE.get(selection["sample_size"])
+    expected = (
+        dspark.EXPECTED_SAMPLE_IDS_SHA256
+        if selection["sample_size"] == 100
+        else dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE.get(selection["sample_size"])
+    )
     if expected is None or selection["sample_ids_sha256"] != expected:
         raise ValueError("frozen sample IDs do not match the published pilot")
     if sample["candidate_labels"]["sha256"] != CANDIDATE_LABELS_SHA256:

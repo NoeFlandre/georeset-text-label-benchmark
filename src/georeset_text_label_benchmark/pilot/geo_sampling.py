@@ -253,36 +253,46 @@ def extend_geographic_sample(
     by_group = _candidates_by_cell(unique, cell_of)
     added: list[dict[str, Any]] = []
     for group in GROUPS:
-        chosen = [row["h3_cell"] for row in existing if row["decision"] == group]
-        needed = per_group - len(chosen)
-        if needed < 0:
-            raise ValueError(f"existing sample has more than {per_group} {group} rows")
-        taken = set(chosen)
-        candidates = [cell for cell in sorted(by_group[group]) if cell not in taken]
-        if len(candidates) < needed:
-            raise ValueError(f"need {needed} more {group} cells, found {len(candidates)}")
-        centres = {cell: centre_of(cell) for cell in set(candidates) | taken}
-        nearest = {
-            cell: min(
-                (_haversine_km(centres[cell], centres[other]) for other in chosen),
-                default=math.inf,
-            )
-            for cell in candidates
-        }
-        for _ in range(needed):
-            cell = max(candidates, key=lambda c: (nearest[c], _stable_key(seed, c)))
-            candidates.remove(cell)
-            chosen.append(cell)
-            for other in candidates:
-                nearest[other] = min(
-                    nearest[other], _haversine_km(centres[other], centres[cell])
-                )
-            added.append(
-                {
-                    **by_group[group][cell][0],
-                    "h3_cell": cell,
-                    "cell_centre_lat": centres[cell][0],
-                    "cell_centre_lon": centres[cell][1],
-                }
-            )
+        added.extend(_extend_group(group, by_group[group], existing, per_group, centre_of, seed))
+    return added
+
+
+def _extend_group(
+    group: str,
+    cells: Mapping[str, Sequence[Mapping[str, Any]]],
+    existing: Sequence[Mapping[str, Any]],
+    per_group: int,
+    centre_of: CentreOf,
+    seed: int,
+) -> list[dict[str, Any]]:
+    chosen = [row["h3_cell"] for row in existing if row["decision"] == group]
+    needed = per_group - len(chosen)
+    if needed < 0:
+        raise ValueError(f"existing sample has more than {per_group} {group} rows")
+    taken = set(chosen)
+    candidates = [cell for cell in sorted(cells) if cell not in taken]
+    if len(candidates) < needed:
+        raise ValueError(f"need {needed} more {group} cells, found {len(candidates)}")
+    centres = {cell: centre_of(cell) for cell in {*candidates, *chosen}}
+    nearest = {
+        cell: min(
+            (_haversine_km(centres[cell], centres[other]) for other in chosen), default=math.inf
+        )
+        for cell in candidates
+    }
+    added: list[dict[str, Any]] = []
+    for _ in range(needed):
+        cell = max(candidates, key=lambda c: (nearest[c], _stable_key(seed, c)))
+        candidates.remove(cell)
+        chosen.append(cell)
+        for other in candidates:
+            nearest[other] = min(nearest[other], _haversine_km(centres[other], centres[cell]))
+        added.append(
+            {
+                **cells[cell][0],
+                "h3_cell": cell,
+                "cell_centre_lat": centres[cell][0],
+                "cell_centre_lon": centres[cell][1],
+            }
+        )
     return added
