@@ -602,6 +602,13 @@ def test_selection_validation_checks_exact_integer_protocol_values() -> None:
         "frozen sample size does not match its per-group count",
         lambda: runner._require_declared_group_size({"sample_size": 100, "per_group": 50.0}),
     )
+    for sample_size in (100.0, True):
+        _assert_value_error(
+            "frozen sample size does not match its per-group count",
+            lambda sample_size=sample_size: runner._require_declared_group_size(
+                {"sample_size": sample_size, "per_group": 50}
+            ),
+        )
     _assert_value_error(
         "base sample must contain the published 50/50 sample",
         lambda: runner._validate_base_group_size({"per_group": 50.0}),
@@ -609,6 +616,23 @@ def test_selection_validation_checks_exact_integer_protocol_values() -> None:
 
     sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
     runner._validate_base_selection(sample["selection"], per_group=50, seed=42)
+    for field, value in (("seed", 42.0), ("sample_size", 100.0)):
+        malformed = {**sample["selection"], field: value}
+        _assert_value_error(
+            "base sample must be the published pilot sample with the same seed",
+            lambda malformed=malformed: runner._validate_base_identity(malformed, seed=42),
+        )
+
+
+def test_frozen_selection_seed_requires_an_integer_metadata_value() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    for seed in (42.0, True):
+        selection = {**sample["selection"], "seed": seed}
+        _assert_value_error(
+            "frozen sample seed must be an integer",
+            lambda selection=selection: runner._require_declared_seed(selection),
+        )
+    runner._require_declared_seed(sample["selection"])
 
 
 def test_base_reader_reports_exact_source_provenance_errors() -> None:
@@ -682,6 +706,36 @@ def test_dspark_selection_gate_rejects_unsupported_or_malformed_sizes() -> None:
             lambda selection=selection: dspark_runner._validate_sample_selection_protocol(
                 selection, 1000
             ),
+        )
+
+    for field, value, message in (
+        ("sample_size", 100.0, "DSpark evaluation requires a supported pilot sample size"),
+        ("sample_size", True, "DSpark evaluation requires a supported pilot sample size"),
+        ("seed", 42.0, "frozen sample seed does not match the published pilot"),
+        ("seed", True, "frozen sample seed does not match the published pilot"),
+    ):
+        selection = {"sample_size": 100, "seed": 42}
+        selection[field] = value
+        _assert_value_error(
+            message,
+            lambda selection=selection: dspark_runner._validate_sample_selection(
+                selection, [{}] * 100
+            ),
+        )
+
+
+def test_frozen_manifest_requires_integer_seed_and_sample_size() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    valid_manifest = {
+        key: sample["selection"][key] for key in ("sample_ids_sha256", "seed", "sample_size")
+    }
+    dspark_runner._verify_frozen_selection(valid_manifest, sample)
+
+    for field, value in (("seed", 42.0), ("sample_size", 100.0)):
+        malformed = {**valid_manifest, field: value}
+        _assert_value_error(
+            "frozen manifest does not match frozen_sample.json",
+            lambda malformed=malformed: dspark_runner._verify_frozen_selection(malformed, sample),
         )
 
 

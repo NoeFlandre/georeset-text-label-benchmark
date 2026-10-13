@@ -43,6 +43,7 @@ from georeset_text_label_benchmark.pilot.runner import (
     EXTENDED_SELECTION_METHOD,
     SELECTION_METHOD,
     _candidate_provenance,
+    _is_integer_metadata,
     _sha256_json,
     _validate_commit,
     _validate_staged_hashes,
@@ -1054,6 +1055,8 @@ def _verify_frozen_input_hashes(run_dir: Path, manifest: Mapping[str, Any]) -> N
 
 def _verify_frozen_selection(manifest: Mapping[str, Any], sample: Mapping[str, Any]) -> None:
     selection = sample["selection"]
+    if not all(_is_integer_metadata(manifest.get(key)) for key in ("seed", "sample_size")):
+        raise ValueError("frozen manifest does not match frozen_sample.json")
     for key in ("sample_ids_sha256", "seed", "sample_size"):
         if manifest.get(key) != selection.get(key):
             raise ValueError("frozen manifest does not match frozen_sample.json")
@@ -1063,11 +1066,19 @@ def _validate_sample_selection(
     selection: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]
 ) -> None:
     sample_size = selection["sample_size"]
-    if sample_size not in dspark.SUPPORTED_SAMPLE_SIZES or len(rows) != sample_size:
+    if not _is_supported_sample_size(sample_size, len(rows)):
         raise ValueError("DSpark evaluation requires a supported pilot sample size")
-    if selection["seed"] != SAMPLE_SEED:
+    if not _is_integer_metadata(selection["seed"]) or selection["seed"] != SAMPLE_SEED:
         raise ValueError("frozen sample seed does not match the published pilot")
     _validate_sample_selection_protocol(selection, sample_size)
+
+
+def _is_supported_sample_size(value: Any, row_count: int) -> TypeGuard[int]:
+    return (
+        _is_integer_metadata(value)
+        and value in dspark.SUPPORTED_SAMPLE_SIZES
+        and row_count == value
+    )
 
 
 def _validate_sample_selection_protocol(selection: Mapping[str, Any], sample_size: int) -> None:

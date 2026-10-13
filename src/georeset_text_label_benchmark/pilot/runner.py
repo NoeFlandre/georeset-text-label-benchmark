@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import pyarrow.parquet as pq
 
@@ -341,7 +341,11 @@ def _validate_base_identity(selection: Mapping[str, Any], seed: int) -> None:
         "sample_size": SAMPLE_SIZE,
         "sample_ids_sha256": EXPECTED_SAMPLE_IDS_SHA256,
     }
-    if any(selection.get(key) != value for key, value in expected.items()):
+    if (
+        not _is_integer_metadata(selection.get("seed"))
+        or not _is_integer_metadata(selection.get("sample_size"))
+        or any(selection.get(key) != value for key, value in expected.items())
+    ):
         raise ValueError("base sample must be the published pilot sample with the same seed")
 
 
@@ -523,6 +527,7 @@ def _validate_selection_metadata(
 ) -> None:
     _require_supported_selection_method(selection)
     _require_declared_group_size(selection)
+    _require_declared_seed(selection)
     _require_h3_resolution(selection)
     _require_declared_cell_count(rows, selection)
     _validate_selection_counts(rows, selection)
@@ -535,12 +540,20 @@ def _require_supported_selection_method(selection: Mapping[str, Any]) -> None:
 
 def _require_declared_group_size(selection: Mapping[str, Any]) -> None:
     per_group = selection.get("per_group")
-    if (
-        isinstance(per_group, bool)
-        or not isinstance(per_group, int)
-        or selection.get("sample_size") != 2 * per_group
-    ):
+    sample_size = selection.get("sample_size")
+    if not _is_integer_metadata(per_group) or not _is_integer_metadata(sample_size):
         raise ValueError("frozen sample size does not match its per-group count")
+    if sample_size != 2 * per_group:
+        raise ValueError("frozen sample size does not match its per-group count")
+
+
+def _require_declared_seed(selection: Mapping[str, Any]) -> None:
+    if not _is_integer_metadata(selection.get("seed")):
+        raise ValueError("frozen sample seed must be an integer")
+
+
+def _is_integer_metadata(value: Any) -> TypeGuard[int]:
+    return not isinstance(value, bool) and isinstance(value, int)
 
 
 def _require_h3_resolution(selection: Mapping[str, Any]) -> None:

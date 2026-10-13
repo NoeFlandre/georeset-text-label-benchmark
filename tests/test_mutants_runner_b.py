@@ -461,6 +461,7 @@ def _frozen_sample_document(note: str) -> dict[str, Any]:
         "source": {"file": LABELLED, "sha256": "a" * 64, "pipeline_manifest_sha256": "b" * 64},
         "selection": {
             "method": SELECTION_METHOD,
+            "seed": 42,
             "sample_size": 2,
             "per_group": 1,
             "decision_counts": {"no": 1, "yes": 1},
