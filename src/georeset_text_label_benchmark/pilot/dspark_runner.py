@@ -742,37 +742,53 @@ def _validate_staged_generation_config(
     generation_profile: dspark.GenerationProfile | str,
 ) -> None:
     """Require a retained transaction to use the same named generation budget."""
-    profile = (
-        dspark.generation_profile(generation_profile)
-        if isinstance(generation_profile, str)
-        else generation_profile
-    )
+    if isinstance(generation_profile, str):
+        profile = dspark.generation_profile(generation_profile)
+    else:
+        profile = generation_profile
     if profile.profile_id == dspark.DEFAULT_GENERATION_PROFILE:
-        if _is_default_staged_generation_config(manifest):
-            return
-        raise ValueError(
-            f"retained DSpark staging generation config does not match this profile: {staging}"
-        )
-    expected = _generation_config(
-        dspark.TARGET_CHAT_TEMPLATE_SHA256,
-        sample,
-        profile,
+        _validate_staged_default_generation_config(staging, manifest)
+        return
+    _validate_staged_named_generation_config(staging, manifest, sample, profile)
+
+
+def _validate_staged_default_generation_config(staging: Path, manifest: Mapping[str, Any]) -> None:
+    if _is_default_staged_generation_config(manifest):
+        return
+    raise ValueError(
+        f"retained DSpark staging generation config does not match this profile: {staging}"
     )
-    if manifest.get("generation_config") != expected or manifest.get(
+
+
+def _validate_staged_named_generation_config(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    sample: Mapping[str, Any],
+    profile: dspark.GenerationProfile,
+) -> None:
+    expected = _generation_config(dspark.TARGET_CHAT_TEMPLATE_SHA256, sample, profile)
+    if manifest.get("generation_config") == expected and manifest.get(
         "generation_config_sha256"
-    ) != _sha256_json(expected):
-        raise ValueError(
-            f"retained DSpark staging generation config does not match this profile: {staging}"
-        )
+    ) == _sha256_json(expected):
+        return
+    raise ValueError(
+        f"retained DSpark staging generation config does not match this profile: {staging}"
+    )
 
 
 def _is_default_staged_generation_config(manifest: Mapping[str, Any]) -> bool:
-    """Accept legacy 512-token stages while rejecting named or differently capped profiles."""
+    """Accept a hashed 512-token stage without accepting absent or malformed config."""
     if "generation_config" not in manifest:
-        return True
+        return False
     config = manifest.get("generation_config")
     if not isinstance(config, Mapping):
         return False
+    if not _uses_default_generation_budget(config):
+        return False
+    return manifest.get("generation_config_sha256") == _sha256_json(config)
+
+
+def _uses_default_generation_budget(config: Mapping[str, Any]) -> bool:
     sampling = config.get("sampling")
     if not isinstance(sampling, Mapping):
         return False
@@ -780,7 +796,6 @@ def _is_default_staged_generation_config(manifest: Mapping[str, Any]) -> bool:
         "generation_profile" not in config
         and config.get("maximum_new_tokens") == dspark.MAX_NEW_TOKENS
         and sampling.get("max_new_tokens") == dspark.MAX_NEW_TOKENS
-        and manifest.get("generation_config_sha256") == _sha256_json(config)
     )
 
 

@@ -146,6 +146,18 @@ def _mock_runtime_metadata() -> dict[str, str]:
     }
 
 
+def _legacy_512_generation_config_fields(sample: Mapping[str, Any]) -> dict[str, Any]:
+    config = dspark_runner._generation_config(
+        dspark.TARGET_CHAT_TEMPLATE_SHA256,
+        sample,
+        dspark.DEFAULT_GENERATION_PROFILE,
+    )
+    return {
+        "generation_config": config,
+        "generation_config_sha256": dspark_runner._sha256_json(config),
+    }
+
+
 def _test_prompt_for_sentence(sentence: str, _candidates: Any) -> str:
     if not isinstance(sentence, str) or not sentence.strip():
         raise ValueError("prompt sentence must be non-empty text")
@@ -1427,8 +1439,15 @@ def test_dspark_resume_reports_staged_protocol_mismatch_with_its_path(tmp_path: 
     destination = tmp_path / "dspark"
     staging = tmp_path / ".dspark.staging-test"
     staging.mkdir()
-    (staging / dspark_runner.MANIFEST_NAME).write_text("{}", encoding="utf-8")
-    sample = {"source": {}, "selection": {}, "candidate_labels": {}}
+    sample = {
+        "source": {},
+        "selection": {"sample_size": 100, "sample_ids_sha256": "d" * 64},
+        "candidate_labels": {"codes": []},
+    }
+    (staging / dspark_runner.MANIFEST_NAME).write_text(
+        json.dumps(_legacy_512_generation_config_fields(sample)),
+        encoding="utf-8",
+    )
     candidate_rows = [
         {
             "classification_release": "release",
@@ -1460,8 +1479,12 @@ def test_dspark_resume_validates_smoke_scope_before_publication(
     staging = tmp_path / ".dspark.staging-test"
     staging.mkdir()
     scope = {"kind": "bounded-smoke", "processed_row_count": 8}
-    manifest = {"run_scope": scope}
-    sample = {"source": {}, "selection": {}, "candidate_labels": {}}
+    sample = {
+        "source": {},
+        "selection": {"sample_size": 100, "sample_ids_sha256": "d" * 64},
+        "candidate_labels": {"codes": []},
+    }
+    manifest = {"run_scope": scope, **_legacy_512_generation_config_fields(sample)}
     candidates = [{"classification_release": "release"}]
     protocol_calls: list[tuple[Any, ...]] = []
     returned = {"resumed": True}
@@ -1567,6 +1590,80 @@ def test_dspark_resume_accepts_legacy_512_stage_for_default_profile(tmp_path: Pa
     )
 
 
+def test_dspark_resume_requires_exact_named_profile_and_hash(tmp_path: Path) -> None:
+    sample = {
+        "candidate_labels": {"codes": ["T11"]},
+        "selection": {"sample_ids_sha256": "a" * 64},
+    }
+    profile = dspark.BUDGET_DIAGNOSTIC_PROFILE
+    config = dspark_runner._generation_config(
+        dspark.TARGET_CHAT_TEMPLATE_SHA256,
+        sample,
+        profile,
+    )
+    manifest = {
+        "generation_config": config,
+        "generation_config_sha256": dspark_runner._sha256_json(config),
+    }
+
+    dspark_runner._validate_staged_generation_config(
+        tmp_path / "staging",
+        manifest,
+        sample,
+        profile,
+    )
+
+    manifest["generation_config_sha256"] = "0" * 64
+    with pytest.raises(
+        ValueError, match="retained DSpark staging generation config does not match"
+    ):
+        dspark_runner._validate_staged_generation_config(
+            tmp_path / "staging",
+            manifest,
+            sample,
+            profile,
+        )
+
+
+@pytest.mark.parametrize("manifest", [{}, {"generation_config": []}])
+def test_dspark_resume_rejects_missing_or_malformed_generation_config_before_publication(
+    manifest: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sample = {
+        "source": {},
+        "candidate_labels": {"codes": ["T11"]},
+        "selection": {"sample_ids_sha256": "a" * 64},
+    }
+    published: list[Path] = []
+    monkeypatch.setattr(dspark_runner, "_read_staged_dspark_manifest", lambda _path: manifest)
+    monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_protocol", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_hashes", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "_read_staged_dspark_metrics", lambda _path: {})
+    monkeypatch.setattr(dspark_runner, "_validate_staged_smoke_gate", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "ensure_publication_supported", lambda _path: None)
+    monkeypatch.setattr(
+        dspark_runner,
+        "publish_directory",
+        lambda _staging, destination: published.append(destination),
+    )
+
+    with pytest.raises(
+        ValueError, match="retained DSpark staging generation config does not match"
+    ):
+        dspark_runner._resume_staged_dspark_run(
+            tmp_path / "pilot",
+            tmp_path / "destination",
+            tmp_path / ".staging-run",
+            sample,
+            [{"eunis_code": "T11", "eunis_name": "name"}],
+            "a" * 40,
+            "b" * 40,
+            "c" * 64,
+        )
+
+    assert published == []
+
+
 @pytest.mark.parametrize(
     ("metrics_gate", "manifest_gate", "processed_row_count", "expected_error"),
     [
@@ -1604,7 +1701,16 @@ def test_dspark_resume_rejects_invalid_smoke_gate_before_publication(
     metrics = {"smoke_gate": metrics_gate} if metrics_gate is not None else {}
     (staging / dspark_runner.METRICS_NAME).write_text(json.dumps(metrics), encoding="utf-8")
     scope = {"kind": "bounded-smoke", "processed_row_count": processed_row_count}
-    manifest = {"run_scope": scope, "smoke_gate": manifest_gate}
+    sample = {
+        "source": {},
+        "selection": {"sample_size": 100, "sample_ids_sha256": "d" * 64},
+        "candidate_labels": {"codes": []},
+    }
+    manifest = {
+        "run_scope": scope,
+        "smoke_gate": manifest_gate,
+        **_legacy_512_generation_config_fields(sample),
+    }
     published: list[Path] = []
 
     monkeypatch.setattr(dspark_runner, "_read_staged_dspark_manifest", lambda _path: manifest)
@@ -1621,7 +1727,7 @@ def test_dspark_resume_rejects_invalid_smoke_gate_before_publication(
             tmp_path / "pilot",
             tmp_path / "destination",
             staging,
-            {"source": {}, "selection": {}, "candidate_labels": {}},
+            sample,
             [{"classification_release": "release"}],
             "a" * 40,
             "b" * 40,
@@ -1678,7 +1784,16 @@ def test_dspark_resume_rejects_passing_gate_that_disagrees_with_predictions(
     (staging / dspark_runner.METRICS_NAME).write_text(
         json.dumps({"smoke_gate": claimed_gate}), encoding="utf-8"
     )
-    manifest = {"run_scope": scope, "smoke_gate": claimed_gate}
+    sample = {
+        "source": {},
+        "selection": {"sample_size": 100, "sample_ids_sha256": "d" * 64},
+        "candidate_labels": {"codes": []},
+    }
+    manifest = {
+        "run_scope": scope,
+        "smoke_gate": claimed_gate,
+        **_legacy_512_generation_config_fields(sample),
+    }
     published: list[Path] = []
 
     monkeypatch.setattr(dspark_runner, "_read_staged_dspark_manifest", lambda _path: manifest)
@@ -1695,7 +1810,7 @@ def test_dspark_resume_rejects_passing_gate_that_disagrees_with_predictions(
             tmp_path / "pilot",
             tmp_path / "destination",
             staging,
-            {"source": {}, "selection": {}, "candidate_labels": {}},
+            sample,
             [{"classification_release": "release"}],
             "a" * 40,
             "b" * 40,
@@ -2900,7 +3015,15 @@ def test_staged_resume_skips_runtime_check_without_complete_evidence_pair(
         evidence_path_value = None
     published: list[Path] = []
     summary = {"resumed": True}
-    monkeypatch.setattr(dspark_runner, "_read_staged_dspark_manifest", lambda _path: {})
+    sample = {
+        "source": {},
+        "selection": {"sample_size": 100, "sample_ids_sha256": "d" * 64},
+        "candidate_labels": {"codes": []},
+    }
+    staged_manifest = _legacy_512_generation_config_fields(sample)
+    monkeypatch.setattr(
+        dspark_runner, "_read_staged_dspark_manifest", lambda _path: staged_manifest
+    )
     monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_protocol", lambda *_args: None)
     monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_hashes", lambda *_args: None)
     monkeypatch.setattr(dspark_runner, "_read_staged_dspark_metrics", lambda _path: {})
@@ -2922,7 +3045,7 @@ def test_staged_resume_skips_runtime_check_without_complete_evidence_pair(
         tmp_path / "pilot",
         tmp_path / "destination",
         tmp_path / ".destination.staging-run",
-        {"source": {}, "selection": {}, "candidate_labels": {}},
+        sample,
         [{"classification_release": "release"}],
         "a" * 40,
         "b" * 40,
@@ -3033,7 +3156,15 @@ def test_full_run_resume_rejects_staged_output_from_another_runtime_before_publi
         }
     }
     staged_runtime = {**evidence_manifest["runtime"], field: value}
-    staged_manifest = {"runtime": staged_runtime}
+    sample = {
+        "source": {},
+        "selection": {"sample_size": 100, "sample_ids_sha256": "d" * 64},
+        "candidate_labels": {"codes": []},
+    }
+    staged_manifest = {
+        "runtime": staged_runtime,
+        **_legacy_512_generation_config_fields(sample),
+    }
     published: list[Path] = []
     monkeypatch.setattr(
         dspark_runner, "_read_staged_dspark_manifest", lambda _path: staged_manifest
@@ -3054,7 +3185,7 @@ def test_full_run_resume_rejects_staged_output_from_another_runtime_before_publi
             tmp_path / "pilot",
             tmp_path / "destination",
             tmp_path / ".destination.staging-run",
-            {"source": {}, "selection": {}, "candidate_labels": {}},
+            sample,
             [{"classification_release": "release"}],
             "a" * 40,
             "b" * 40,
