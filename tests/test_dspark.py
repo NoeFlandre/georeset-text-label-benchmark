@@ -2226,6 +2226,34 @@ def test_prediction_row_preserves_finish_metadata_and_eos_token_diagnostics() ->
     assert prediction["parsed_eunis_code"] == "T11"
 
 
+def test_prediction_row_serializes_unicode_and_non_json_finish_metadata() -> None:
+    class StringableMetadata:
+        def __str__(self) -> str:
+            return "metadata-sentinel"
+
+    prediction = dspark_runner._prediction_row(
+        _row(1),
+        prompt_tokens=1,
+        prompt_hash="prompt-hash",
+        output={
+            "meta_info": {
+                "finish_reason": {
+                    "type": "stop",
+                    "display_name": "forêt",
+                    "opaque": StringableMetadata(),
+                }
+            }
+        },
+        elapsed_seconds=0.25,
+        candidate_codes=["T11"],
+        candidate_names={"T11": "Temperate forest"},
+    )
+
+    assert prediction["finish_reason_metadata_json"] == (
+        '{"display_name":"forêt","opaque":"metadata-sentinel","type":"stop"}'
+    )
+
+
 def test_prediction_row_reports_missing_token_ids_and_finish_metadata_as_unknown() -> None:
     prediction = dspark_runner._prediction_row(
         _row(1),
