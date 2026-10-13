@@ -267,7 +267,9 @@ def test_hierarchical_run_writes_auditable_outputs_and_preserves_inputs(tmp_path
         report["original_leaf"]["overall"]
         == json.loads(paths["metrics"].read_text(encoding="utf-8"))["overall"]
     )
-    assert "Level | Group" in (output / "hierarchical_dataset_card.md").read_text(encoding="utf-8")
+    card = (output / "hierarchical_dataset_card.md").read_text(encoding="utf-8")
+    assert "Level | Group" in card
+    assert "| 4 | overall | 0 | 2 | 0 | 0 | 0 | 0 | — | — | — | — |" in card
     manifest = json.loads((output / "hierarchical_manifest.json").read_text(encoding="utf-8"))
     assert manifest["outputs_sha256"]["hierarchical_metrics.csv"] == _sha256(
         output / "hierarchical_metrics.csv"

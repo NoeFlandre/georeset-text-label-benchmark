@@ -492,8 +492,8 @@ def _score_level_group(
         "accuracy": _ratio(correct, len(indices)),
         "valid_mapped_count": valid_mapped,
         "valid_only_accuracy": _ratio(correct, valid_mapped),
-        "macro_f1": _macro_f1(gold, predicted, label_universe),
-        "multiclass_mcc": _multiclass_mcc(gold, predicted, label_universe),
+        "macro_f1": _macro_f1(gold, predicted, label_universe) if indices else None,
+        "multiclass_mcc": _multiclass_mcc(gold, predicted, label_universe) if indices else None,
         "label_universe": list(label_universe),
     }
 
@@ -784,17 +784,18 @@ def _metric_definitions() -> dict[str, str]:
         ),
         "accuracy": (
             "Correct mapped ancestor predictions divided by eligible n. Failed, truncated, and "
-            "unmapped outcomes are incorrect; every eligible row stays in the denominator."
+            "unmapped outcomes are incorrect; every eligible row stays in the denominator. All "
+            "model metrics are null when eligible n is zero."
         ),
         "macro_f1": (
             "Unweighted mean over the level's complete label universe. Failed, truncated, and "
             "unmapped predictions add no predicted class and remain false negatives for mapped gold "
-            "classes; unmapped gold rows cannot be true positives."
+            "classes; unmapped gold rows cannot be true positives. Null when eligible n is 0."
         ),
         "multiclass_mcc": (
             "Generalized multiclass MCC over official labels plus distinct unmapped-gold and "
-            "unresolved-prediction sentinels. The sentinels never match each other. Returns 0 when "
-            "the denominator is zero."
+            "unresolved-prediction sentinels. The sentinels never match each other. For a non-empty "
+            "eligible set, returns 0 when the denominator is zero; it is null when eligible n is 0."
         ),
         "valid_only_accuracy": (
             "Correct mapped ancestor predictions divided by eligible rows with a parser-valid "

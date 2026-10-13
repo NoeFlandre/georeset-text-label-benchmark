@@ -45,7 +45,9 @@ reached from the full candidate list, qualified by the candidate source hash.
 Macro-F1 is the unweighted mean across that fixed universe. Multiclass MCC uses
 separate unmapped-gold and unresolved-prediction sentinels; they never match.
 Valid-only accuracy is supplementary and uses rows with mapped gold and
-prediction ancestors.
+prediction ancestors. When a group has no eligible rows, all four model metrics
+(accuracy, valid-only accuracy, macro-F1, and multiclass MCC) are null. MCC is
+zero only for a non-empty eligible set whose generalized denominator is zero.
 
 The fine-label report is repeated under `original_leaf` using the existing
 158-candidate protocol. The scorer checks it against the historical
@@ -92,6 +94,7 @@ results, and checksums for every source artifact.
 The 16-truncation historical run was retrieved from Hub revision
 `d0b2337c98a44d58b815fd5d876d608418654ff7` and checked against its run manifest,
 frozen sample, and original leaf metrics. Its derived hierarchy results are
-available for review in the task workspace; they are kept out of the repository
-and Hub until the separate publication step. Do not substitute the older run
-with 97 truncations or combine its metrics with the 16-truncation result.
+published as a versioned additive directory under
+`pilot/runs/dspark-100-seed42/hierarchy-v1/`; the original run files remain
+unchanged. Do not substitute the older run with 97 truncations or combine its
+metrics with the 16-truncation result.

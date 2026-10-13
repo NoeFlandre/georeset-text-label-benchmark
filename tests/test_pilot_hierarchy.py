@@ -187,6 +187,9 @@ def test_hierarchical_report_scores_levels_and_explicit_level_four_eligibility()
     assert by_key[(4, "yes")]["eligible_n"] == 0
     assert by_key[(4, "yes")]["excluded_shallower_reference_count"] == 2
     assert by_key[(4, "yes")]["accuracy"] is None
+    assert by_key[(4, "yes")]["valid_only_accuracy"] is None
+    assert by_key[(4, "yes")]["macro_f1"] is None
+    assert by_key[(4, "yes")]["multiclass_mcc"] is None
     assert by_key[(4, "no")]["eligible_n"] == 1
     assert by_key[(4, "no")]["excluded_shallower_reference_count"] == 1
     assert by_key[(4, "no")]["accuracy"] == 1.0
@@ -438,6 +441,13 @@ def test_pinned_eunis_mapping_matches_workbooks_and_historical_sample_eligibilit
     assert by_level[4]["n"] == 0
     assert by_level[4]["accuracy"] is None
     assert by_level[4]["valid_only_accuracy"] is None
+    assert by_level[4]["macro_f1"] is None
+    assert by_level[4]["multiclass_mcc"] is None
+    assert all(
+        row["macro_f1"] is None and row["multiclass_mcc"] is None
+        for row in report["rows"]
+        if row["level"] == 4
+    )
     assert by_level[4]["excluded_shallower_reference_count"] == 100
     assert Counter(row["decision"] for row in rows) == {"yes": 50, "no": 50}
     assert report["original_leaf"]["overall"]["sample_count"] == 100
