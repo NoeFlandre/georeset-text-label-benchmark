@@ -286,6 +286,26 @@ def test_extension_allows_yes_and_no_to_share_a_new_cell() -> None:
     assert {row["h3_cell"] for row in added} == {"20"}
 
 
+def test_extension_uses_stored_base_centres_as_maximin_anchors() -> None:
+    base = [_existing_row(1, "yes", "1", 1.0), _existing_row(2, "no", "2", 2.0)]
+
+    def centre_of(cell: str) -> tuple[float, float]:
+        if cell in {"1", "2"}:
+            raise AssertionError("the published base centre must not be recomputed")
+        return float(cell), 0.0
+
+    added = extend_geographic_sample(
+        [_row(3, "yes", 10.0, 0.0), _row(4, "no", 20.0, 0.0)],
+        cell_of=_simple_cell_of,
+        centre_of=centre_of,
+        existing=base,
+        per_group=2,
+        seed=42,
+    )
+
+    assert [row["h3_cell"] for row in added] == ["10", "20"]
+
+
 def test_base_reader_preserves_the_committed_100_rows_and_checks_integrity(
     tmp_path: Path,
 ) -> None:
@@ -301,6 +321,7 @@ def test_base_reader_preserves_the_committed_100_rows_and_checks_integrity(
 
     assert rows == sample["selected_rows"]
     assert len(rows) == 100
+    assert runner._sha256_json(rows) == runner.EXPECTED_BASE_SELECTED_ROWS_SHA256
     assert (
         sample["selection"]["sample_ids_sha256"]
         == "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d"
@@ -310,7 +331,9 @@ def test_base_reader_preserves_the_committed_100_rows_and_checks_integrity(
     altered["selected_rows"][0]["sample_id"] = "0" * 64
     altered_path = tmp_path / "altered.json"
     altered_path.write_text(json.dumps(altered), encoding="utf-8")
-    with pytest.raises(ValueError, match="frozen sample ID does not match its row identity"):
+    with pytest.raises(
+        ValueError, match="base frozen sample checksum does not match the published pilot"
+    ):
         runner._read_base_sample(
             altered_path,
             per_group=500,
@@ -320,23 +343,42 @@ def test_base_reader_preserves_the_committed_100_rows_and_checks_integrity(
         )
 
 
-def test_base_reader_rejects_a_sentence_that_disagrees_with_its_stored_hash(
-    tmp_path: Path,
+def test_pinned_base_reader_does_not_recompute_the_published_cell_centres(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
-    sample["selected_rows"][0]["sentence"] = "changed sentence with the original stored hash"
-    sample_path = tmp_path / "changed-sentence.json"
-    sample_path.write_text(json.dumps(sample), encoding="utf-8")
+    expected_rows = sample["selected_rows"]
+    row_49 = expected_rows[49]
+    original_centre = runner.h3_centre_of
 
+    def changed_platform_centre(cell: str) -> tuple[float, float]:
+        lat, lon = original_centre(cell)
+        if cell == row_49["h3_cell"]:
+            return lat, math.nextafter(lon, math.inf)
+        return lat, lon
+
+    monkeypatch.setattr(runner, "h3_centre_of", changed_platform_centre)
+    rows = runner._read_base_sample(
+        BASE_SAMPLE,
+        per_group=500,
+        seed=42,
+        expected_labelled_sha256=sample["source"]["sha256"],
+        expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
+    )
+    _, run_rows = runner._read_frozen_sample(BASE_SAMPLE.parent)
+
+    assert rows == expected_rows
+    assert run_rows == expected_rows
+
+
+def test_frozen_row_validation_rejects_a_sentence_that_disagrees_with_its_stored_hash() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    sample["selected_rows"][0]["sentence"] = "changed sentence with the original stored hash"
+
+    rows = sample["selected_rows"]
     _assert_value_error(
         "frozen sample sentence hash mismatch",
-        lambda: runner._read_base_sample(
-            sample_path,
-            per_group=500,
-            seed=42,
-            expected_labelled_sha256=sample["source"]["sha256"],
-            expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
-        ),
+        lambda: runner._validate_frozen_rows(rows, sample["selection"]),
     )
 
 
@@ -351,21 +393,14 @@ def test_base_reader_rejects_a_non_text_sentence() -> None:
     )
 
 
-def test_base_reader_recomputes_ids_from_row_identity(tmp_path: Path) -> None:
+def test_frozen_row_validation_recomputes_ids_from_row_identity() -> None:
     sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
-    sample["selected_rows"][0]["osm_id"] += 1
-    sample_path = tmp_path / "changed-identity.json"
-    sample_path.write_text(json.dumps(sample), encoding="utf-8")
+    rows = [dict(row) for row in sample["selected_rows"]]
+    rows[0]["osm_id"] += 1
 
     _assert_value_error(
         "frozen sample ID does not match its row identity",
-        lambda: runner._read_base_sample(
-            sample_path,
-            per_group=500,
-            seed=42,
-            expected_labelled_sha256=sample["source"]["sha256"],
-            expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
-        ),
+        lambda: runner._validate_frozen_rows(rows, sample["selection"]),
     )
 
 
@@ -593,6 +628,21 @@ def test_freeze_extension_keeps_the_committed_base_order_and_writes_1000_rows(
         "EXPECTED_BASE_MANIFEST_SHA256",
         runner.sha256_file(base_dir / "manifest.json"),
     )
+    monkeypatch.setattr(
+        runner,
+        "EXPECTED_BASE_SELECTED_ROWS_SHA256",
+        runner._sha256_json(base_sample["selected_rows"]),
+    )
+    original_centre = runner.h3_centre_of
+    changed_base_cell = base_sample["selected_rows"][49]["h3_cell"]
+
+    def changed_platform_centre(cell: str) -> tuple[float, float]:
+        lat, lon = original_centre(cell)
+        if cell == changed_base_cell:
+            return lat, math.nextafter(lon, math.inf)
+        return lat, lon
+
+    monkeypatch.setattr(runner, "h3_centre_of", changed_platform_centre)
 
     extended_summary = runner.freeze_sample(
         labelled,
@@ -612,6 +662,24 @@ def test_freeze_extension_keeps_the_committed_base_order_and_writes_1000_rows(
     assert len(candidates) == 158
     assert extended_sample["selection"]["method"] == runner.EXTENDED_SELECTION_METHOD
     assert extended_sample["selection"]["decision_counts"] == {"no": 500, "yes": 500}
+
+    changed_prefix = [dict(row) for row in rows]
+    changed_prefix[49]["cell_centre_lon"] = math.nextafter(
+        changed_prefix[49]["cell_centre_lon"], math.inf
+    )
+    _assert_value_error(
+        "extended frozen sample base rows do not match the published pilot",
+        lambda: runner._validate_frozen_rows(changed_prefix, extended_sample["selection"]),
+    )
+
+    changed_extension = [dict(row) for row in rows]
+    changed_extension[100]["cell_centre_lon"] = math.nextafter(
+        changed_extension[100]["cell_centre_lon"], math.inf
+    )
+    _assert_value_error(
+        "frozen sample H3 cell does not match its centre",
+        lambda: runner._validate_frozen_rows(changed_extension, extended_sample["selection"]),
+    )
 
 
 @pytest.mark.parametrize(

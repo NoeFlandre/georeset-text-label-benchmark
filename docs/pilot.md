@@ -78,8 +78,8 @@ does not re-run the sampler, because the pool is not part of the frozen run.
 The extended protocol starts with the committed 100-row sample above and keeps those rows
 and their order. It adds 450 rows to each decision group. The new rows use one sentence per
 resolution-3 cell within each group; yes and no cells may overlap. Maximin selection starts
-from the existing cells for that group. Exact sentence hashes and polygon keys remain unique
-across the complete 1,000-row sample. The seed remains 42.
+from the stored cell centres in the published base rows. Exact sentence hashes and polygon
+keys remain unique across the complete 1,000-row sample. The seed remains 42.
 
 Freeze the extension from the same labelled pool and pipeline manifest as the base sample:
 
@@ -97,12 +97,15 @@ The command rejects a base sample with a different seed, ID digest, labelled-poo
 pipeline-manifest hash. It also requires the committed base sample JSON and its sibling
 `manifest.json` to match their published SHA-256 values, verifies that the manifest binds
 the sample and source checksums, recomputes each base sentence hash and row ID, and checks
-the base candidate checksum. This preserves the original 100 prompts and gold codes. It
-writes a separate frozen run directory. The extension digest
+the base candidate checksum. The original row objects and their stored cell centres remain
+unchanged. The extended sample validates that exact 100-row prefix by its pinned canonical
+row digest; it still checks every added row's H3 centre by exact equality. No coordinate
+tolerance is applied. It writes a separate frozen run directory. The extension digest
 `0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a` is pinned from the
 existing `dspark-sample-1000` branch and must be confirmed by freezing the authorized full
-pool before any model run. The source pool and pipeline manifest are not present in every
-code workspace.
+pool before any model run. Using the stored base centres as maximin anchors must also be
+checked against that authorized pool because the prior extension implementation recomputed
+those centres. The source pool and pipeline manifest are not present in every code workspace.
 
 ## Model and decoding
 
@@ -126,12 +129,17 @@ raw output and a reason.
 
 The direct-label protocol keeps the pinned template, sampling settings, EOS handling,
 parser and `512`-token cap intact. A `length` finish reason is recorded as invalid, and
-the smoke gate rejects any truncated row. The historical eight-row smoke at a
-16,384-token cap reported two rows that continued enumerating candidate codes or repeating
-a code list without stopping. The historical 100-row run at computation commit
-`ce2173476115cdb15c2f4e525bd0e6cbf8a0ffe3` reported 16 `generation_length` rows at that
-same cap ([full-run report](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19#issuecomment-6119763909)). Earlier
-512- and 8,192-token smokes also failed their gate ([smoke report](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19#issuecomment-6106289763)).
+the smoke gate rejects any truncated row. The historical 100-row run at computation
+commit `ce2173476115cdb15c2f4e525bd0e6cbf8a0ffe3` reported 16 `generation_length` rows at
+a 16,384-token cap ([full-run report](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19#issuecomment-6119763909)). The pinned
+[historical prediction file](https://huggingface.co/datasets/NoeFlandre/georeset-text-label-benchmark/blob/d0b2337c98a44d58b815fd5d876d608418654ff7/pilot/runs/dspark-100-seed42/dspark_predictions.parquet)
+confirms each of those 16 rows generated exactly 16,384 tokens. Their prompts were 19,425
+to 19,448 tokens, and none of those raw outputs contained `</think>` or `<|im_end|>`. The
+input plus generation lengths stayed below 36,000 tokens, well under the 128,000-token
+runtime context. These rows reached the generation cap before the parser's final-answer
+boundary; the stored trace does not establish whether the model or runtime failed to emit
+the expected end marker. Earlier 512- and 8,192-token smokes also failed their gate
+([smoke report](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19#issuecomment-6106289763)).
 
 The pinned target config and tokenizer agree on EOS token ID `124900`
 (`<|im_end|>`). The runner passes that ID to SGLang 0.5.20, preserves the stop token in
@@ -143,14 +151,27 @@ describes speculative decoding as preserving target outputs. These facts make an
 unsupported model/runtime pairing or an obvious EOS-ID mismatch less likely, but do not
 prove that no runtime defect exists.
 
-The available historical issue records finish reasons and summarizes the continuing
-outputs, but this checkout has no per-token generation traces with which to distinguish
-the model failing to emit EOS from the serving runtime failing to stop on it. No
-protocol-preserving inference fix is established. The owner rejected constrained-code
-decoding and removing reasoning; neither is part of this protocol. Keep the existing
-smoke gate unchanged, and do not run the full sample unless a matching eight-row smoke
-passes. If the pinned protocol continues to fail, report the evaluation as incomplete
-unless the owner chooses a separately versioned protocol change.
+The `b049100` eight-row diagnostic on 2026-10-13 used the current 512-token cap. All eight
+rows finished at 512 with finish metadata `length`; none contained EOS token ID `124900`,
+none produced a valid final answer, and the repeated-suffix detector found zero hits. This
+shows the cap ended generation before an answer in those rows. It does not show EOS parser
+loss or a repetition loop. The output Parquet SHA-256 was
+`41d2d64e5e00e4a28940d27d349b9f16918d77e9aefedd3f2774f635d4d903ad`.
+
+The historical predictions include decoded text and finish reasons but not complete
+token-ID traces. They show generation stopped at the configured token cap before a final
+answer boundary; they cannot distinguish the model failing to emit EOS from a runtime
+failure to stop on EOS. No protocol-preserving inference fix is established. SGLang
+`0.5.20` documents a way to leave reasoning free-form and constrain the final answer, but
+its listed reasoning-model support covers DeepSeek R1 and QwQ, not this LFM checkpoint
+([versioned SGLang documentation](https://github.com/sgl-project/sglang/blob/v0.5.20/docs/docs/advanced_features/structured_outputs_for_reasoning_models.mdx)).
+Compatibility with LFM plus DSpark is unverified. A final-output grammar would change
+decoding and therefore score comparability; it would not prevent truncation if the model
+does not reach `</think>` within the generation cap. No constrained-output or
+thinking-disabled protocol is approved. Keep the existing smoke gate unchanged, and do
+not run the full sample unless a matching eight-row smoke passes. If the pinned protocol
+continues to fail, report the evaluation as incomplete unless the owner chooses a
+separately versioned protocol change.
 
 ## Prompt
 

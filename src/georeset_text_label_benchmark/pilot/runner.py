@@ -28,6 +28,7 @@ from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
     EXPECTED_BASE_FROZEN_SAMPLE_SHA256,
     EXPECTED_BASE_MANIFEST_SHA256,
+    EXPECTED_BASE_SELECTED_ROWS_SHA256,
     EXPECTED_SAMPLE_IDS_SHA256,
     SAMPLE_SEED,
     SAMPLE_SIZE,
@@ -38,7 +39,8 @@ LABELLED_NAME = "labelled-eunis.parquet"
 PIPELINE_MANIFEST_NAME = "pipeline-manifest.json"
 SOURCE_COLUMNS = tuple(LABELLED_SCHEMA.names)
 EXTENDED_SELECTION_METHOD = (
-    "H3 resolution 3 cells with maximin spacing; one sentence per cell within each group; "
+    "H3 resolution 3 cells with maximin spacing from the stored centres of the published "
+    "base cells; one sentence per cell within each group; "
     "yes and no may share a cell; the first 50 yes and 50 no are the published pilot sample; "
     "English only; one occurrence per exact sentence hash and per polygon; occurrences "
     "ordered by SHA256(seed:occurrence)."
@@ -315,8 +317,8 @@ def _read_base_sample(
     rows = sample.get("selected_rows")
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
         raise ValueError("base frozen sample must contain selected row objects")
-    _validate_frozen_rows(rows, selection)
     _validate_base_manifest(path, sample)
+    _validate_frozen_rows(rows, selection, pinned_base=True)
     return rows
 
 
@@ -549,7 +551,12 @@ def _is_sha256(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 64 and set(value) <= set("0123456789abcdef")
 
 
-def _validate_frozen_rows(rows: list[dict[str, Any]], selection: Mapping[str, Any]) -> None:
+def _validate_frozen_rows(
+    rows: list[dict[str, Any]],
+    selection: Mapping[str, Any],
+    *,
+    pinned_base: bool = False,
+) -> None:
     _validate_frozen_row_count(rows, selection)
     _validate_frozen_row_contents(rows)
     ids = [row["sample_id"] for row in rows]
@@ -558,7 +565,7 @@ def _validate_frozen_rows(rows: list[dict[str, Any]], selection: Mapping[str, An
     polygons = [(row["source_pbf"], row["osm_type"], row["osm_id"]) for row in rows]
     _require_unique_frozen_values(polygons)
     _validate_frozen_ids(ids, selection)
-    _validate_frozen_selection(rows, selection)
+    _validate_frozen_selection(rows, selection, pinned_base=pinned_base)
 
 
 def _validate_frozen_row_count(
@@ -598,11 +605,34 @@ def _validate_frozen_ids(ids: Sequence[str], selection: Mapping[str, Any]) -> No
         raise ValueError("frozen sample ID checksum mismatch")
 
 
-def _validate_frozen_selection(rows: list[dict[str, Any]], selection: Mapping[str, Any]) -> None:
+def _validate_frozen_selection(
+    rows: list[dict[str, Any]],
+    selection: Mapping[str, Any],
+    *,
+    pinned_base: bool = False,
+) -> None:
     _require_balanced_decisions(rows, selection["per_group"])
     _validate_selection_metadata(rows, selection)
-    _require_cell_centres(rows)
+    _validate_frozen_cell_centres(rows, selection, pinned_base)
     _require_unique_group_cells(rows, selection["method"])
+
+
+def _validate_frozen_cell_centres(
+    rows: Sequence[Mapping[str, Any]], selection: Mapping[str, Any], pinned_base: bool
+) -> None:
+    if selection.get("method") == EXTENDED_SELECTION_METHOD:
+        _require_published_base_prefix(rows)
+        _require_cell_centres(rows[SAMPLE_SIZE:])
+    elif not pinned_base:
+        _require_cell_centres(rows)
+
+
+def _require_published_base_prefix(rows: Sequence[Mapping[str, Any]]) -> None:
+    if (
+        len(rows) < SAMPLE_SIZE
+        or _sha256_json(rows[:SAMPLE_SIZE]) != EXPECTED_BASE_SELECTED_ROWS_SHA256
+    ):
+        raise ValueError("extended frozen sample base rows do not match the published pilot")
 
 
 def _validate_selection_metadata(
@@ -724,7 +754,8 @@ def _read_frozen_sample(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, A
         sample = json.load(stream)
     _validate_frozen_source(sample["source"])
     rows = sample["selected_rows"]
-    _validate_frozen_rows(rows, sample["selection"])
+    pinned_base = sha256_file(frozen_path) == EXPECTED_BASE_FROZEN_SAMPLE_SHA256
+    _validate_frozen_rows(rows, sample["selection"], pinned_base=pinned_base)
     return sample, rows
 
 

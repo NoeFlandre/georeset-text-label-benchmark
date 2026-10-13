@@ -352,13 +352,23 @@ def _extension_state(
     candidates = _available_extension_cells(cells, chosen)
     needed = per_group - len(chosen)
     _require_extension_capacity(candidates, needed, group)
-    centres = _extension_centres(candidates, chosen, centre_of)
+    centres = _extension_centres(candidates, _chosen_extension_centres(group, existing), centre_of)
     nearest = _nearest_extension_distances(candidates, chosen, centres)
     return chosen, candidates, centres, nearest
 
 
 def _chosen_extension_cells(group: str, existing: Sequence[Mapping[str, Any]]) -> list[str]:
     return [row["h3_cell"] for row in existing if row["decision"] == group]
+
+
+def _chosen_extension_centres(
+    group: str, existing: Sequence[Mapping[str, Any]]
+) -> dict[str, tuple[float, float]]:
+    return {
+        row["h3_cell"]: (row["cell_centre_lat"], row["cell_centre_lon"])
+        for row in existing
+        if row["decision"] == group
+    }
 
 
 def _available_extension_cells(cells: Mapping[str, Any], chosen: Sequence[str]) -> list[str]:
@@ -372,9 +382,11 @@ def _require_extension_capacity(candidates: Sequence[str], needed: int, group: s
 
 
 def _extension_centres(
-    candidates: Sequence[str], chosen: Sequence[str], centre_of: CentreOf
+    candidates: Sequence[str],
+    chosen_centres: Mapping[str, tuple[float, float]],
+    centre_of: CentreOf,
 ) -> dict[str, tuple[float, float]]:
-    return {cell: centre_of(cell) for cell in {*candidates, *chosen}}
+    return {**chosen_centres, **{cell: centre_of(cell) for cell in candidates}}
 
 
 def _nearest_extension_distances(
