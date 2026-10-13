@@ -107,29 +107,41 @@ code workspace.
 | New tokens | at most `512`; stop at `<|im_end|>` (token ID `124900`) |
 | Seed | `42` |
 
-The pinned chat template opens assistant turns with `<think>`. The parser reads only
-text after the final `</think>` and accepts exactly one candidate code. Truncated
-output, unclosed reasoning, unknown codes and other formats are kept as invalid rows
-with the raw output and a reason.
+The pinned chat template opens assistant turns with `<think>`. Liquid AI describes this
+checkpoint as a reasoning model that thinks before answering and documents the `<think>`
+prefix as part of its template. The pilot keeps that behavior. The parser reads only text
+after the final `</think>` and accepts exactly one candidate code. Truncated output,
+unclosed reasoning, unknown codes and other formats are kept as invalid rows with the
+raw output and a reason.
 
 ### Truncation diagnosis
 
-The current direct-label protocol leaves the pinned template and `512`-token cap intact.
-It does not turn truncated output into a prediction: a `length` finish reason is recorded
-as invalid, and the smoke gate rejects any truncated row. The historical 100-row run at
-commit `ce2173476115cdb15c2f4e525bd0e6cbf8a0ffe3` still had 16 rows hit the generation
-limit at 16,384 tokens, so a larger cap alone is not a fix. Earlier 512- and 8,192-token
-smokes also failed their gate ([issue #19](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19)).
+The direct-label protocol keeps the pinned template, sampling settings, EOS handling,
+parser and `512`-token cap intact. A `length` finish reason is recorded as invalid, and
+the smoke gate rejects any truncated row. The historical eight-row smoke at a
+16,384-token cap reported two rows that continued enumerating candidate codes or repeating
+a code list without stopping. The historical 100-row run at computation commit
+`ce2173476115cdb15c2f4e525bd0e6cbf8a0ffe3` reported 16 `generation_length` rows at that
+same cap. Earlier 512- and 8,192-token smokes also failed their gate ([issue #19](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19)).
 
-A candidate remedy is a separately named `eunis-constrained-code-v1` protocol: omit the
-template's forced `<think>` generation prefix, then use SGLang's request-level regex
-constraint to allow only one of the same 158 candidate codes. SGLang 0.5.20 exposes a
-`regex` sampling parameter in its [pinned source](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/sampling/sampling_params.py)
-and documents constrained output in its [structured-output guide](https://docs.sglang.ai/advanced_features/structured_outputs.html).
-This changes whether the model can reason in free text before answering, so results would
-need a new protocol label and separate output path. It is not enabled by this document;
-the owner must choose the protocol, and its matching eight-row smoke must pass the existing
-runtime and truncation gate before a full run.
+The pinned target config and tokenizer agree on EOS token ID `124900`
+(`<|im_end|>`). The runner passes that ID to SGLang 0.5.20, preserves the stop token in
+returned text for auditing, and rejects a `length` finish before parsing. Matching LFM2
+DSpark support landed in [SGLang PR #31041](https://github.com/sgl-project/sglang/pull/31041)
+before the [v0.5.20 release](https://github.com/sgl-project/sglang/releases/tag/v0.5.20);
+the [pinned DSpark model card](https://huggingface.co/LiquidAI/LFM2.5-2.6B-DSpark/tree/458cedab07d0f7b2b05700c77e1aa463d43d6f04)
+describes speculative decoding as preserving target outputs. These facts make an
+unsupported model/runtime pairing or an obvious EOS-ID mismatch less likely, but do not
+prove that no runtime defect exists.
+
+The available historical issue records finish reasons and summarizes the continuing
+outputs, but this checkout has no per-token generation traces with which to distinguish
+the model failing to emit EOS from the serving runtime failing to stop on it. No
+protocol-preserving inference fix is established. The owner rejected constrained-code
+decoding and removing reasoning; neither is part of this protocol. Keep the existing
+smoke gate unchanged, and do not run the full sample unless a matching eight-row smoke
+passes. If the pinned protocol continues to fail, report the evaluation as incomplete
+unless the owner chooses a separately versioned protocol change.
 
 ## Prompt
 
