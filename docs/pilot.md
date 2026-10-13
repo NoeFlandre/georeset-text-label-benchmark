@@ -108,20 +108,22 @@ The read-only capacity inventory reports the exact labelled-pool SHA-256
 `c3e6e8b726f41a1f9b71217767c1be94d8779a42b6b6b6fffc38d917fcfda6f4`, 319,632 source
 rows, 158 candidate codes (candidate SHA-256
 `2e6cc694da7baa8edf9debeed08a0adda719518be74e659a0533b3ae9e56afa8`), and 22,097
-deduplicated extension rows after removing the frozen prefix. The inventory's regional
-candidate row counts and H3-cell memberships are:
+deduplicated extension rows after removing the frozen prefix. The table reports per-decision
+candidate row capacities, H3-cell memberships, recomputed immutable-prefix counts and the
+selected final quotas:
 
-| UN M49 subregion | Candidate rows Y/N | Candidate H3 cells Y/N | Frozen prefix Y/N |
-| --- | ---: | ---: | ---: |
-| 015 Northern Africa | 30 / 17 | 12 / 8 | 4 / 2 |
-| 034 Southern Asia | 0 / 1 | 0 / 1 | 0 / 0 |
-| 039 Southern Europe | 1,413 / 543 | 144 / 119 | 6 / 6 |
-| 143 Central Asia | 7 / 0 | 2 / 0 | 0 / 1 |
-| 145 Western Asia | 518 / 244 | 50 / 39 | 6 / 3 |
-| 151 Eastern Europe | 860 / 421 | 177 / 134 | 16 / 16 |
-| 154 Northern Europe | 10,146 / 3,021 | 234 / 177 | 11 / 8 |
-| 155 Western Europe | 2,437 / 1,219 | 124 / 108 | 2 / 8 |
-| `UNASSIGNED` | 877 / 343 | not recorded | 5 / 6 |
+| UN M49 stratum | Candidate rows Y/N | Candidate H3 cells Y/N | Frozen prefix Y/N | Final quota Y/N |
+| --- | ---: | ---: | ---: | ---: |
+| 015 Northern Africa | 30 / 17 | 12 / 8 | 4 / 2 | 10 / 10 |
+| 034 Southern Asia | 0 / 1 | 0 / 1 | 0 / 0 | 0 / 0 |
+| 039 Southern Europe | 1,413 / 543 | 144 / 119 | 6 / 6 | 111 / 111 |
+| 143 Central Asia | 7 / 0 | 2 / 0 | 0 / 1 | 1 / 1 |
+| 145 Western Asia | 518 / 244 | 50 / 39 | 6 / 3 | 42 / 42 |
+| 151 Eastern Europe | 860 / 421 | 177 / 134 | 16 / 16 | 110 / 110 |
+| 154 Northern Europe | 10,146 / 3,021 | 234 / 177 | 11 / 8 | 110 / 110 |
+| 155 Western Europe | 2,437 / 1,219 | 124 / 108 | 2 / 8 | 110 / 110 |
+| `UNASSIGNED` | 877 / 343 | not recorded | 5 / 6 | 6 / 6 |
+| **Total** | **16,288 / 5,809** | **704 / 552 unique known-region cells** | **50 / 50** | **500 / 500** |
 
 These regional H3-cell counts overlap: 39 yes and 34 no cells connect to more than one M49
 subregion. The flow allocator treats each H3 cell as one unit of capacity shared among its
