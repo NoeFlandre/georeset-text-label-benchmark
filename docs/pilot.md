@@ -75,11 +75,89 @@ does not re-run the sampler, because the pool is not part of the frozen run.
 
 ### 1,000-row extension
 
-The extended protocol starts with the committed 100-row sample above and keeps those rows
-and their order. It adds 450 rows to each decision group. The new rows use one sentence per
-resolution-3 cell within each group; yes and no cells may overlap. Maximin selection starts
-from the stored cell centres in the published base rows. Exact sentence hashes and polygon
-keys remain unique across the complete 1,000-row sample. The seed remains 42.
+The extension starts with the committed 100-row sample above and keeps those row objects
+and their order exactly. It adds 450 rows to each decision group. It assigns each row's bbox
+midpoint to an official UN M49 subregion by checking Natural Earth's de-facto Admin-0
+country polygons at 1:10m, version 5.1.1. Geometry is pinned at commit
+[`9380cca83db5f9aef52d5e762765100745f84b27`](https://github.com/nvkelso/natural-earth-vector/tree/9380cca83db5f9aef52d5e762765100745f84b27/geojson/ne_10m_admin_0_countries.geojson);
+the subregion codes and names come from the official [UN M49](https://unstats.un.org/unsd/methodology/m49/overview/)
+English table. The derived GeoJSON asset SHA-256 is
+`7be15dfae4eb8741e2518e1bb8bd0e6f2334428ee2fcc9afc659c6377e0907c1` and is recorded in
+the frozen sample and freeze manifest.
+
+A bbox midpoint outside country polygons, inside a feature without an M49 crosswalk, or on
+an ambiguous cross-subregion boundary stays in the explicit `UNASSIGNED` stratum. The
+protocol does not infer a nearest country. Recomputing the committed 100-row prefix with
+this versioned geometry yields:
+
+| UN M49 subregion | Yes | No |
+| --- | ---: | ---: |
+| 015 Northern Africa | 4 | 2 |
+| 039 Southern Europe | 6 | 6 |
+| 143 Central Asia | 0 | 1 |
+| 145 Western Asia | 6 | 3 |
+| 151 Eastern Europe | 16 | 16 |
+| 154 Northern Europe | 11 | 8 |
+| 155 Western Europe | 2 | 8 |
+| `UNASSIGNED` | 5 | 6 |
+
+In this prefix, four yes midpoints are outside country geometry and one falls in a feature
+without an M49 crosswalk; all six unassigned no midpoints are outside the country geometry.
+
+The read-only capacity inventory reports the exact labelled-pool SHA-256
+`c3e6e8b726f41a1f9b71217767c1be94d8779a42b6b6b6fffc38d917fcfda6f4`, 319,632 source
+rows, 158 candidate codes (candidate SHA-256
+`2e6cc694da7baa8edf9debeed08a0adda719518be74e659a0533b3ae9e56afa8`), and 22,097
+deduplicated extension rows after removing the frozen prefix. The inventory's regional
+candidate row counts and H3-cell memberships are:
+
+| UN M49 subregion | Candidate rows Y/N | Candidate H3 cells Y/N | Frozen prefix Y/N |
+| --- | ---: | ---: | ---: |
+| 015 Northern Africa | 30 / 17 | 12 / 8 | 4 / 2 |
+| 034 Southern Asia | 0 / 1 | 0 / 1 | 0 / 0 |
+| 039 Southern Europe | 1,413 / 543 | 144 / 119 | 6 / 6 |
+| 143 Central Asia | 7 / 0 | 2 / 0 | 0 / 1 |
+| 145 Western Asia | 518 / 244 | 50 / 39 | 6 / 3 |
+| 151 Eastern Europe | 860 / 421 | 177 / 134 | 16 / 16 |
+| 154 Northern Europe | 10,146 / 3,021 | 234 / 177 | 11 / 8 |
+| 155 Western Europe | 2,437 / 1,219 | 124 / 108 | 2 / 8 |
+
+These regional H3-cell counts overlap: 39 yes and 34 no cells connect to more than one M49
+subregion. The flow allocator treats each H3 cell as one unit of capacity shared among its
+candidate regions, so per-region cell counts must not be summed as unique cells. The
+inventory reports 704 yes and 552 no unique known-region candidate cells, plus 877 yes and
+343 no extension rows assigned to `UNASSIGNED`; 16 geometry features have no M49 crosswalk.
+The frozen prefix was independently recomputed as shown above. Its one no-row in 143 is a
+known discrepancy with the inventory's original prefix column, which reported zero there;
+the code preserves the row and reports the recomputed assignment. Resolve that discrepancy
+before treating a resulting sample digest as approved.
+
+For each stratum (including `UNASSIGNED`), the freezer computes candidate row counts,
+overlapping per-region cell memberships and unique candidate-cell counts by decision after
+excluding the immutable prefix and duplicate sentence/polygon identities. It chooses a
+shared yes/no quota vector constrained by prefix counts and bipartite cell-to-region
+max-flow feasibility, then balances feasible stratum counts as evenly as possible. A seeded
+SHA-256 tie-break makes equal quota choices deterministic. During selection, a maximin cell
+is accepted only if a residual max-flow check proves that the remaining quota can still be
+filled. Spacing is computed separately within each decision/stratum, starting from stored
+centres of prefix rows in that stratum. Each group has one sentence per H3 cell; yes and no
+may share cells. Sentence hashes and polygon keys stay unique across the full sample.
+
+The freeze manifest records prefix counts, candidate row capacities, per-region cell
+memberships (which overlap), unique and multi-region cell counts by group, the common quota
+vector, selected counts and statuses, every selected row's region assignment, and the
+geometry/crosswalk hashes. If no common vector can fill 500 rows in each group, freezing
+fails and reports the flow capacity and quota shortfall. The sampler does not claim worldwide
+coverage when the eligible pool has no rows in a region.
+
+The capacity-only inventory suggests a common vector of 494 assigned-region rows per class
+across 015, 039, 143, 145, 151, 154 and 155, plus six `UNASSIGNED` rows per class. Its flow
+check needs 449 additional yes cells and 450 additional no cells in known regions; the
+remaining yes addition is `UNASSIGNED`, while the no prefix already has six rows there. An
+alternative suggestion adds one extra yes in region 151 and removes one yes from
+`UNASSIGNED`, producing unequal region quotas. The implementation retains the common
+yes/no-vector protocol; that alternative remains a decision for owner review and is not
+implemented. These capacity figures are a planning input, not a frozen sample or approval.
 
 By default, the extension requires the same labelled-pool and pipeline-manifest hashes as
 the base sample. The separate mode below is only for a reconstructed pipeline manifest:
@@ -88,7 +166,12 @@ the original 100 rows, and the byte-identical labelled pool
 `c3e6e8b726f41a1f9b71217767c1be94d8779a42b6b6b6fffc38d917fcfda6f4`. Before sampling,
 the freeze verifies the new manifest's `artifact_sha256["labelled-eunis.parquet"]` against
 the hash of that pool. The output records the historical manifest hash and reconstructed
-manifest hash as separate values; it does not claim that the manifest files match.
+manifest hash as separate values; it does not claim that the manifest files match. The
+available reconstructed manifest hashes to
+`c74450d5eca8fc3c08ad2e362c2792b9fbee1e51417c4799a2ebcabb60582e5b`; this differs from the
+historical manifest hash `67dd8b4d0c420496c03d897dab4ff13a0e3b1e03a459607defc1306a95478ae7`.
+The byte-identical labelled pool is verified, but these two manifest hashes remain distinct
+provenance. No 1,000-row sample has been frozen from this reconstructed run.
 
 Use the explicit option only when the available manifest is reconstructed:
 
@@ -116,11 +199,11 @@ labelled-pool SHA, base sample SHA, base manifest SHA, and base row-prefix diges
 centres remain unchanged. The extended sample validates that exact 100-row prefix by its
 pinned canonical row digest; it still checks every added row's H3 centre by exact equality.
 No coordinate tolerance is applied. It writes a separate frozen run directory. Yes and no
-groups may share an H3 cell, while each group keeps unique cells. The extension digest
-`0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a` is pinned from the
-existing `dspark-sample-1000` branch and must be confirmed by freezing the authorized full
-pool before any model run. The source pool and pipeline manifest are not present in every
-code workspace.
+groups may share an H3 cell, while each group keeps unique cells. The earlier extension
+digest `0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a` came from a
+different H3-only extension and does not apply to this M49-stratified protocol. A new sample
+digest must be produced from the verified labelled pool after the prefix discrepancy is
+resolved and before inference. The source pool is not present in every code workspace.
 
 ## Model and decoding
 

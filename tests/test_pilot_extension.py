@@ -88,8 +88,10 @@ def _write_large_pool(directory: Path) -> tuple[Path, Path]:
         for i in range(25):
             for j in range(25):
                 candidate = candidates[index % len(candidates)]
-                lat = -48.0 + 4.0 * i + (0.5 if decision == "no" else 0.0)
-                lon = -168.0 + 14.0 * j + (0.5 if decision == "no" else 0.0)
+                # Both groups share the same geographic candidate capacity, which makes the
+                # common regional quota contract feasible while keeping row identities unique.
+                lat = -48.0 + 4.0 * i
+                lon = -168.0 + 14.0 * j
                 sentence = f"large pool sentence {index} {decision}"
                 rows.append(
                     {
@@ -592,6 +594,24 @@ def test_selection_cell_validation_keeps_the_two_protocols_distinct() -> None:
         lambda: runner._require_unique_group_cells(rows, runner.SELECTION_METHOD),
     )
 
+
+def test_m49_metadata_builder_rejects_counts_that_change_after_selection() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+
+    _assert_value_error(
+        "M49 selected region counts changed during manifest construction",
+        lambda: runner._extension_geographic_metadata(
+            sample["selected_rows"], {"selected_counts_by_decision": {}}
+        ),
+    )
+
+
+def test_m49_assignment_counter_rejects_an_empty_stratum_or_status() -> None:
+    with pytest.raises(ValueError, match="M49 assignment fields are invalid"):
+        runner._m49_assignment_counts(
+            [{"decision": "yes"}], [runner.M49Assignment("", None, None, "")]
+        )
+
     rows = [
         {"decision": "yes", "h3_cell": "shared"},
         {"decision": "no", "h3_cell": "shared"},
@@ -600,6 +620,48 @@ def test_selection_cell_validation_keeps_the_two_protocols_distinct() -> None:
     _assert_value_error(
         "published pilot sample must use disjoint yes and no cells",
         lambda: runner._require_unique_group_cells(rows, runner.SELECTION_METHOD),
+    )
+
+
+def test_common_m49_quota_validation_allows_zero_quota_one_sided_regions() -> None:
+    runner._require_common_m49_group_counts(
+        {"034": 0, "039": 1},
+        {"yes": {"039": 1}, "no": {"039": 1}},
+    )
+
+
+def test_m49_unique_cell_capacity_requires_memberships_for_every_reported_cell() -> None:
+    _assert_value_error(
+        "extended frozen sample M49 unique cell capacities are invalid",
+        lambda: runner._validate_m49_group_cell_capacity(
+            "yes",
+            {"yes": 2},
+            {"yes": 0},
+            {"yes": {"039": 1}},
+        ),
+    )
+
+
+def test_m49_unique_cell_capacity_rejects_too_many_overlapping_memberships() -> None:
+    _assert_value_error(
+        "extended frozen sample M49 unique cell capacities are invalid",
+        lambda: runner._validate_m49_group_cell_capacity(
+            "yes",
+            {"yes": 2},
+            {"yes": 1},
+            {"yes": {"039": 2, "151": 2, "154": 2}},
+        ),
+    )
+
+
+def test_m49_quota_bounds_reject_a_quota_above_cell_capacity() -> None:
+    _assert_value_error(
+        "extended frozen sample M49 quota exceeds its recorded capacity",
+        lambda: runner._validate_m49_quota_bounds(
+            {"039": 2},
+            {"yes": {"039": 0}, "no": {"039": 0}},
+            {"yes": {"039": 1}, "no": {"039": 1}},
+        ),
     )
 
 
@@ -662,6 +724,15 @@ def test_freeze_extension_keeps_the_committed_base_order_and_writes_1000_rows(
     assert len(candidates) == 158
     assert extended_sample["selection"]["method"] == runner.EXTENDED_SELECTION_METHOD
     assert extended_sample["selection"]["decision_counts"] == {"no": 500, "yes": 500}
+    geography = extended_sample["selection"]["geographic_stratification"]
+    assert geography["protocol_version"] == "un-m49-10m-common-quota-cell-flow-maximin-v2"
+    assert (
+        geography["selected_counts_by_decision"]["yes"]
+        == geography["selected_counts_by_decision"]["no"]
+        == geography["target_counts_per_group"]
+    )
+    output_manifest = json.loads((extended_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert output_manifest["geographic_stratification"] == geography
 
     changed_prefix = [dict(row) for row in rows]
     changed_prefix[49]["cell_centre_lon"] = math.nextafter(
@@ -679,6 +750,148 @@ def test_freeze_extension_keeps_the_committed_base_order_and_writes_1000_rows(
     _assert_value_error(
         "frozen sample H3 cell does not match its centre",
         lambda: runner._validate_frozen_rows(changed_extension, extended_sample["selection"]),
+    )
+
+    assignments_changed = json.loads(json.dumps(extended_sample["selection"]))
+    assigned_index = next(
+        index
+        for index, item in enumerate(
+            assignments_changed["geographic_stratification"]["assignments_by_sample_id"]
+        )
+        if item["status"] == "assigned"
+    )
+    assignments_changed["geographic_stratification"]["assignments_by_sample_id"][assigned_index][
+        "stratum"
+    ] = "UNASSIGNED"
+    _assert_value_error(
+        "extended frozen sample M49 assignment does not match its coordinates",
+        lambda: runner._validate_frozen_rows(rows, assignments_changed),
+    )
+
+    capacity_changed = json.loads(json.dumps(extended_sample["selection"]))
+    geography = capacity_changed["geographic_stratification"]
+    stratum = next(
+        region
+        for region, quota in geography["target_counts_per_group"].items()
+        if quota
+        > max(
+            geography["prefix_counts_by_decision"][group].get(region, 0) for group in ("yes", "no")
+        )
+    )
+    geography["candidate_cell_capacity_by_decision"]["yes"][stratum] = 0
+    _assert_value_error(
+        "extended frozen sample M49 unique cell capacities are invalid",
+        lambda: runner._validate_frozen_rows(rows, capacity_changed),
+    )
+
+    missing_assignments = json.loads(json.dumps(extended_sample["selection"]))
+    missing_assignments["geographic_stratification"]["assignments_by_sample_id"].pop()
+    _assert_value_error(
+        "extended frozen sample M49 assignments do not cover every row",
+        lambda: runner._validate_frozen_rows(rows, missing_assignments),
+    )
+
+    assignments_reordered = json.loads(json.dumps(extended_sample["selection"]))
+    assignments_reordered["geographic_stratification"]["assignments_by_sample_id"][0][
+        "sample_id"
+    ] = "not-the-row-id"
+    _assert_value_error(
+        "extended frozen sample M49 assignment order does not match its rows",
+        lambda: runner._validate_frozen_rows(rows, assignments_reordered),
+    )
+
+    status_counts_changed = json.loads(json.dumps(extended_sample["selection"]))
+    status_counts_changed["geographic_stratification"]["assignment_status_counts_by_decision"][
+        "yes"
+    ]["assigned"] = -1
+    _assert_value_error(
+        "extended frozen sample M49 status counts do not match its rows",
+        lambda: runner._validate_frozen_rows(rows, status_counts_changed),
+    )
+
+    region_names_changed = json.loads(json.dumps(extended_sample["selection"]))
+    geography = region_names_changed["geographic_stratification"]
+    named_region = next(code for code in geography["region_names_by_code"] if code != "UNASSIGNED")
+    geography["region_names_by_code"][named_region] = "incorrect region"
+    _assert_value_error(
+        "extended frozen sample M49 region names do not match its rows",
+        lambda: runner._validate_frozen_rows(rows, region_names_changed),
+    )
+
+    selected_counts_changed = json.loads(json.dumps(extended_sample["selection"]))
+    selected_counts_changed["geographic_stratification"]["selected_counts_by_decision"]["yes"][
+        named_region
+    ] = -1
+    _assert_value_error(
+        "extended frozen sample M49 selected counts do not match its rows",
+        lambda: runner._validate_frozen_rows(rows, selected_counts_changed),
+    )
+
+    quota_changed = json.loads(json.dumps(extended_sample["selection"]))
+    quota_changed["geographic_stratification"]["target_counts_per_group"][named_region] = 0
+    _assert_value_error(
+        "extended frozen sample does not meet its common M49 quota vector",
+        lambda: runner._validate_frozen_rows(rows, quota_changed),
+    )
+
+    quota_record_missing = json.loads(json.dumps(extended_sample["selection"]))
+    quota_record_missing["geographic_stratification"]["target_counts_per_group"] = []
+    _assert_value_error(
+        "extended frozen sample M49 quota records are missing",
+        lambda: runner._validate_frozen_rows(rows, quota_record_missing),
+    )
+
+    prefix_counts_changed = json.loads(json.dumps(extended_sample["selection"]))
+    prefix_counts_changed["geographic_stratification"]["prefix_counts_by_decision"]["yes"][
+        named_region
+    ] = (
+        prefix_counts_changed["geographic_stratification"]["prefix_counts_by_decision"]["yes"].get(
+            named_region, 0
+        )
+        + 1
+    )
+    _assert_value_error(
+        "extended frozen sample M49 prefix counts do not match its base rows",
+        lambda: runner._validate_frozen_rows(rows, prefix_counts_changed),
+    )
+
+    eligible_regions_changed = json.loads(json.dumps(extended_sample["selection"]))
+    eligible_regions_changed["geographic_stratification"]["eligible_subregion_codes"] = []
+    _assert_value_error(
+        "extended frozen sample M49 eligible region list is inconsistent",
+        lambda: runner._validate_frozen_rows(rows, eligible_regions_changed),
+    )
+
+    capacity_shape_changed = json.loads(json.dumps(extended_sample["selection"]))
+    capacity_shape_changed["geographic_stratification"]["candidate_cell_capacity_by_decision"][
+        "yes"
+    ] = []
+    _assert_value_error(
+        "extended frozen sample M49 capacity records are invalid",
+        lambda: runner._validate_frozen_rows(rows, capacity_shape_changed),
+    )
+
+    capacity_value_changed = json.loads(json.dumps(extended_sample["selection"]))
+    capacity_value_changed["geographic_stratification"]["candidate_cell_capacity_by_decision"][
+        "yes"
+    ][named_region] = -1
+    _assert_value_error(
+        "extended frozen sample M49 capacities must be non-negative integers",
+        lambda: runner._validate_frozen_rows(rows, capacity_value_changed),
+    )
+
+    provenance_changed = json.loads(json.dumps(extended_sample["selection"]))
+    provenance_changed["geographic_stratification"]["geometry_asset"]["sha256"] = "0" * 64
+    _assert_value_error(
+        "extended frozen sample M49 boundary provenance is inconsistent",
+        lambda: runner._validate_frozen_rows(rows, provenance_changed),
+    )
+
+    quota_method_changed = json.loads(json.dumps(extended_sample["selection"]))
+    quota_method_changed["geographic_stratification"]["quota_method"] = "unsupported"
+    _assert_value_error(
+        "extended frozen sample M49 quota method is unsupported",
+        lambda: runner._validate_frozen_rows(rows, quota_method_changed),
     )
 
 
@@ -1447,21 +1660,26 @@ def test_select_frozen_rows_forwards_seed_to_geographic_extension(
     sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
     calls: list[int] = []
 
-    def record_seed(*_args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    def record_seed(*_args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         calls.append(kwargs["seed"])
-        return []
+        return [], {"sentinel": True}
 
-    monkeypatch.setattr(runner, "extend_geographic_sample", record_seed)
-    rows, method = runner._select_frozen_rows(
+    monkeypatch.setattr(runner, "extend_region_balanced_sample", record_seed)
+    monkeypatch.setattr(
+        runner, "_extension_geographic_metadata", lambda _rows, _metadata: {"ok": True}
+    )
+    rows, method, geography = runner._select_frozen_rows(
         [],
         500,
         42,
         BASE_SAMPLE,
         sample["source"]["sha256"],
         sample["source"]["pipeline_manifest_sha256"],
+        allow_reconstructed_pipeline_manifest=False,
     )
     assert rows == sample["selected_rows"]
     assert method == runner.EXTENDED_SELECTION_METHOD
+    assert geography == {"ok": True}
     assert calls == [42]
 
 

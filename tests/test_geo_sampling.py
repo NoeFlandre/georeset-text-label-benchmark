@@ -10,13 +10,16 @@ from typing import Any
 import pytest
 
 from georeset_text_label_benchmark.errors import DataValidationError
+from georeset_text_label_benchmark.pilot import geo_sampling
 from georeset_text_label_benchmark.pilot.geo_sampling import (
     EARTH_RADIUS_KM,
     H3_RESOLUTION,
     _haversine_km,
     _occurrence_id,
+    _region_flow_value,
     _stable_key,
     bbox_centre,
+    extend_region_balanced_sample,
     h3_cell_of,
     h3_centre_of,
     select_geographic_sample,
@@ -419,6 +422,347 @@ def test_sample_rows_carry_their_cell_and_its_centre_as_latitude_and_longitude()
         lat, lon = _point_centre_of(row["h3_cell"])
         assert row["cell_centre_lat"] == lat
         assert row["cell_centre_lon"] == lon
+
+
+def _stratified_point_row(
+    osm_id: int, decision: str, stratum: str, lat: float, lon: float
+) -> dict[str, Any]:
+    return {**_point_row(osm_id, decision, lat, lon), "m49_stratum": stratum}
+
+
+def _stratified_existing_row(
+    osm_id: int, decision: str, stratum: str, lat: float, lon: float
+) -> dict[str, Any]:
+    row = _stratified_point_row(osm_id, decision, stratum, lat, lon)
+    cell = _point_cell_of(lat, lon)
+    return {
+        **row,
+        "h3_cell": cell,
+        "cell_centre_lat": lat,
+        "cell_centre_lon": lon,
+    }
+
+
+def _stratified_extend(
+    rows: list[dict[str, Any]], existing: list[dict[str, Any]], per_group: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    return extend_region_balanced_sample(
+        rows,
+        cell_of=_point_cell_of,
+        centre_of=_point_centre_of,
+        stratum_of=lambda row: row["m49_stratum"],
+        existing=existing,
+        per_group=per_group,
+        seed=SEED,
+    )
+
+
+def test_region_balanced_extension_preserves_prefix_and_uses_common_capacity_aware_quotas() -> None:
+    existing = [
+        _stratified_existing_row(1, "yes", "039", 0.0, 0.0),
+        _stratified_existing_row(2, "yes", "154", 10.0, 0.0),
+        _stratified_existing_row(3, "no", "154", 10.0, 10.0),
+        _stratified_existing_row(4, "no", "UNASSIGNED", -10.0, 10.0),
+    ]
+    candidates = [
+        _stratified_point_row(10, "yes", "039", 1.0, 0.0),
+        _stratified_point_row(11, "yes", "154", 11.0, 0.0),
+        _stratified_point_row(12, "yes", "151", 20.0, 0.0),
+        _stratified_point_row(13, "yes", "151", 21.0, 0.0),
+        _stratified_point_row(14, "yes", "UNASSIGNED", 30.0, 0.0),
+        _stratified_point_row(15, "yes", "UNASSIGNED", 31.0, 0.0),
+        _stratified_point_row(20, "no", "039", 1.0, 10.0),
+        _stratified_point_row(21, "no", "154", 11.0, 10.0),
+        _stratified_point_row(22, "no", "151", 20.0, 10.0),
+        _stratified_point_row(23, "no", "151", 21.0, 10.0),
+        _stratified_point_row(24, "no", "UNASSIGNED", 30.0, 10.0),
+        _stratified_point_row(25, "no", "UNASSIGNED", 31.0, 10.0),
+    ]
+
+    added, metadata = _stratified_extend(candidates, existing, per_group=6)
+    repeated, _ = _stratified_extend(list(reversed(candidates)), existing, per_group=6)
+    selected = [*existing, *added]
+
+    assert repeated == added
+    assert selected[: len(existing)] == existing
+    quotas = metadata["target_counts_per_group"]
+    assert set(quotas) == {"039", "151", "154", "UNASSIGNED"}
+    assert sorted(quotas.values()) == [1, 1, 2, 2]
+    assert max(quotas.values()) - min(quotas.values()) == 1
+    assert (
+        metadata["selected_counts_by_decision"]["yes"]
+        == metadata["selected_counts_by_decision"]["no"]
+        == metadata["target_counts_per_group"]
+    )
+    for decision in ("yes", "no"):
+        selected_rows = [row for row in selected if row["decision"] == decision]
+        assert len(selected_rows) == 6
+        assert len({row["h3_cell"] for row in selected_rows}) == 6
+    assert len({row["text_sha256"] for row in selected}) == len(selected)
+    assert len({(row["source_pbf"], row["osm_type"], row["osm_id"]) for row in selected}) == len(
+        selected
+    )
+
+
+def _flow_cell_of(lat: float, lon: float) -> str:
+    group = "yes" if lon < 30 else "no"
+    if lat < 1:
+        return f"{group}-shared"
+    return f"{group}-a" if lat < 15 else f"{group}-b"
+
+
+def _flow_centre_of(cell: str) -> tuple[float, float]:
+    group, location = cell.split("-")
+    latitude = {"shared": 0.0, "a": 10.0, "b": 20.0}[location]
+    longitude = 0.0 if group == "yes" else 60.0
+    return latitude, longitude
+
+
+def test_cell_region_flow_preserves_feasibility_when_a_cell_has_multiple_regions() -> None:
+    candidates = [
+        _stratified_point_row(10, "yes", "A", 0.0, 0.0),
+        _stratified_point_row(11, "yes", "B", 0.2, 0.0),
+        _stratified_point_row(12, "yes", "A", 10.0, 0.0),
+        _stratified_point_row(20, "no", "A", 0.0, 60.0),
+        _stratified_point_row(21, "no", "B", 0.2, 60.0),
+        _stratified_point_row(22, "no", "A", 10.0, 60.0),
+    ]
+
+    added, metadata = extend_region_balanced_sample(
+        candidates,
+        cell_of=_flow_cell_of,
+        centre_of=_flow_centre_of,
+        stratum_of=lambda row: row["m49_stratum"],
+        existing=[],
+        per_group=2,
+        seed=SEED,
+    )
+
+    assert metadata["target_counts_per_group"] == {"A": 1, "B": 1}
+    assert metadata["candidate_multi_region_cell_count_by_decision"] == {"yes": 1, "no": 1}
+    assert metadata["candidate_unique_cell_count_by_decision"] == {"yes": 2, "no": 2}
+    for group in ("yes", "no"):
+        rows = [row for row in added if row["decision"] == group]
+        assert {row["m49_stratum"] for row in rows} == {"A", "B"}
+        assert len({row["h3_cell"] for row in rows}) == 2
+
+
+def test_cell_region_flow_does_not_count_a_multi_region_cell_twice() -> None:
+    candidates = [
+        _stratified_point_row(10, "yes", "A", 0.0, 0.0),
+        _stratified_point_row(11, "yes", "B", 0.2, 0.0),
+        _stratified_point_row(20, "no", "A", 10.0, 60.0),
+        _stratified_point_row(21, "no", "B", 20.0, 60.0),
+    ]
+
+    with pytest.raises(ValueError, match="cannot meet common regional quotas") as error:
+        extend_region_balanced_sample(
+            candidates,
+            cell_of=_flow_cell_of,
+            centre_of=_flow_centre_of,
+            stratum_of=lambda row: row["m49_stratum"],
+            existing=[],
+            per_group=2,
+            seed=SEED,
+        )
+
+    assert '"additional_flow_capacity_by_decision": {"no": 2, "yes": 1}' in str(error.value)
+
+
+def test_region_flow_value_reports_bottlenecked_capacity_when_cells_are_fewer_than_demand() -> None:
+    cells = {
+        **{f"a-{index}": {"A": []} for index in range(4)},
+        "b-0": {"B": []},
+    }
+
+    assert _region_flow_value(cells, {"A": 3, "B": 3}) == 4
+
+
+def test_global_cell_capacity_rejects_shortfall_before_quota_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _stratified_point_row(
+            index * 10 + offset,
+            decision,
+            f"region-{index}",
+            float(index * 10),
+            0.0 if decision == "yes" else 60.0,
+        )
+        for index in range(8)
+        for offset, decision in enumerate(("yes", "no"))
+    ]
+
+    def cell_of(_latitude: float, longitude: float) -> str:
+        return "yes-shared" if longitude < 30 else "no-shared"
+
+    def search_must_not_run(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("quota search must stop when global candidate cells cannot fill the target")
+
+    monkeypatch.setattr(geo_sampling, "_search_common_quota_completion", search_must_not_run)
+    with pytest.raises(ValueError, match="cannot meet common regional quotas") as error:
+        extend_region_balanced_sample(
+            rows,
+            cell_of=cell_of,
+            centre_of=lambda _cell: (0.0, 0.0),
+            stratum_of=lambda row: row["m49_stratum"],
+            existing=[],
+            per_group=2,
+            seed=SEED,
+        )
+
+    assert '"additional_flow_capacity_by_decision": {"no": 1, "yes": 1}' in str(error.value)
+
+
+def test_common_quota_selection_backtracks_past_a_feasible_dead_end() -> None:
+    candidates = [
+        _stratified_point_row(10, "yes", "C", 0.0, 0.0),
+        _stratified_point_row(11, "yes", "A", 10.0, 0.0),
+        _stratified_point_row(12, "yes", "B", 10.0, 0.0),
+        _stratified_point_row(20, "no", "B", 0.0, 60.0),
+        _stratified_point_row(21, "no", "A", 10.0, 60.0),
+        _stratified_point_row(22, "no", "C", 10.0, 60.0),
+    ]
+
+    def cell_of(latitude: float, longitude: float) -> str:
+        if longitude < 30.0:
+            return "yes-c" if latitude < 1.0 else "yes-ab"
+        return "no-b" if latitude < 1.0 else "no-ac"
+
+    centres = {
+        "yes-c": (0.0, 0.0),
+        "yes-ab": (10.0, 0.0),
+        "no-b": (0.0, 60.0),
+        "no-ac": (10.0, 60.0),
+    }
+    added, metadata = extend_region_balanced_sample(
+        candidates,
+        cell_of=cell_of,
+        centre_of=centres.__getitem__,
+        stratum_of=lambda row: row["m49_stratum"],
+        existing=[],
+        per_group=2,
+        seed=SEED,
+    )
+
+    assert metadata["target_counts_per_group"] == {"A": 0, "B": 1, "C": 1}
+    for group in ("yes", "no"):
+        assert {row["m49_stratum"] for row in added if row["decision"] == group} == {"B", "C"}
+
+
+def test_region_balanced_extension_reports_an_unmatchable_prefix_and_capacity_shortfall() -> None:
+    existing = [
+        _stratified_existing_row(1, "yes", "039", 0.0, 0.0),
+        _stratified_existing_row(2, "no", "154", 10.0, 10.0),
+    ]
+    candidates = [
+        _stratified_point_row(3, "yes", "039", 1.0, 0.0),
+        _stratified_point_row(4, "yes", "039", 2.0, 0.0),
+        _stratified_point_row(5, "no", "154", 11.0, 10.0),
+        _stratified_point_row(6, "no", "154", 12.0, 10.0),
+    ]
+
+    with pytest.raises(ValueError, match="cannot meet common regional quotas") as error:
+        _stratified_extend(candidates, existing, per_group=3)
+
+    assert '"shortfall_per_group": 1' in str(error.value)
+    assert '"unmatchable_prefix_strata": {"039": [1, 0], "154": [1, 0]}' in str(error.value)
+
+
+def test_region_maximin_spacing_uses_only_prefix_anchors_in_the_same_stratum() -> None:
+    existing = [
+        _stratified_existing_row(1, "yes", "A", 0.0, 0.0),
+        _stratified_existing_row(2, "yes", "B", 0.0, 91.0),
+        _stratified_existing_row(3, "no", "A", 0.0, 30.0),
+        _stratified_existing_row(4, "no", "B", 0.0, 92.0),
+    ]
+    candidates = [
+        _stratified_point_row(10, "yes", "A", 0.0, 10.0),
+        _stratified_point_row(11, "yes", "A", 0.0, 90.0),
+        _stratified_point_row(12, "yes", "B", 20.0, 20.0),
+        _stratified_point_row(13, "yes", "B", 30.0, 30.0),
+        _stratified_point_row(20, "no", "A", 0.0, 40.0),
+        _stratified_point_row(21, "no", "A", 0.0, 50.0),
+        _stratified_point_row(22, "no", "B", 40.0, 40.0),
+        _stratified_point_row(23, "no", "B", 50.0, 50.0),
+    ]
+
+    added, _ = _stratified_extend(candidates, existing, per_group=4)
+    yes_a = [row for row in added if row["decision"] == "yes" and row["m49_stratum"] == "A"]
+
+    assert len(yes_a) == 1
+    assert yes_a[0]["osm_id"] == 11
+
+
+def test_region_balanced_extension_requires_a_nonempty_stratum() -> None:
+    base = _stratified_existing_row(1, "yes", "039", 0.0, 0.0)
+    no_base = _stratified_existing_row(2, "no", "039", 0.0, 10.0)
+    candidates = [
+        _stratified_point_row(3, "yes", "", 1.0, 0.0),
+        _stratified_point_row(4, "no", "039", 1.0, 10.0),
+    ]
+
+    with pytest.raises(ValueError, match="geographic stratum must be a non-empty string"):
+        _stratified_extend(candidates, [base, no_base], per_group=2)
+
+
+def test_region_extension_skips_candidate_cells_already_in_the_prefix() -> None:
+    existing = [
+        _stratified_existing_row(1, "yes", "A", 0.0, 0.0),
+        _stratified_existing_row(2, "no", "A", 0.0, 10.0),
+    ]
+    candidates = [
+        _stratified_point_row(3, "yes", "A", 0.0, 0.0),
+        _stratified_point_row(4, "yes", "A", 0.0, 1.0),
+        _stratified_point_row(5, "no", "A", 0.0, 10.0),
+        _stratified_point_row(6, "no", "A", 0.0, 11.0),
+    ]
+
+    added, _ = _stratified_extend(candidates, existing, per_group=2)
+
+    assert {row["osm_id"] for row in added} == {4, 6}
+
+
+def test_region_extension_reports_a_prefix_that_cannot_fit_the_requested_size() -> None:
+    existing = [
+        _stratified_existing_row(1, "yes", "A", 0.0, 0.0),
+        _stratified_existing_row(2, "yes", "A", 1.0, 0.0),
+        _stratified_existing_row(3, "yes", "B", 2.0, 0.0),
+        _stratified_existing_row(4, "no", "A", 0.0, 10.0),
+        _stratified_existing_row(5, "no", "B", 1.0, 10.0),
+        _stratified_existing_row(6, "no", "B", 2.0, 10.0),
+    ]
+
+    with pytest.raises(ValueError, match="cannot meet common regional quotas") as error:
+        _stratified_extend([], existing, per_group=3)
+
+    assert '"allocated_common_total": 4' in str(error.value)
+    assert '"shortfall_per_group": 0' in str(error.value)
+
+
+def test_region_extension_reports_no_shared_candidate_capacity() -> None:
+    existing = [
+        _stratified_existing_row(1, "yes", "A", 0.0, 0.0),
+        _stratified_existing_row(2, "no", "A", 0.0, 10.0),
+    ]
+
+    with pytest.raises(ValueError, match="cannot meet common regional quotas") as error:
+        _stratified_extend([], existing, per_group=2)
+
+    assert '"shortfall_per_group": 1' in str(error.value)
+    assert '"allocated_common_total": 1' in str(error.value)
+
+
+def test_region_extension_rejects_nonpositive_size_before_reading_rows() -> None:
+    with pytest.raises(ValueError, match="per_group must be positive"):
+        _stratified_extend([], [], per_group=0)
+
+
+def test_stratification_helpers_fail_closed_on_inconsistent_internal_capacity() -> None:
+    with pytest.raises(ValueError, match="exhausted feasible A cells"):
+        geo_sampling._maximin_feasible_cell("A", {}, {"A": 1}, set(), {}, {}, SEED)
+    with pytest.raises(ValueError, match="did not fill the requested sample size"):
+        geo_sampling._require_extension_fill([], [], per_group=1)
 
 
 @pytest.mark.parametrize(

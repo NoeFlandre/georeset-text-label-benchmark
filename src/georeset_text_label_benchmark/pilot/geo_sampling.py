@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import h3
@@ -33,6 +35,7 @@ _OCCURRENCE_FIELDS = (
 
 CellOf = Callable[[float, float], str]
 CentreOf = Callable[[str], tuple[float, float]]
+StratumOf = Callable[[Mapping[str, Any]], str]
 
 
 def h3_cell_of(lat: float, lon: float) -> str:
@@ -257,6 +260,897 @@ def extend_geographic_sample(
     for group in GROUPS:
         added.extend(_extend_group(group, by_group[group], existing, per_group, centre_of, seed))
     return added
+
+
+def extend_region_balanced_sample(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    cell_of: CellOf,
+    centre_of: CentreOf,
+    stratum_of: StratumOf,
+    existing: Sequence[Mapping[str, Any]],
+    per_group: int,
+    seed: int = 42,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Extend a frozen sample with common quotas constrained by cell-to-region flow."""
+    if per_group < 1:
+        raise ValueError("per_group must be positive")
+    _validate_existing_sample(existing, per_group)
+    eligible = _deduplicate(_eligible(rows), seed)
+    candidates = _remove_existing_identities(eligible, existing)
+    by_group_region = _candidate_region_rows_by_group(candidates, cell_of, stratum_of, existing)
+    prefix_counts = _existing_stratum_counts(existing, stratum_of)
+    row_capacities, candidate_capacities, unique_cells, multi_region_cells = (
+        _candidate_region_capacities(by_group_region)
+    )
+    quotas = _common_stratum_quotas(
+        prefix_counts,
+        by_group_region,
+        per_group,
+        seed,
+        row_capacities,
+        candidate_capacities,
+    )
+    added = _extend_flow_by_region(by_group_region, existing, quotas, stratum_of, centre_of, seed)
+    _require_extension_fill(added, existing, per_group)
+    return added, {
+        "target_counts_per_group": dict(sorted(quotas.items())),
+        "prefix_counts_by_decision": _format_group_stratum_counts(prefix_counts),
+        "candidate_row_capacity_by_decision": _format_group_stratum_counts(row_capacities),
+        "candidate_cell_capacity_by_decision": _format_group_stratum_counts(candidate_capacities),
+        "candidate_unique_cell_count_by_decision": unique_cells,
+        "candidate_multi_region_cell_count_by_decision": multi_region_cells,
+        "cell_capacities_overlap_across_regions": True,
+        "selected_counts_by_decision": _format_group_stratum_counts(
+            _selected_stratum_counts(existing, added, stratum_of)
+        ),
+    }
+
+
+def _candidate_region_rows_by_group(
+    rows: Sequence[Mapping[str, Any]],
+    cell_of: CellOf,
+    stratum_of: StratumOf,
+    existing: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, dict[str, list[Mapping[str, Any]]]]]:
+    """Keep every cell-to-region edge represented by a candidate row."""
+    output: dict[str, dict[str, dict[str, list[Mapping[str, Any]]]]] = {
+        group: {} for group in GROUPS
+    }
+    used_cells = _existing_cells_by_group(existing)
+    for row in rows:
+        _add_region_candidate(row, cell_of, stratum_of, used_cells, output)
+    return output
+
+
+def _existing_cells_by_group(existing: Sequence[Mapping[str, Any]]) -> dict[str, set[str]]:
+    return {
+        group: {row["h3_cell"] for row in existing if row["decision"] == group} for group in GROUPS
+    }
+
+
+def _add_region_candidate(
+    row: Mapping[str, Any],
+    cell_of: CellOf,
+    stratum_of: StratumOf,
+    used_cells: dict[str, set[str]],
+    output: dict[str, dict[str, dict[str, list[Mapping[str, Any]]]]],
+) -> None:
+    lat, lon = bbox_centre(row)
+    cell = cell_of(lat, lon)
+    group = row["decision"]
+    if cell in used_cells[group]:
+        return
+    stratum = _validated_stratum(stratum_of(row))
+    output[group].setdefault(cell, {}).setdefault(stratum, []).append(row)
+
+
+def _validated_stratum(value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("geographic stratum must be a non-empty string")
+    return value
+
+
+def _candidate_region_capacities(
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+) -> tuple[dict[str, dict[str, int]], dict[str, dict[str, int]], dict[str, int], dict[str, int]]:
+    row_counts = _empty_group_stratum_counts()
+    cell_counts = _empty_group_stratum_counts()
+    unique_cells = _unique_candidate_cell_counts(candidates)
+    multi_region_cells = _multi_region_candidate_cell_counts(candidates)
+    _count_all_candidate_regions(candidates, row_counts, cell_counts)
+    return row_counts, cell_counts, unique_cells, multi_region_cells
+
+
+def _empty_group_stratum_counts() -> dict[str, dict[str, int]]:
+    return {group: {} for group in GROUPS}
+
+
+def _unique_candidate_cell_counts(
+    candidates: Mapping[str, Mapping[str, Any]],
+) -> dict[str, int]:
+    return {group: len(candidates[group]) for group in GROUPS}
+
+
+def _multi_region_candidate_cell_counts(
+    candidates: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> dict[str, int]:
+    return {
+        group: sum(len(regions) > 1 for regions in candidates[group].values()) for group in GROUPS
+    }
+
+
+def _count_all_candidate_regions(
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    row_counts: dict[str, dict[str, int]],
+    cell_counts: dict[str, dict[str, int]],
+) -> None:
+    for group in GROUPS:
+        _count_group_candidate_regions(group, candidates[group], row_counts, cell_counts)
+
+
+def _count_group_candidate_regions(
+    group: str,
+    candidates: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    row_counts: dict[str, dict[str, int]],
+    cell_counts: dict[str, dict[str, int]],
+) -> None:
+    for regions in candidates.values():
+        _count_candidate_region_rows(group, regions, row_counts, cell_counts)
+
+
+def _count_candidate_region_rows(
+    group: str,
+    regions: Mapping[str, Sequence[Mapping[str, Any]]],
+    row_counts: dict[str, dict[str, int]],
+    cell_counts: dict[str, dict[str, int]],
+) -> None:
+    for stratum, rows in regions.items():
+        row_counts[group][stratum] = row_counts[group].get(stratum, 0) + len(rows)
+        cell_counts[group][stratum] = cell_counts[group].get(stratum, 0) + 1
+
+
+def _existing_stratum_counts(
+    existing: Sequence[Mapping[str, Any]], stratum_of: StratumOf
+) -> dict[str, dict[str, int]]:
+    counts = {group: {} for group in GROUPS}
+    for row in existing:
+        group = row["decision"]
+        stratum = _validated_stratum(stratum_of(row))
+        counts[group][stratum] = counts[group].get(stratum, 0) + 1
+    return counts
+
+
+def _common_stratum_quotas(
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    per_group: int,
+    seed: int,
+    row_capacities: Mapping[str, Mapping[str, int]],
+    cell_capacities: Mapping[str, Mapping[str, int]],
+) -> dict[str, int]:
+    strata = _observed_strata(prefix, candidates)
+    quotas = _minimum_common_quotas(strata, prefix)
+    if (
+        sum(quotas.values()) > per_group
+        or _global_candidate_capacity_is_insufficient(per_group, prefix, candidates)
+        or not _common_quota_is_feasible(quotas, prefix, candidates)
+    ):
+        raise _region_capacity_error(
+            per_group, quotas, prefix, candidates, row_capacities, cell_capacities
+        )
+    maximums = _maximum_common_quota_bounds(strata, prefix, cell_capacities)
+    completed = _search_common_quota_completion(
+        quotas,
+        strata,
+        maximums,
+        prefix,
+        candidates,
+        per_group,
+        seed,
+        set(),
+    )
+    if completed is None:
+        raise _region_capacity_error(
+            per_group, quotas, prefix, candidates, row_capacities, cell_capacities
+        )
+    return dict(sorted(completed.items()))
+
+
+def _observed_strata(
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+) -> list[str]:
+    observed = set(prefix["yes"]) | set(prefix["no"])
+    for group in GROUPS:
+        observed.update(_candidate_strata(candidates[group]))
+    return sorted(observed)
+
+
+def _candidate_strata(
+    candidates: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+) -> set[str]:
+    return {stratum for regions in candidates.values() for stratum in regions}
+
+
+def _minimum_common_quotas(
+    strata: Sequence[str], prefix: Mapping[str, Mapping[str, int]]
+) -> dict[str, int]:
+    return {stratum: max(prefix[group].get(stratum, 0) for group in GROUPS) for stratum in strata}
+
+
+def _global_candidate_capacity_is_insufficient(
+    per_group: int,
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+) -> bool:
+    return any(len(candidates[group]) < per_group - sum(prefix[group].values()) for group in GROUPS)
+
+
+def _common_quota_is_feasible(
+    quotas: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+) -> bool:
+    return all(_group_quota_is_feasible(group, quotas, prefix, candidates) for group in GROUPS)
+
+
+def _group_quota_is_feasible(
+    group: str,
+    quotas: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+) -> bool:
+    demands = _regional_demands(quotas, prefix[group])
+    return _region_flow_value(candidates[group], demands) == sum(demands.values())
+
+
+def _regional_demands(quotas: Mapping[str, int], prefix: Mapping[str, int]) -> dict[str, int]:
+    return {stratum: quota - prefix.get(stratum, 0) for stratum, quota in quotas.items()}
+
+
+def _maximum_common_quota_bounds(
+    strata: Sequence[str],
+    prefix: Mapping[str, Mapping[str, int]],
+    cell_capacities: Mapping[str, Mapping[str, int]],
+) -> dict[str, int]:
+    return {
+        stratum: min(
+            prefix[group].get(stratum, 0) + cell_capacities[group].get(stratum, 0)
+            for group in GROUPS
+        )
+        for stratum in strata
+    }
+
+
+def _search_common_quota_completion(
+    quotas: dict[str, int],
+    strata: Sequence[str],
+    maximums: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    per_group: int,
+    seed: int,
+    failed_states: set[tuple[int, ...]],
+) -> dict[str, int] | None:
+    initial_state = _quota_state(quotas, strata)
+    if sum(initial_state) == per_group:
+        return quotas
+    if _quota_search_state_is_exhausted(
+        initial_state,
+        failed_states,
+        quotas,
+        strata,
+        maximums,
+        per_group - sum(initial_state),
+    ):
+        failed_states.add(initial_state)
+        return None
+    return _search_common_quota_stack(
+        [_quota_search_frame(initial_state, strata, seed)],
+        strata,
+        maximums,
+        prefix,
+        candidates,
+        per_group,
+        seed,
+        failed_states,
+    )
+
+
+def _quota_state(quotas: Mapping[str, int], strata: Sequence[str]) -> tuple[int, ...]:
+    return tuple(quotas[stratum] for stratum in strata)
+
+
+def _quota_counts(state: tuple[int, ...], strata: Sequence[str]) -> dict[str, int]:
+    return dict(zip(strata, state, strict=True))
+
+
+def _quota_search_frame(
+    state: tuple[int, ...], strata: Sequence[str], seed: int
+) -> _QuotaSearchFrame:
+    quotas = _quota_counts(state, strata)
+    ordered = sorted(strata, key=lambda item: (quotas[item], _stable_key(seed, item)))
+    return _QuotaSearchFrame(state, ordered)
+
+
+def _quota_search_state_is_exhausted(
+    state: tuple[int, ...],
+    failed_states: set[tuple[int, ...]],
+    quotas: Mapping[str, int],
+    strata: Sequence[str],
+    maximums: Mapping[str, int],
+    remaining: int,
+) -> bool:
+    return state in failed_states or _quota_upper_bounds_cannot_fill(
+        quotas, strata, maximums, remaining
+    )
+
+
+def _search_common_quota_stack(
+    stack: list[_QuotaSearchFrame],
+    strata: Sequence[str],
+    maximums: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    per_group: int,
+    seed: int,
+    failed_states: set[tuple[int, ...]],
+) -> dict[str, int] | None:
+    while stack:
+        frame = stack[-1]
+        trial = _next_quota_trial(frame, strata, maximums)
+        if trial is None:
+            if frame.next_index == len(frame.ordered_strata):
+                failed_states.add(frame.state)
+                stack.pop()
+            continue
+        completed = _accept_quota_trial(
+            trial,
+            strata,
+            maximums,
+            prefix,
+            candidates,
+            per_group,
+            seed,
+            failed_states,
+            stack,
+        )
+        if completed is not None:
+            return completed
+    return None
+
+
+def _next_quota_trial(
+    frame: _QuotaSearchFrame, strata: Sequence[str], maximums: Mapping[str, int]
+) -> tuple[int, ...] | None:
+    if frame.next_index >= len(frame.ordered_strata):
+        return None
+    stratum = frame.ordered_strata[frame.next_index]
+    frame.next_index += 1
+    index = strata.index(stratum)
+    if frame.state[index] >= maximums[stratum]:
+        return None
+    trial = list(frame.state)
+    trial[index] += 1
+    return tuple(trial)
+
+
+def _accept_quota_trial(
+    trial: tuple[int, ...],
+    strata: Sequence[str],
+    maximums: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    per_group: int,
+    seed: int,
+    failed_states: set[tuple[int, ...]],
+    stack: list[_QuotaSearchFrame],
+) -> dict[str, int] | None:
+    if trial in failed_states:
+        return None
+    quotas = _quota_counts(trial, strata)
+    if not _common_quota_is_feasible(quotas, prefix, candidates):
+        failed_states.add(trial)
+        return None
+    total = sum(trial)
+    if total == per_group:
+        return quotas
+    if _quota_upper_bounds_cannot_fill(quotas, strata, maximums, per_group - total):
+        failed_states.add(trial)
+        return None
+    stack.append(_quota_search_frame(trial, strata, seed))
+    return None
+
+
+def _quota_upper_bounds_cannot_fill(
+    quotas: Mapping[str, int],
+    strata: Sequence[str],
+    maximums: Mapping[str, int],
+    remaining: int,
+) -> bool:
+    return sum(maximums[stratum] - quotas[stratum] for stratum in strata) < remaining
+
+
+def _region_capacity_error(
+    per_group: int,
+    quotas: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    row_capacities: Mapping[str, Mapping[str, int]],
+    cell_capacities: Mapping[str, Mapping[str, int]],
+) -> ValueError:
+    detail = _region_capacity_error_details(
+        per_group, quotas, prefix, candidates, row_capacities, cell_capacities
+    )
+    return ValueError(f"cannot meet common regional quotas: {json.dumps(detail, sort_keys=True)}")
+
+
+def _region_capacity_error_details(
+    per_group: int,
+    quotas: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    row_capacities: Mapping[str, Mapping[str, int]],
+    cell_capacities: Mapping[str, Mapping[str, int]],
+) -> dict[str, Any]:
+    unique_cells, multi_region_cells = _candidate_cell_summary(candidates)
+    lower, upper = _common_region_prefix_bounds(prefix, cell_capacities, quotas)
+    strata = sorted(lower)
+    return {
+        "per_group": per_group,
+        "prefix_counts_by_decision": _format_group_stratum_counts(prefix),
+        "candidate_row_capacity_by_decision": _format_group_stratum_counts(row_capacities),
+        "candidate_cell_capacity_by_decision": _format_group_stratum_counts(cell_capacities),
+        "candidate_unique_cell_count_by_decision": unique_cells,
+        "candidate_multi_region_cell_count_by_decision": multi_region_cells,
+        "additional_flow_capacity_by_decision": _candidate_flow_capacities(candidates, per_group),
+        "minimum_common_quota_by_stratum": dict(sorted(quotas.items())),
+        "unmatchable_prefix_strata": _unmatchable_prefix_strata(strata, lower, upper),
+        "allocated_common_total": sum(quotas.values()),
+        "shortfall_per_group": max(0, per_group - sum(quotas.values())),
+        "cell_capacities_overlap_across_regions": True,
+    }
+
+
+def _candidate_cell_summary(
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+) -> tuple[dict[str, int], dict[str, int]]:
+    return (
+        _unique_candidate_cell_counts(candidates),
+        _multi_region_candidate_cell_counts(candidates),
+    )
+
+
+def _common_region_prefix_bounds(
+    prefix: Mapping[str, Mapping[str, int]],
+    cell_capacities: Mapping[str, Mapping[str, int]],
+    quotas: Mapping[str, int],
+) -> tuple[dict[str, int], dict[str, int]]:
+    strata = sorted(set(prefix["yes"]) | set(prefix["no"]) | set(quotas))
+    lower: dict[str, int] = {}
+    upper: dict[str, int] = {}
+    for stratum in strata:
+        lower[stratum] = max(prefix[group].get(stratum, 0) for group in GROUPS)
+        upper[stratum] = min(
+            prefix[group].get(stratum, 0) + cell_capacities[group].get(stratum, 0)
+            for group in GROUPS
+        )
+    return lower, upper
+
+
+def _unmatchable_prefix_strata(
+    strata: Sequence[str], lower: Mapping[str, int], upper: Mapping[str, int]
+) -> dict[str, list[int]]:
+    return {
+        stratum: [lower[stratum], upper[stratum]]
+        for stratum in strata
+        if lower[stratum] > upper[stratum]
+    }
+
+
+def _candidate_flow_capacities(
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    per_group: int,
+) -> dict[str, int]:
+    return {
+        group: _region_flow_value(
+            candidates[group],
+            dict.fromkeys(_candidate_strata(candidates[group]), per_group),
+        )
+        for group in GROUPS
+    }
+
+
+def _region_flow_value(
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    demands: Mapping[str, int],
+    excluded_cells: set[str] | None = None,
+) -> int:
+    required = sum(demands.values())
+    if required <= 0:
+        return 0
+    graph, source, sink, _available_cells = _region_flow_graph(cells, demands, excluded_cells)
+    return _maximum_flow(graph, source, sink, required)
+
+
+def _region_flow_graph(
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    demands: Mapping[str, int],
+    excluded_cells: set[str] | None,
+) -> tuple[list[list[_FlowEdge]], int, int, list[str]]:
+    regions = _required_flow_regions(demands)
+    available_cells = _available_flow_cells(cells, regions, excluded_cells)
+    graph, source, sink, region_nodes = _flow_graph_nodes(len(available_cells), regions)
+    _add_region_flow_edges(graph, cells, demands, available_cells, region_nodes, source, sink)
+    return graph, source, sink, available_cells
+
+
+def _required_flow_regions(demands: Mapping[str, int]) -> list[str]:
+    return [stratum for stratum, demand in sorted(demands.items()) if demand > 0]
+
+
+def _available_flow_cells(
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    regions: Sequence[str],
+    excluded_cells: set[str] | None,
+) -> list[str]:
+    return sorted(
+        cell
+        for cell, cell_regions in cells.items()
+        if _is_available_flow_cell(cell, cell_regions, regions, excluded_cells)
+    )
+
+
+def _is_available_flow_cell(
+    cell: str,
+    cell_regions: Mapping[str, Any],
+    regions: Sequence[str],
+    excluded_cells: set[str] | None,
+) -> bool:
+    return (excluded_cells is None or cell not in excluded_cells) and any(
+        stratum in regions for stratum in cell_regions
+    )
+
+
+def _flow_graph_nodes(
+    cell_count: int, regions: Sequence[str]
+) -> tuple[list[list[_FlowEdge]], int, int, dict[str, int]]:
+    source = 0
+    cell_start = 1
+    region_start = cell_start + cell_count
+    sink = region_start + len(regions)
+    graph: list[list[_FlowEdge]] = [[] for _ in range(sink + 1)]
+    region_nodes = {stratum: region_start + index for index, stratum in enumerate(regions)}
+    return graph, source, sink, region_nodes
+
+
+def _add_region_flow_edges(
+    graph: list[list[_FlowEdge]],
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    demands: Mapping[str, int],
+    available_cells: Sequence[str],
+    region_nodes: Mapping[str, int],
+    source: int,
+    sink: int,
+) -> None:
+    for index, cell in enumerate(available_cells):
+        cell_node = index + 1
+        _add_flow_edge(graph, source, cell_node, 1)
+        for stratum in sorted(cells[cell]):
+            if stratum in region_nodes:
+                _add_flow_edge(graph, cell_node, region_nodes[stratum], 1)
+    for stratum, node in region_nodes.items():
+        _add_flow_edge(graph, node, sink, demands[stratum])
+
+
+@dataclass
+class _FlowEdge:
+    target: int
+    residual: int
+    reverse_index: int
+
+
+@dataclass
+class _QuotaSearchFrame:
+    state: tuple[int, ...]
+    ordered_strata: list[str]
+    next_index: int = 0
+
+
+def _add_flow_edge(graph: list[list[_FlowEdge]], source: int, target: int, capacity: int) -> None:
+    forward = _FlowEdge(target, capacity, len(graph[target]))
+    reverse = _FlowEdge(source, 0, len(graph[source]))
+    graph[source].append(forward)
+    graph[target].append(reverse)
+
+
+def _maximum_flow(graph: list[list[_FlowEdge]], source: int, sink: int, limit: int) -> int:
+    flow = 0
+    while flow < limit:
+        levels = _flow_levels(graph, source)
+        if levels[sink] < 0:
+            return flow
+        cursors = [0] * len(graph)
+        flow = _send_available_flow(graph, levels, cursors, source, sink, flow, limit)
+    return flow
+
+
+def _flow_levels(graph: list[list[_FlowEdge]], source: int) -> list[int]:
+    levels = [-1] * len(graph)
+    levels[source] = 0
+    pending = deque([source])
+    while pending:
+        node = pending.popleft()
+        for edge in graph[node]:
+            if edge.residual and levels[edge.target] < 0:
+                levels[edge.target] = levels[node] + 1
+                pending.append(edge.target)
+    return levels
+
+
+def _send_available_flow(
+    graph: list[list[_FlowEdge]],
+    levels: Sequence[int],
+    cursors: list[int],
+    node: int,
+    sink: int,
+    flow: int,
+    limit: int,
+) -> int:
+    while flow < limit:
+        sent = _send_one_flow_path(graph, levels, cursors, node, sink, limit - flow)
+        if sent == 0:
+            return flow
+        flow += sent
+    return flow
+
+
+def _send_one_flow_path(
+    graph: list[list[_FlowEdge]],
+    levels: Sequence[int],
+    cursors: list[int],
+    node: int,
+    sink: int,
+    amount: int,
+) -> int:
+    if node == sink:
+        return amount
+    while cursors[node] < len(graph[node]):
+        sent = _send_flow_edge_at_cursor(graph, levels, cursors, node, sink, amount)
+        if sent > 0:
+            return sent
+        cursors[node] += 1
+    return 0
+
+
+def _send_flow_edge_at_cursor(
+    graph: list[list[_FlowEdge]],
+    levels: Sequence[int],
+    cursors: list[int],
+    node: int,
+    sink: int,
+    amount: int,
+) -> int:
+    edge = graph[node][cursors[node]]
+    if edge.residual <= 0 or levels[edge.target] != levels[node] + 1:
+        return 0
+    sent = _send_one_flow_path(
+        graph, levels, cursors, edge.target, sink, min(amount, edge.residual)
+    )
+    if sent == 0:
+        return 0
+    edge.residual -= sent
+    graph[edge.target][edge.reverse_index].residual += sent
+    return sent
+
+
+def _extend_flow_by_region(
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    existing: Sequence[Mapping[str, Any]],
+    quotas: Mapping[str, int],
+    stratum_of: StratumOf,
+    centre_of: CentreOf,
+    seed: int,
+) -> list[dict[str, Any]]:
+    added: list[dict[str, Any]] = []
+    for group in GROUPS:
+        added.extend(
+            _extend_flow_group(
+                group, candidates[group], existing, quotas, stratum_of, centre_of, seed
+            )
+        )
+    return added
+
+
+def _extend_flow_group(
+    group: str,
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    existing: Sequence[Mapping[str, Any]],
+    quotas: Mapping[str, int],
+    stratum_of: StratumOf,
+    centre_of: CentreOf,
+    seed: int,
+) -> list[dict[str, Any]]:
+    prefix = _flow_group_prefix(existing, group)
+    prefix_counts = _existing_stratum_counts(prefix, stratum_of)[group]
+    demands = _regional_demands(quotas, prefix_counts)
+    _require_group_flow_capacity(group, cells, demands)
+    centres = _flow_candidate_centres(cells, centre_of)
+    anchors = _prefix_centres_by_region(prefix, stratum_of)
+    selected_cells: set[str] = set()
+    selected_counts: dict[str, int] = dict.fromkeys(demands, 0)
+    added: list[dict[str, Any]] = []
+    while any(demand > 0 for demand in demands.values()):
+        _select_next_flow_cell(
+            cells,
+            demands,
+            prefix_counts,
+            selected_counts,
+            selected_cells,
+            centres,
+            anchors,
+            added,
+            seed,
+        )
+    return added
+
+
+def _flow_group_prefix(
+    existing: Sequence[Mapping[str, Any]], group: str
+) -> list[Mapping[str, Any]]:
+    return [row for row in existing if row["decision"] == group]
+
+
+def _flow_candidate_centres(
+    cells: Mapping[str, Any], centre_of: CentreOf
+) -> dict[str, tuple[float, float]]:
+    return {cell: centre_of(cell) for cell in cells}
+
+
+def _require_group_flow_capacity(
+    group: str,
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    demands: Mapping[str, int],
+) -> None:
+    if _region_flow_value(cells, demands) != sum(demands.values()):
+        raise ValueError(f"M49 flow allocation is infeasible for {group}")
+
+
+def _select_next_flow_cell(
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    demands: dict[str, int],
+    prefix_counts: Mapping[str, int],
+    selected_counts: dict[str, int],
+    selected_cells: set[str],
+    centres: Mapping[str, tuple[float, float]],
+    anchors: dict[str, list[tuple[float, float]]],
+    added: list[dict[str, Any]],
+    seed: int,
+) -> None:
+    stratum = _least_filled_region(prefix_counts, selected_counts, demands, seed)
+    cell = _maximin_feasible_cell(stratum, cells, demands, selected_cells, centres, anchors, seed)
+    added.append(_row_for_extension_cell(cells[cell][stratum][0], cell, centres[cell]))
+    selected_cells.add(cell)
+    demands[stratum] -= 1
+    selected_counts[stratum] += 1
+    anchors.setdefault(stratum, []).append(centres[cell])
+
+
+def _prefix_centres_by_region(
+    prefix: Sequence[Mapping[str, Any]], stratum_of: StratumOf
+) -> dict[str, list[tuple[float, float]]]:
+    anchors: dict[str, list[tuple[float, float]]] = {}
+    for row in prefix:
+        stratum = _validated_stratum(stratum_of(row))
+        anchors.setdefault(stratum, []).append((row["cell_centre_lat"], row["cell_centre_lon"]))
+    return anchors
+
+
+def _least_filled_region(
+    prefix_counts: Mapping[str, int],
+    selected_counts: Mapping[str, int],
+    demands: Mapping[str, int],
+    seed: int,
+) -> str:
+    available = [stratum for stratum, demand in demands.items() if demand > 0]
+    return min(
+        available,
+        key=lambda stratum: (
+            prefix_counts.get(stratum, 0) + selected_counts[stratum],
+            _stable_key(seed, stratum),
+        ),
+    )
+
+
+def _maximin_feasible_cell(
+    stratum: str,
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    demands: Mapping[str, int],
+    selected_cells: set[str],
+    centres: Mapping[str, tuple[float, float]],
+    anchors: Mapping[str, Sequence[tuple[float, float]]],
+    seed: int,
+) -> str:
+    ranked = _rank_maximin_candidates(stratum, cells, selected_cells, centres, anchors, seed)
+    return _first_flow_feasible_candidate(stratum, ranked, cells, demands, selected_cells)
+
+
+def _rank_maximin_candidates(
+    stratum: str,
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    selected_cells: set[str],
+    centres: Mapping[str, tuple[float, float]],
+    anchors: Mapping[str, Sequence[tuple[float, float]]],
+    seed: int,
+) -> list[str]:
+    candidates = [
+        cell for cell, regions in cells.items() if cell not in selected_cells and stratum in regions
+    ]
+    return sorted(
+        candidates,
+        key=lambda cell: (
+            -_nearest_anchor_distance(centres[cell], anchors.get(stratum, ())),
+            _stable_key(seed, cell),
+        ),
+    )
+
+
+def _first_flow_feasible_candidate(
+    stratum: str,
+    ranked: Sequence[str],
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    demands: Mapping[str, int],
+    selected_cells: set[str],
+) -> str:
+    for cell in ranked:
+        if _candidate_preserves_flow(stratum, cell, cells, demands, selected_cells):
+            return cell
+    raise ValueError(f"M49 maximin selection exhausted feasible {stratum} cells")
+
+
+def _candidate_preserves_flow(
+    stratum: str,
+    cell: str,
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    demands: Mapping[str, int],
+    selected_cells: set[str],
+) -> bool:
+    trial_demands = dict(demands)
+    trial_demands[stratum] -= 1
+    excluded = {*selected_cells, cell}
+    return _region_flow_value(cells, trial_demands, excluded) == sum(trial_demands.values())
+
+
+def _nearest_anchor_distance(
+    centre: tuple[float, float], anchors: Sequence[tuple[float, float]]
+) -> float:
+    return min((_haversine_km(centre, anchor) for anchor in anchors), default=math.inf)
+
+
+def _require_extension_fill(
+    added: Sequence[Mapping[str, Any]],
+    existing: Sequence[Mapping[str, Any]],
+    per_group: int,
+) -> None:
+    expected = len(GROUPS) * per_group - len(existing)
+    if len(added) != expected:
+        raise ValueError("regional extension did not fill the requested sample size")
+
+
+def _format_group_stratum_counts(
+    counts: Mapping[str, Mapping[str, int]],
+) -> dict[str, dict[str, int]]:
+    return {group: dict(sorted(counts[group].items())) for group in GROUPS}
+
+
+def _selected_stratum_counts(
+    existing: Sequence[Mapping[str, Any]],
+    added: Sequence[Mapping[str, Any]],
+    stratum_of: StratumOf,
+) -> dict[str, dict[str, int]]:
+    counts = _existing_stratum_counts([*existing, *added], stratum_of)
+    return counts
 
 
 def _validate_existing_sample(existing: Sequence[Mapping[str, Any]], per_group: int) -> None:
