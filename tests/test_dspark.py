@@ -1161,6 +1161,9 @@ def test_runner_preserves_output_created_during_inference(
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
+    monkeypatch.setattr(
+        dspark, "template_sha256", lambda _tokenizer: dspark.TARGET_CHAT_TEMPLATE_SHA256
+    )
     monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: engine)
     monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
     monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
@@ -1230,6 +1233,9 @@ def test_runner_does_not_leave_a_partial_directory_when_an_output_write_fails(
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
+    monkeypatch.setattr(
+        dspark, "template_sha256", lambda _tokenizer: dspark.TARGET_CHAT_TEMPLATE_SHA256
+    )
     monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: engine)
     monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
     monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
@@ -1290,6 +1296,9 @@ def test_runner_recovers_a_published_subset_without_gpu_or_model_load(
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
     monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
+    monkeypatch.setattr(
+        dspark, "template_sha256", lambda _tokenizer: dspark.TARGET_CHAT_TEMPLATE_SHA256
+    )
     monkeypatch.setattr(dspark, "SGLangEngine", lambda *_args: engine)
     monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
     monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
@@ -1588,6 +1597,35 @@ def test_dspark_resume_accepts_legacy_512_stage_for_default_profile(tmp_path: Pa
         sample,
         dspark.DEFAULT_GENERATION_PROFILE,
     )
+
+
+def test_dspark_resume_rejects_rehashed_default_stage_with_changed_sampling(
+    tmp_path: Path,
+) -> None:
+    sample = {
+        "candidate_labels": {"codes": ["T11"]},
+        "selection": {"sample_ids_sha256": "a" * 64},
+    }
+    changed_config = dspark_runner._generation_config(
+        dspark.TARGET_CHAT_TEMPLATE_SHA256,
+        sample,
+        dspark.DEFAULT_GENERATION_PROFILE,
+    )
+    changed_config["sampling"] = {**changed_config["sampling"], "temperature": 0.9}
+    manifest = {
+        "generation_config": changed_config,
+        "generation_config_sha256": dspark_runner._sha256_json(changed_config),
+    }
+
+    with pytest.raises(
+        ValueError, match="retained DSpark staging generation config does not match"
+    ):
+        dspark_runner._validate_staged_generation_config(
+            tmp_path / "staging",
+            manifest,
+            sample,
+            dspark.DEFAULT_GENERATION_PROFILE,
+        )
 
 
 def test_dspark_resume_requires_exact_named_profile_and_hash(tmp_path: Path) -> None:

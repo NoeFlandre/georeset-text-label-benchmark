@@ -747,13 +747,17 @@ def _validate_staged_generation_config(
     else:
         profile = generation_profile
     if profile.profile_id == dspark.DEFAULT_GENERATION_PROFILE:
-        _validate_staged_default_generation_config(staging, manifest)
+        _validate_staged_default_generation_config(staging, manifest, sample)
         return
     _validate_staged_named_generation_config(staging, manifest, sample, profile)
 
 
-def _validate_staged_default_generation_config(staging: Path, manifest: Mapping[str, Any]) -> None:
-    if _is_default_staged_generation_config(manifest):
+def _validate_staged_default_generation_config(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    sample: Mapping[str, Any],
+) -> None:
+    if _is_default_staged_generation_config(manifest, sample):
         return
     raise ValueError(
         f"retained DSpark staging generation config does not match this profile: {staging}"
@@ -776,27 +780,14 @@ def _validate_staged_named_generation_config(
     )
 
 
-def _is_default_staged_generation_config(manifest: Mapping[str, Any]) -> bool:
-    """Accept a hashed 512-token stage without accepting absent or malformed config."""
-    if "generation_config" not in manifest:
-        return False
-    config = manifest.get("generation_config")
-    if not isinstance(config, Mapping):
-        return False
-    if not _uses_default_generation_budget(config):
-        return False
-    return manifest.get("generation_config_sha256") == _sha256_json(config)
-
-
-def _uses_default_generation_budget(config: Mapping[str, Any]) -> bool:
-    sampling = config.get("sampling")
-    if not isinstance(sampling, Mapping):
-        return False
-    return (
-        "generation_profile" not in config
-        and config.get("maximum_new_tokens") == dspark.MAX_NEW_TOKENS
-        and sampling.get("max_new_tokens") == dspark.MAX_NEW_TOKENS
-    )
+def _is_default_staged_generation_config(
+    manifest: Mapping[str, Any], sample: Mapping[str, Any]
+) -> bool:
+    """Accept only the exact historical 512-token config and its matching hash."""
+    expected = _generation_config(dspark.TARGET_CHAT_TEMPLATE_SHA256, sample)
+    return manifest.get("generation_config") == expected and manifest.get(
+        "generation_config_sha256"
+    ) == _sha256_json(expected)
 
 
 def _read_staged_dspark_manifest(staging: Path) -> Mapping[str, Any]:
