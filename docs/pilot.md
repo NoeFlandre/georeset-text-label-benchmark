@@ -210,7 +210,8 @@ groups may share an H3 cell, while each group keeps unique cells. The earlier ex
 digest `0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a` came from a
 different H3-only extension and does not apply to this M49-stratified protocol. A new sample
 digest must be produced from the verified labelled pool after the prefix discrepancy is
-resolved and before inference. The source pool is not present in every code workspace.
+resolved and before inference. DSpark refuses 1,000-row inference until the approved M49
+sample digest is explicitly pinned. The source pool is not present in every code workspace.
 
 ## Model and decoding
 

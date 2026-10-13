@@ -339,9 +339,7 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
         "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d"
     )
     assert dspark.SUPPORTED_SAMPLE_SIZES == (100, 1000)
-    assert dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE[1000] == (
-        "0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a"
-    )
+    assert 1000 not in dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE
     assert dspark.engine_kwargs() == {
         "model_path": "LiquidAI/LFM2.5-2.6B",
         "revision": "654f9463ce32b05d0429d76fe1f580b27d4c1ac0",
@@ -2699,22 +2697,30 @@ def test_runner_rejects_sample_protocol_drift(
     assert str(error.value) == message
 
 
-def test_runner_accepts_only_the_pinned_1000_row_extension() -> None:
+@pytest.mark.parametrize(
+    "sample_ids_sha256",
+    [
+        "0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a",
+        "a" * 64,
+    ],
+)
+def test_runner_rejects_unapproved_1000_row_extension_digest(
+    sample_ids_sha256: str,
+) -> None:
     sample = {
         "selection": {
             "sample_size": 1000,
             "per_group": 500,
             "seed": 42,
             "method": runner.EXTENDED_SELECTION_METHOD,
-            "sample_ids_sha256": dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE[1000],
+            "sample_ids_sha256": sample_ids_sha256,
         },
         "candidate_labels": {"sha256": CANDIDATE_LABELS_SHA256},
     }
 
-    dspark_runner._validate_published_sample(sample, [{}] * 1000)
-
-    sample["selection"]["sample_ids_sha256"] = "0" * 64
-    with pytest.raises(ValueError, match="frozen sample IDs do not match the published pilot"):
+    with pytest.raises(
+        ValueError, match="1,000-row sample ID digest has not been approved for inference"
+    ):
         dspark_runner._validate_published_sample(sample, [{}] * 1000)
 
 

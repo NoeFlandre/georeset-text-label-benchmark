@@ -1215,7 +1215,9 @@ def _validate_sample_digests(sample: Mapping[str, Any]) -> None:
         if sample_size == SAMPLE_SIZE
         else dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE.get(sample_size)
     )
-    if expected is None or selection["sample_ids_sha256"] != expected:
+    if expected is None:
+        raise ValueError("1,000-row sample ID digest has not been approved for inference")
+    if selection["sample_ids_sha256"] != expected:
         raise ValueError("frozen sample IDs do not match the published pilot")
     if sample["candidate_labels"]["sha256"] != CANDIDATE_LABELS_SHA256:
         raise ValueError("candidate CSV hash does not match the published pilot")
