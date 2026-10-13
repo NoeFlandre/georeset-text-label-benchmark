@@ -28,7 +28,9 @@ from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
     EXPECTED_BASE_FROZEN_SAMPLE_SHA256,
     EXPECTED_BASE_MANIFEST_SHA256,
+    EXPECTED_BASE_PIPELINE_MANIFEST_SHA256,
     EXPECTED_BASE_SELECTED_ROWS_SHA256,
+    EXPECTED_LABELLED_POOL_SHA256,
     EXPECTED_SAMPLE_IDS_SHA256,
     SAMPLE_SEED,
     SAMPLE_SIZE,
@@ -69,6 +71,7 @@ class _FreezeInputs:
     labelled_hash: str
     pipeline_hash: str
     candidate_hash: str
+    pipeline_manifest_provenance: Mapping[str, Any] | None = None
 
 
 def sha256_file(path: Path) -> str:
@@ -211,10 +214,10 @@ def freeze_sample(
     per_group: int = SAMPLE_SIZE // 2,
     seed: int = SAMPLE_SEED,
     extend_from: Path | None = None,
+    allow_reconstructed_pipeline_manifest: bool = False,
 ) -> dict[str, Any]:
     """Write the geographic yes/no sample and its candidate table before inference."""
-    if output_dir.exists():
-        raise FileExistsError(f"pilot directory already exists: {output_dir}")
+    _validate_freeze_request(output_dir, extend_from, allow_reconstructed_pipeline_manifest)
     labelled_hash, candidate_hash, manifest = _validate_freeze_inputs(
         labelled_parquet, candidate_csv, pipeline_manifest, expected_candidate_sha256
     )
@@ -225,7 +228,13 @@ def freeze_sample(
     candidates = build_candidate_labels(source_rows, taxonomy)
     _validate_candidate_count(candidates)
     selected, method = _select_frozen_rows(
-        source_rows, per_group, seed, extend_from, labelled_hash, pipeline_hash
+        source_rows,
+        per_group,
+        seed,
+        extend_from,
+        labelled_hash,
+        pipeline_hash,
+        allow_reconstructed_pipeline_manifest=allow_reconstructed_pipeline_manifest,
     )
     sample = _frozen_sample(
         _FreezeInputs(
@@ -233,6 +242,12 @@ def freeze_sample(
             labelled_hash=labelled_hash,
             pipeline_hash=pipeline_hash,
             candidate_hash=candidate_hash,
+            pipeline_manifest_provenance=_extension_manifest_provenance(
+                extend_from,
+                allow_reconstructed_pipeline_manifest,
+                pipeline_hash,
+                labelled_hash,
+            ),
         ),
         source_rows,
         candidates,
@@ -248,6 +263,32 @@ def freeze_sample(
     return _freeze_summary(output_dir, per_group * 2, len(candidates), sample)
 
 
+def _validate_freeze_request(
+    output_dir: Path,
+    extend_from: Path | None,
+    allow_reconstructed_pipeline_manifest: bool,
+) -> None:
+    if allow_reconstructed_pipeline_manifest and extend_from is None:
+        raise ValueError("reconstructed pipeline manifest mode requires --extend-from")
+    if output_dir.exists():
+        raise FileExistsError(f"pilot directory already exists: {output_dir}")
+
+
+def _extension_manifest_provenance(
+    extend_from: Path | None,
+    allow_reconstructed_pipeline_manifest: bool,
+    pipeline_hash: str,
+    labelled_hash: str,
+) -> Mapping[str, Any] | None:
+    if (
+        extend_from is not None
+        and allow_reconstructed_pipeline_manifest
+        and pipeline_hash != EXPECTED_BASE_PIPELINE_MANIFEST_SHA256
+    ):
+        return _reconstructed_manifest_provenance(pipeline_hash, labelled_hash)
+    return None
+
+
 def _select_frozen_rows(
     source_rows: Sequence[Mapping[str, Any]],
     per_group: int,
@@ -255,6 +296,8 @@ def _select_frozen_rows(
     extend_from: Path | None,
     labelled_hash: str,
     pipeline_hash: str,
+    *,
+    allow_reconstructed_pipeline_manifest: bool = False,
 ) -> tuple[list[dict[str, Any]], str]:
     if extend_from is None:
         selected = select_geographic_sample(
@@ -271,6 +314,7 @@ def _select_frozen_rows(
         seed,
         expected_labelled_sha256=labelled_hash,
         expected_pipeline_manifest_sha256=pipeline_hash,
+        allow_reconstructed_pipeline_manifest=allow_reconstructed_pipeline_manifest,
     )
     added = extend_geographic_sample(
         source_rows,
@@ -308,12 +352,18 @@ def _read_base_sample(
     *,
     expected_labelled_sha256: str,
     expected_pipeline_manifest_sha256: str,
+    allow_reconstructed_pipeline_manifest: bool = False,
 ) -> list[dict[str, Any]]:
     """Load the published pilot after checking its identity and source provenance."""
     sample = _read_base_sample_json(path)
     selection = sample["selection"]
     _validate_base_selection(selection, per_group, seed)
-    _validate_base_source(sample, expected_labelled_sha256, expected_pipeline_manifest_sha256)
+    _validate_base_source(
+        sample,
+        expected_labelled_sha256,
+        expected_pipeline_manifest_sha256,
+        allow_reconstructed_pipeline_manifest=allow_reconstructed_pipeline_manifest,
+    )
     rows = sample.get("selected_rows")
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
         raise ValueError("base frozen sample must contain selected row objects")
@@ -368,6 +418,8 @@ def _validate_base_source(
     sample: Mapping[str, Any],
     expected_labelled_sha256: str,
     expected_pipeline_manifest_sha256: str,
+    *,
+    allow_reconstructed_pipeline_manifest: bool = False,
 ) -> None:
     source = sample.get("source")
     if not isinstance(source, Mapping):
@@ -375,8 +427,40 @@ def _validate_base_source(
     _validate_frozen_source(source)
     if source["sha256"] != expected_labelled_sha256:
         raise ValueError("base sample and labelled pool must have the same SHA-256")
+    _validate_base_pipeline_hash(
+        source,
+        expected_labelled_sha256,
+        expected_pipeline_manifest_sha256,
+        allow_reconstructed_pipeline_manifest,
+    )
+
+
+def _validate_base_pipeline_hash(
+    source: Mapping[str, Any],
+    expected_labelled_sha256: str,
+    expected_pipeline_manifest_sha256: str,
+    allow_reconstructed_pipeline_manifest: bool,
+) -> None:
     if source["pipeline_manifest_sha256"] != expected_pipeline_manifest_sha256:
-        raise ValueError("base sample and pipeline manifest must have the same SHA-256")
+        if not allow_reconstructed_pipeline_manifest:
+            raise ValueError("base sample and pipeline manifest must have the same SHA-256")
+        _validate_reconstructed_base_identity(source, expected_labelled_sha256)
+
+
+def _validate_reconstructed_base_identity(
+    source: Mapping[str, Any], expected_labelled_sha256: str
+) -> None:
+    if source["pipeline_manifest_sha256"] != EXPECTED_BASE_PIPELINE_MANIFEST_SHA256:
+        raise ValueError(
+            "base sample does not record the pinned historical pipeline manifest SHA-256"
+        )
+    if (
+        expected_labelled_sha256 != EXPECTED_LABELLED_POOL_SHA256
+        or source["sha256"] != EXPECTED_LABELLED_POOL_SHA256
+    ):
+        raise ValueError(
+            "reconstructed pipeline manifest extension requires the pinned labelled pool SHA-256"
+        )
 
 
 def _validate_base_manifest(path: Path, sample: Mapping[str, Any]) -> None:
@@ -464,9 +548,12 @@ def _unique_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
 
 
 def _frozen_source(
-    manifest: Mapping[str, Any], labelled_hash: str, pipeline_hash: str
+    manifest: Mapping[str, Any],
+    labelled_hash: str,
+    pipeline_hash: str,
+    pipeline_manifest_provenance: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    return {
+    source = {
         "file": LABELLED_NAME,
         "sha256": labelled_hash,
         "pipeline_manifest": PIPELINE_MANIFEST_NAME,
@@ -475,6 +562,29 @@ def _frozen_source(
         "validation_commit": manifest.get("validation_commit"),
         "input_snapshots": manifest.get("input_snapshots"),
         "license": "OpenStreetMap ODbL-1.0; European Environment Agency CC-BY-4.0",
+    }
+    if pipeline_manifest_provenance is not None:
+        source["pipeline_manifest_provenance"] = dict(pipeline_manifest_provenance)
+    return source
+
+
+def _reconstructed_manifest_provenance(
+    extension_manifest_sha256: str, labelled_pool_sha256: str
+) -> dict[str, str]:
+    if labelled_pool_sha256 != EXPECTED_LABELLED_POOL_SHA256:
+        raise ValueError(
+            "reconstructed pipeline manifest extension requires the pinned labelled pool SHA-256"
+        )
+    if extension_manifest_sha256 == EXPECTED_BASE_PIPELINE_MANIFEST_SHA256:
+        raise ValueError("reconstructed pipeline manifest must differ from the historical manifest")
+    return {
+        "mode": "reconstructed_manifest_same_labelled_pool",
+        "historical_pipeline_manifest_sha256": EXPECTED_BASE_PIPELINE_MANIFEST_SHA256,
+        "extension_pipeline_manifest_sha256": extension_manifest_sha256,
+        "labelled_pool_sha256": labelled_pool_sha256,
+        "base_frozen_sample_sha256": EXPECTED_BASE_FROZEN_SAMPLE_SHA256,
+        "base_frozen_manifest_sha256": EXPECTED_BASE_MANIFEST_SHA256,
+        "base_selected_rows_sha256": EXPECTED_BASE_SELECTED_ROWS_SHA256,
     }
 
 
@@ -489,7 +599,12 @@ def _frozen_sample(
 ) -> dict[str, Any]:
     return {
         "format_version": 2,
-        "source": _frozen_source(inputs.manifest, inputs.labelled_hash, inputs.pipeline_hash),
+        "source": _frozen_source(
+            inputs.manifest,
+            inputs.labelled_hash,
+            inputs.pipeline_hash,
+            inputs.pipeline_manifest_provenance,
+        ),
         "source_coverage": _sample_metadata(source_rows),
         "selection": _selection_metadata(selected, per_group, seed, method),
         "candidate_labels": {
@@ -545,6 +660,29 @@ def _validate_frozen_source(source: Mapping[str, Any]) -> None:
     checksums = (source.get("sha256"), source.get("pipeline_manifest_sha256"))
     if not all(_is_sha256(value) for value in checksums):
         raise ValueError("frozen sample source checksums are missing")
+    if "pipeline_manifest_provenance" in source:
+        _validate_reconstructed_manifest_provenance(source)
+
+
+def _validate_reconstructed_manifest_provenance(source: Mapping[str, Any]) -> None:
+    provenance = source.get("pipeline_manifest_provenance")
+    if not isinstance(provenance, Mapping):
+        raise ValueError("frozen sample reconstructed-manifest provenance is inconsistent")
+    expected = {
+        "mode": "reconstructed_manifest_same_labelled_pool",
+        "historical_pipeline_manifest_sha256": EXPECTED_BASE_PIPELINE_MANIFEST_SHA256,
+        "extension_pipeline_manifest_sha256": source["pipeline_manifest_sha256"],
+        "labelled_pool_sha256": source["sha256"],
+        "base_frozen_sample_sha256": EXPECTED_BASE_FROZEN_SAMPLE_SHA256,
+        "base_frozen_manifest_sha256": EXPECTED_BASE_MANIFEST_SHA256,
+        "base_selected_rows_sha256": EXPECTED_BASE_SELECTED_ROWS_SHA256,
+    }
+    if (
+        dict(provenance) != expected
+        or source["sha256"] != EXPECTED_LABELLED_POOL_SHA256
+        or source["pipeline_manifest_sha256"] == EXPECTED_BASE_PIPELINE_MANIFEST_SHA256
+    ):
+        raise ValueError("frozen sample reconstructed-manifest provenance is inconsistent")
 
 
 def _is_sha256(value: Any) -> bool:

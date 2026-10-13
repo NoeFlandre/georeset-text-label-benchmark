@@ -54,7 +54,8 @@ def test_freeze_help_lists_exactly_its_flags(monkeypatch: pytest.MonkeyPatch) ->
         "                             --pipeline-manifest PIPELINE_MANIFEST\n"
         "                             [--candidate-csv CANDIDATE_CSV]\n"
         "                             [--output-dir OUTPUT_DIR] [--per-group PER_GROUP]\n"
-        "                             [--seed SEED] [--extend-from EXTEND_FROM]\n\n"
+        "                             [--seed SEED] [--extend-from EXTEND_FROM]\n"
+        "                             [--allow-reconstructed-pipeline-manifest]\n\n"
         "options:\n"
         "  -h, --help            show this help message and exit\n"
         "  --labelled-parquet LABELLED_PARQUET\n"
@@ -64,6 +65,9 @@ def test_freeze_help_lists_exactly_its_flags(monkeypatch: pytest.MonkeyPatch) ->
         "  --per-group PER_GROUP\n"
         "  --seed SEED\n"
         "  --extend-from EXTEND_FROM\n"
+        "  --allow-reconstructed-pipeline-manifest\n"
+        "                        allow a different manifest for an extension when the\n"
+        "                        pinned labelled pool is identical\n"
     )
 
 
@@ -128,6 +132,7 @@ def test_freeze_parses_every_flag_into_its_own_field() -> None:
             "9",
             "--extend-from",
             "base.json",
+            "--allow-reconstructed-pipeline-manifest",
         ]
     )
 
@@ -140,6 +145,7 @@ def test_freeze_parses_every_flag_into_its_own_field() -> None:
         per_group=7,
         seed=9,
         extend_from=Path("base.json"),
+        allow_reconstructed_pipeline_manifest=True,
     )
     assert type(args.per_group) is int
     assert type(args.seed) is int
@@ -159,6 +165,7 @@ def test_freeze_defaults_name_the_pinned_candidate_table_and_pilot_run_directory
         per_group=50,
         seed=42,
         extend_from=None,
+        allow_reconstructed_pipeline_manifest=False,
     )
     assert type(args.per_group) is int
 
@@ -284,6 +291,7 @@ def test_main_freeze_passes_inputs_in_order_and_prints_sorted_json(
             "9",
             "--extend-from",
             "base.json",
+            "--allow-reconstructed-pipeline-manifest",
         ]
     )
 
@@ -296,7 +304,12 @@ def test_main_freeze_passes_inputs_in_order_and_prints_sorted_json(
                 Path("manifest.json"),
                 Path("run-out"),
             ),
-            {"per_group": 7, "seed": 9, "extend_from": Path("base.json")},
+            {
+                "per_group": 7,
+                "seed": 9,
+                "extend_from": Path("base.json"),
+                "allow_reconstructed_pipeline_manifest": True,
+            },
         )
     ]
     assert capsys.readouterr().out == '{\n  "alpha": "café",\n  "zeta": 1\n}\n'

@@ -81,7 +81,16 @@ resolution-3 cell within each group; yes and no cells may overlap. Maximin selec
 from the stored cell centres in the published base rows. Exact sentence hashes and polygon
 keys remain unique across the complete 1,000-row sample. The seed remains 42.
 
-Freeze the extension from the same labelled pool and pipeline manifest as the base sample:
+By default, the extension requires the same labelled-pool and pipeline-manifest hashes as
+the base sample. The separate mode below is only for a reconstructed pipeline manifest:
+it still requires the exact pinned base sample and base manifest, the canonical digest of
+the original 100 rows, and the byte-identical labelled pool
+`c3e6e8b726f41a1f9b71217767c1be94d8779a42b6b6b6fffc38d917fcfda6f4`. Before sampling,
+the freeze verifies the new manifest's `artifact_sha256["labelled-eunis.parquet"]` against
+the hash of that pool. The output records the historical manifest hash and reconstructed
+manifest hash as separate values; it does not claim that the manifest files match.
+
+Use the explicit option only when the available manifest is reconstructed:
 
 ```bash
 uv run --locked --no-default-groups --extra geographic georeset-pilot freeze \
@@ -90,22 +99,28 @@ uv run --locked --no-default-groups --extra geographic georeset-pilot freeze \
   --output-dir artifacts/pilot-1000-seed42 \
   --per-group 500 \
   --seed 42 \
-  --extend-from artifacts/pilot-100-seed42/frozen_sample.json
+  --extend-from artifacts/pilot-100-seed42/frozen_sample.json \
+  --allow-reconstructed-pipeline-manifest
 ```
 
-The command rejects a base sample with a different seed, ID digest, labelled-pool hash, or
-pipeline-manifest hash. It also requires the committed base sample JSON and its sibling
-`manifest.json` to match their published SHA-256 values, verifies that the manifest binds
-the sample and source checksums, recomputes each base sentence hash and row ID, and checks
-the base candidate checksum. The original row objects and their stored cell centres remain
-unchanged. The extended sample validates that exact 100-row prefix by its pinned canonical
-row digest; it still checks every added row's H3 centre by exact equality. No coordinate
-tolerance is applied. It writes a separate frozen run directory. The extension digest
+The reconstructed-manifest option is valid only with `--extend-from`. It permits a differing
+pipeline-manifest hash only when the base records the pinned historical hash
+`67dd8b4d0c420496c03d897dab4ff13a0e3b1e03a459607defc1306a95478ae7` and the current
+labelled pool matches the pinned bytes above. Without the option, a manifest mismatch is
+rejected. The extension requires the committed base sample JSON and sibling `manifest.json`
+to match their pinned SHA-256 values, verifies that the base manifest binds the sample and
+source checksums, recomputes each base sentence hash and row ID, and checks the base
+candidate checksum. It records the historical base manifest, reconstructed manifest,
+labelled-pool SHA, base sample SHA, base manifest SHA, and base row-prefix digest in
+`source.pipeline_manifest_provenance`. The original row objects and their stored cell
+centres remain unchanged. The extended sample validates that exact 100-row prefix by its
+pinned canonical row digest; it still checks every added row's H3 centre by exact equality.
+No coordinate tolerance is applied. It writes a separate frozen run directory. Yes and no
+groups may share an H3 cell, while each group keeps unique cells. The extension digest
 `0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a` is pinned from the
 existing `dspark-sample-1000` branch and must be confirmed by freezing the authorized full
-pool before any model run. Using the stored base centres as maximin anchors must also be
-checked against that authorized pool because the prior extension implementation recomputed
-those centres. The source pool and pipeline manifest are not present in every code workspace.
+pool before any model run. The source pool and pipeline manifest are not present in every
+code workspace.
 
 ## Model and decoding
 

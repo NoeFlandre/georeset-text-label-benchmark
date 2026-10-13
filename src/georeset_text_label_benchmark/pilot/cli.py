@@ -28,6 +28,11 @@ def _parser() -> argparse.ArgumentParser:
     freeze.add_argument("--per-group", type=int, default=SAMPLE_SIZE // 2)
     freeze.add_argument("--seed", type=int, default=SAMPLE_SEED)
     freeze.add_argument("--extend-from", type=Path)
+    freeze.add_argument(
+        "--allow-reconstructed-pipeline-manifest",
+        action="store_true",
+        help="allow a different manifest for an extension when the pinned labelled pool is identical",
+    )
     dspark = commands.add_parser(
         "run-dspark", help="predict one EUNIS code per row with pinned LFM2.5 + DSpark"
     )
@@ -69,6 +74,7 @@ def _freeze_sample_command(args: argparse.Namespace) -> dict[str, Any]:
         per_group=args.per_group,
         seed=args.seed,
         extend_from=args.extend_from,
+        allow_reconstructed_pipeline_manifest=args.allow_reconstructed_pipeline_manifest,
     )
 
 

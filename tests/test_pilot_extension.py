@@ -682,6 +682,107 @@ def test_freeze_extension_keeps_the_committed_base_order_and_writes_1000_rows(
     )
 
 
+def test_extension_reconstructed_manifest_mode_keeps_strict_default_and_audits_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    labelled, original_manifest = _write_large_pool(tmp_path)
+    base_dir = tmp_path / "pilot-100-seed42"
+    runner.freeze_sample(
+        labelled, _candidate_file(), original_manifest, base_dir, per_group=50, seed=42
+    )
+    sample_path = base_dir / "frozen_sample.json"
+    manifest_path = base_dir / "manifest.json"
+    base_sample = json.loads(sample_path.read_text(encoding="utf-8"))
+    base_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    base_sample["source"]["pipeline_manifest_sha256"] = (
+        runner.EXPECTED_BASE_PIPELINE_MANIFEST_SHA256
+    )
+    sample_path.write_text(json.dumps(base_sample, sort_keys=True, indent=2) + "\n")
+    base_manifest["source_sha256"][runner.PIPELINE_MANIFEST_NAME] = (
+        runner.EXPECTED_BASE_PIPELINE_MANIFEST_SHA256
+    )
+    base_manifest["outputs_sha256"]["frozen_sample.json"] = runner.sha256_file(sample_path)
+    manifest_path.write_text(json.dumps(base_manifest, sort_keys=True, indent=2) + "\n")
+
+    monkeypatch.setattr(
+        runner, "EXPECTED_SAMPLE_IDS_SHA256", base_sample["selection"]["sample_ids_sha256"]
+    )
+    monkeypatch.setattr(
+        runner, "EXPECTED_BASE_FROZEN_SAMPLE_SHA256", runner.sha256_file(sample_path)
+    )
+    monkeypatch.setattr(runner, "EXPECTED_BASE_MANIFEST_SHA256", runner.sha256_file(manifest_path))
+    monkeypatch.setattr(
+        runner,
+        "EXPECTED_BASE_SELECTED_ROWS_SHA256",
+        runner._sha256_json(base_sample["selected_rows"]),
+    )
+    monkeypatch.setattr(runner, "EXPECTED_LABELLED_POOL_SHA256", runner.sha256_file(labelled))
+
+    reconstructed_manifest = tmp_path / "reconstructed-manifest.json"
+    reconstructed_data = json.loads(original_manifest.read_text(encoding="utf-8"))
+    reconstructed_data["reconstructed"] = True
+    reconstructed_manifest.write_text(
+        json.dumps(reconstructed_data, sort_keys=True), encoding="utf-8"
+    )
+    reconstructed_hash = runner.sha256_file(reconstructed_manifest)
+
+    incorrect_manifest = tmp_path / "incorrect-manifest.json"
+    incorrect_data = json.loads(reconstructed_manifest.read_text(encoding="utf-8"))
+    incorrect_data["artifact_sha256"][runner.LABELLED_NAME] = "0" * 64
+    incorrect_manifest.write_text(json.dumps(incorrect_data), encoding="utf-8")
+    _assert_value_error(
+        "labelled-eunis.parquet SHA-256 does not match the pipeline manifest",
+        lambda: runner._validate_freeze_inputs(
+            labelled, _candidate_file(), incorrect_manifest, runner.CANDIDATE_LABELS_SHA256
+        ),
+    )
+
+    _assert_value_error(
+        "base sample and pipeline manifest must have the same SHA-256",
+        lambda: runner.freeze_sample(
+            labelled,
+            _candidate_file(),
+            reconstructed_manifest,
+            tmp_path / "strict-extension",
+            per_group=500,
+            seed=42,
+            extend_from=sample_path,
+        ),
+    )
+
+    extension_dir = tmp_path / "reconstructed-extension"
+    runner.freeze_sample(
+        labelled,
+        _candidate_file(),
+        reconstructed_manifest,
+        extension_dir,
+        per_group=500,
+        seed=42,
+        extend_from=sample_path,
+        allow_reconstructed_pipeline_manifest=True,
+    )
+    extended, rows, _ = runner.read_frozen_pilot_inputs(extension_dir)
+    provenance = extended["source"]["pipeline_manifest_provenance"]
+
+    assert rows[:100] == base_sample["selected_rows"]
+    assert len(rows) == 1000
+    assert extended["selection"]["sample_ids_sha256"] == runner._sha256_json(
+        [row["sample_id"] for row in rows]
+    )
+    assert extended["source"]["pipeline_manifest_sha256"] == reconstructed_hash
+    assert provenance["historical_pipeline_manifest_sha256"] == (
+        runner.EXPECTED_BASE_PIPELINE_MANIFEST_SHA256
+    )
+    assert provenance["extension_pipeline_manifest_sha256"] == reconstructed_hash
+    assert provenance["labelled_pool_sha256"] == runner.sha256_file(labelled)
+    assert provenance["base_frozen_sample_sha256"] == runner.sha256_file(sample_path)
+    assert provenance["base_frozen_manifest_sha256"] == runner.sha256_file(manifest_path)
+    assert provenance["base_selected_rows_sha256"] == runner._sha256_json(
+        base_sample["selected_rows"]
+    )
+
+
 @pytest.mark.parametrize(
     ("selection_update", "requested_per_group", "error"),
     [
@@ -934,6 +1035,329 @@ def test_base_reader_reports_exact_source_provenance_errors() -> None:
             sample["source"]["sha256"],
             "0" * 64,
         ),
+    )
+
+
+def test_extension_provenance_mode_requires_pinned_pool_and_historical_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    source = sample["source"]
+    reconstructed_hash = "a" * 64
+
+    runner._validate_base_source(
+        sample,
+        source["sha256"],
+        reconstructed_hash,
+        allow_reconstructed_pipeline_manifest=True,
+    )
+
+    _assert_value_error(
+        "base sample and pipeline manifest must have the same SHA-256",
+        lambda: runner._validate_base_source(sample, source["sha256"], reconstructed_hash),
+    )
+    monkeypatch.setattr(runner, "EXPECTED_LABELLED_POOL_SHA256", "0" * 64)
+    _assert_value_error(
+        "reconstructed pipeline manifest extension requires the pinned labelled pool SHA-256",
+        lambda: runner._validate_base_source(
+            sample,
+            source["sha256"],
+            reconstructed_hash,
+            allow_reconstructed_pipeline_manifest=True,
+        ),
+    )
+
+    altered = json.loads(json.dumps(sample))
+    altered["source"]["pipeline_manifest_sha256"] = "b" * 64
+    _assert_value_error(
+        "base sample does not record the pinned historical pipeline manifest SHA-256",
+        lambda: runner._validate_base_source(
+            altered,
+            source["sha256"],
+            reconstructed_hash,
+            allow_reconstructed_pipeline_manifest=True,
+        ),
+    )
+
+
+def test_reconstructed_base_identity_rejects_each_pool_hash_mismatch() -> None:
+    source = {
+        "pipeline_manifest_sha256": runner.EXPECTED_BASE_PIPELINE_MANIFEST_SHA256,
+        "sha256": runner.EXPECTED_LABELLED_POOL_SHA256,
+    }
+
+    runner._validate_reconstructed_base_identity(source, runner.EXPECTED_LABELLED_POOL_SHA256)
+    _assert_value_error(
+        "reconstructed pipeline manifest extension requires the pinned labelled pool SHA-256",
+        lambda: runner._validate_reconstructed_base_identity(source, "0" * 64),
+    )
+    _assert_value_error(
+        "reconstructed pipeline manifest extension requires the pinned labelled pool SHA-256",
+        lambda: runner._validate_reconstructed_base_identity(
+            {**source, "sha256": "0" * 64}, runner.EXPECTED_LABELLED_POOL_SHA256
+        ),
+    )
+
+
+def test_reconstructed_manifest_provenance_builder_rejects_unpinned_inputs() -> None:
+    _assert_value_error(
+        "reconstructed pipeline manifest extension requires the pinned labelled pool SHA-256",
+        lambda: runner._reconstructed_manifest_provenance("a" * 64, "0" * 64),
+    )
+    _assert_value_error(
+        "reconstructed pipeline manifest must differ from the historical manifest",
+        lambda: runner._reconstructed_manifest_provenance(
+            runner.EXPECTED_BASE_PIPELINE_MANIFEST_SHA256,
+            runner.EXPECTED_LABELLED_POOL_SHA256,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "error"),
+    [
+        ("not-json", "base frozen manifest.json is unreadable"),
+        ("[]", "base frozen manifest.json must contain a JSON object"),
+    ],
+)
+def test_base_manifest_reader_reports_exact_parse_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: str,
+    error: str,
+) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(runner, "EXPECTED_BASE_MANIFEST_SHA256", runner.sha256_file(path))
+
+    _assert_value_error(error, lambda: runner._read_base_manifest(path))
+
+
+def test_base_manifest_reader_requires_the_published_checksum(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text("{}", encoding="utf-8")
+
+    _assert_value_error(
+        "base frozen manifest checksum does not match the published pilot",
+        lambda: runner._read_base_manifest(path),
+    )
+
+
+def test_base_manifest_reader_uses_explicit_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(runner, "EXPECTED_BASE_MANIFEST_SHA256", runner.sha256_file(path))
+    original_read_text = Path.read_text
+    encodings: list[str | None] = []
+
+    def record_encoding(path: Path, *args: Any, **kwargs: Any) -> str:
+        encodings.append(kwargs.get("encoding"))
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", record_encoding)
+
+    assert runner._read_base_manifest(path) == {}
+    assert encodings == ["utf-8"]
+
+
+def test_base_manifest_output_validation_checks_each_pinned_output() -> None:
+    sample_hash = "a" * 64
+    _assert_value_error(
+        "base frozen manifest is missing input or output checksums",
+        lambda: runner._validate_base_manifest_outputs(None, sample_hash),
+    )
+    _assert_value_error(
+        "base frozen manifest checksums do not match the published sample",
+        lambda: runner._validate_base_manifest_outputs({}, sample_hash),
+    )
+    _assert_value_error(
+        "base frozen manifest checksums do not match the published sample",
+        lambda: runner._validate_base_manifest_outputs(
+            {"frozen_sample.json": sample_hash}, sample_hash
+        ),
+    )
+    _assert_value_error(
+        "base frozen manifest checksums do not match the published sample",
+        lambda: runner._validate_base_manifest_outputs(
+            {"frozen_sample.json": sample_hash, "candidate_labels.csv": "0" * 64},
+            sample_hash,
+        ),
+    )
+
+
+def test_base_manifest_source_validation_checks_both_pinned_inputs() -> None:
+    source = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))["source"]
+    _assert_value_error(
+        "base frozen manifest is missing input or output checksums",
+        lambda: runner._validate_base_manifest_sources(None, source),
+    )
+    _assert_value_error(
+        "base frozen manifest checksums do not match the published sample",
+        lambda: runner._validate_base_manifest_sources({}, source),
+    )
+    _assert_value_error(
+        "base frozen manifest checksums do not match the published sample",
+        lambda: runner._validate_base_manifest_sources(
+            {runner.LABELLED_NAME: source["sha256"]}, source
+        ),
+    )
+    _assert_value_error(
+        "base frozen manifest checksums do not match the published sample",
+        lambda: runner._validate_base_manifest_sources(
+            {
+                runner.LABELLED_NAME: source["sha256"],
+                runner.PIPELINE_MANIFEST_NAME: "0" * 64,
+            },
+            source,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("method", "other-method"),
+        ("seed", 43),
+        ("per_group", 49),
+        ("sample_size", 98),
+        ("sample_ids_sha256", "0" * 64),
+    ],
+)
+def test_base_manifest_selection_validation_checks_every_protocol_field(
+    field: str, value: Any
+) -> None:
+    selection = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))["selection"]
+    manifest = {
+        key: selection[key]
+        for key in ("method", "seed", "per_group", "sample_size", "sample_ids_sha256")
+    }
+    manifest[field] = value
+
+    _assert_value_error(
+        "base frozen manifest selection does not match the published sample",
+        lambda: runner._validate_base_manifest_selection(manifest, selection),
+    )
+
+
+def test_published_base_prefix_accepts_exactly_the_frozen_100_rows() -> None:
+    rows = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))["selected_rows"]
+
+    runner._require_published_base_prefix(rows)
+
+
+def test_base_manifest_sample_checksum_error_is_exact(tmp_path: Path) -> None:
+    path = tmp_path / "frozen_sample.json"
+    path.write_text("{}", encoding="utf-8")
+
+    _assert_value_error(
+        "base frozen sample checksum does not match the published pilot",
+        lambda: runner._validate_base_manifest(path, {}),
+    )
+
+
+def test_default_row_validation_recomputes_base_centres_but_pinned_base_does_not() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    rows = [dict(row) for row in sample["selected_rows"]]
+    rows[49]["cell_centre_lon"] = math.nextafter(rows[49]["cell_centre_lon"], math.inf)
+
+    _assert_value_error(
+        "frozen sample H3 cell does not match its centre",
+        lambda: runner._validate_frozen_rows(rows, sample["selection"]),
+    )
+    _assert_value_error(
+        "frozen sample H3 cell does not match its centre",
+        lambda: runner._validate_frozen_selection(rows, sample["selection"]),
+    )
+    runner._validate_frozen_rows(rows, sample["selection"], pinned_base=True)
+
+
+def test_row_hashing_uses_the_explicit_utf8_protocol() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    row = dict(sample["selected_rows"][0])
+    encodings: list[str] = []
+
+    class EncodingRecordingSentence(str):
+        def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+            encodings.append(encoding)
+            return super().encode(encoding, errors)
+
+    row["sentence"] = EncodingRecordingSentence(row["sentence"])
+
+    runner._validate_frozen_row_content(row)
+
+    assert encodings == ["utf-8"]
+
+
+def test_reconstructed_manifest_mode_requires_a_base_sample(tmp_path: Path) -> None:
+    _assert_value_error(
+        "reconstructed pipeline manifest mode requires --extend-from",
+        lambda: runner.freeze_sample(
+            tmp_path / "missing-pool.parquet",
+            _candidate_file(),
+            tmp_path / "missing-manifest.json",
+            tmp_path / "new-run",
+            allow_reconstructed_pipeline_manifest=True,
+        ),
+    )
+
+
+def test_reconstructed_manifest_provenance_is_explicit_and_validated() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    source = dict(sample["source"])
+    reconstructed_hash = "a" * 64
+    provenance = runner._reconstructed_manifest_provenance(reconstructed_hash, source["sha256"])
+    source["pipeline_manifest_sha256"] = reconstructed_hash
+    source["pipeline_manifest_provenance"] = provenance
+
+    runner._validate_frozen_source(source)
+
+    assert provenance == {
+        "mode": "reconstructed_manifest_same_labelled_pool",
+        "historical_pipeline_manifest_sha256": runner.EXPECTED_BASE_PIPELINE_MANIFEST_SHA256,
+        "extension_pipeline_manifest_sha256": reconstructed_hash,
+        "labelled_pool_sha256": source["sha256"],
+        "base_frozen_sample_sha256": runner.EXPECTED_BASE_FROZEN_SAMPLE_SHA256,
+        "base_frozen_manifest_sha256": runner.EXPECTED_BASE_MANIFEST_SHA256,
+        "base_selected_rows_sha256": runner.EXPECTED_BASE_SELECTED_ROWS_SHA256,
+    }
+
+    malformed = {**source, "pipeline_manifest_provenance": {**provenance}}
+    malformed["pipeline_manifest_provenance"]["historical_pipeline_manifest_sha256"] = "b" * 64
+    _assert_value_error(
+        "frozen sample reconstructed-manifest provenance is inconsistent",
+        lambda: runner._validate_frozen_source(malformed),
+    )
+
+    for bad_provenance in (None, []):
+        malformed_type = {**source, "pipeline_manifest_provenance": bad_provenance}
+        _assert_value_error(
+            "frozen sample reconstructed-manifest provenance is inconsistent",
+            lambda malformed_type=malformed_type: runner._validate_frozen_source(malformed_type),
+        )
+
+    bad_pool = {**source, "sha256": "0" * 64}
+    bad_pool["pipeline_manifest_provenance"] = {
+        **provenance,
+        "labelled_pool_sha256": bad_pool["sha256"],
+    }
+    _assert_value_error(
+        "frozen sample reconstructed-manifest provenance is inconsistent",
+        lambda: runner._validate_frozen_source(bad_pool),
+    )
+
+    historical_manifest = {
+        **source,
+        "pipeline_manifest_sha256": runner.EXPECTED_BASE_PIPELINE_MANIFEST_SHA256,
+    }
+    historical_manifest["pipeline_manifest_provenance"] = {
+        **provenance,
+        "extension_pipeline_manifest_sha256": runner.EXPECTED_BASE_PIPELINE_MANIFEST_SHA256,
+    }
+    _assert_value_error(
+        "frozen sample reconstructed-manifest provenance is inconsistent",
+        lambda: runner._validate_frozen_source(historical_manifest),
     )
 
 
