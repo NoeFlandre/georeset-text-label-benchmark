@@ -246,12 +246,15 @@ def test_cli_freeze_takes_the_labelled_pool_and_pipeline_manifest(tmp_path: Path
 
 def test_cli_help_lists_the_geographic_freeze_and_dspark_commands() -> None:
     assert cli._parser().format_help() == (
-        "usage: georeset-pilot [-h] {freeze,run-dspark,run-dspark-smoke} ...\n\n"
+        "usage: georeset-pilot [-h]\n"
+        "                      {freeze,run-dspark,score-hierarchy,run-dspark-smoke} ...\n\n"
         "positional arguments:\n"
-        "  {freeze,run-dspark,run-dspark-smoke}\n"
+        "  {freeze,run-dspark,score-hierarchy,run-dspark-smoke}\n"
         "    freeze              freeze the geographic yes/no sample\n"
         "    run-dspark          predict one EUNIS code per row with pinned LFM2.5 +\n"
         "                        DSpark\n"
+        "    score-hierarchy     add version-pinned EUNIS ancestor metrics to an\n"
+        "                        existing run\n"
         "    run-dspark-smoke    run a bounded eight-row LFM2.5 + DSpark readiness\n"
         "                        smoke\n\n"
         "options:\n"
