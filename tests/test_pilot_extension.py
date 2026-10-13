@@ -24,6 +24,7 @@ from georeset_text_label_benchmark.pilot.geo_sampling import (
 )
 
 BASE_SAMPLE = Path(__file__).resolve().parents[1] / "artifacts/pilot-100-seed42/frozen_sample.json"
+BASE_MANIFEST = BASE_SAMPLE.with_name("manifest.json")
 
 
 def _row(index: int, decision: str, lat: float, lon: float) -> dict[str, Any]:
@@ -309,9 +310,189 @@ def test_base_reader_preserves_the_committed_100_rows_and_checks_integrity(
     altered["selected_rows"][0]["sample_id"] = "0" * 64
     altered_path = tmp_path / "altered.json"
     altered_path.write_text(json.dumps(altered), encoding="utf-8")
-    with pytest.raises(ValueError, match="frozen sample ID checksum mismatch"):
+    with pytest.raises(ValueError, match="frozen sample ID does not match its row identity"):
         runner._read_base_sample(
             altered_path,
+            per_group=500,
+            seed=42,
+            expected_labelled_sha256=sample["source"]["sha256"],
+            expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
+        )
+
+
+def test_base_reader_rejects_a_sentence_that_disagrees_with_its_stored_hash(
+    tmp_path: Path,
+) -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    sample["selected_rows"][0]["sentence"] = "changed sentence with the original stored hash"
+    sample_path = tmp_path / "changed-sentence.json"
+    sample_path.write_text(json.dumps(sample), encoding="utf-8")
+
+    _assert_value_error(
+        "frozen sample sentence hash mismatch",
+        lambda: runner._read_base_sample(
+            sample_path,
+            per_group=500,
+            seed=42,
+            expected_labelled_sha256=sample["source"]["sha256"],
+            expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
+        ),
+    )
+
+
+def test_base_reader_rejects_a_non_text_sentence() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    rows = [dict(row) for row in sample["selected_rows"]]
+    rows[0]["sentence"] = None
+
+    _assert_value_error(
+        "frozen sample sentence must be text",
+        lambda: runner._validate_frozen_rows(rows, sample["selection"]),
+    )
+
+
+def test_base_reader_recomputes_ids_from_row_identity(tmp_path: Path) -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    sample["selected_rows"][0]["osm_id"] += 1
+    sample_path = tmp_path / "changed-identity.json"
+    sample_path.write_text(json.dumps(sample), encoding="utf-8")
+
+    _assert_value_error(
+        "frozen sample ID does not match its row identity",
+        lambda: runner._read_base_sample(
+            sample_path,
+            per_group=500,
+            seed=42,
+            expected_labelled_sha256=sample["source"]["sha256"],
+            expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
+        ),
+    )
+
+
+def test_base_reader_rejects_an_incomplete_row_identity() -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    rows = [dict(row) for row in sample["selected_rows"]]
+    del rows[0]["osm_id"]
+
+    _assert_value_error(
+        "frozen sample row identity is incomplete",
+        lambda: runner._validate_frozen_rows(rows, sample["selection"]),
+    )
+
+
+def test_base_reader_rejects_modified_gold_when_manifest_output_hash_is_rewritten(
+    tmp_path: Path,
+) -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    manifest = json.loads(BASE_MANIFEST.read_text(encoding="utf-8"))
+    with _candidate_file().open(encoding="utf-8", newline="") as stream:
+        candidates = list(csv.DictReader(stream))
+    changed = next(
+        row for row in candidates if row["eunis_code"] != sample["selected_rows"][0]["eunis_code"]
+    )
+    sample["selected_rows"][0]["eunis_code"] = changed["eunis_code"]
+    sample["selected_rows"][0]["eunis_name"] = changed["eunis_name"]
+
+    base_dir = tmp_path / "tampered-base"
+    base_dir.mkdir()
+    sample_path = base_dir / "frozen_sample.json"
+    sample_path.write_text(json.dumps(sample), encoding="utf-8")
+    manifest["outputs_sha256"]["frozen_sample.json"] = runner.sha256_file(sample_path)
+    (base_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="base frozen sample checksum does not match the published pilot",
+    ):
+        runner._read_base_sample(
+            sample_path,
+            per_group=500,
+            seed=42,
+            expected_labelled_sha256=sample["source"]["sha256"],
+            expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
+        )
+
+
+def test_base_reader_requires_a_manifest_that_binds_the_committed_sample(
+    tmp_path: Path,
+) -> None:
+    base_dir = tmp_path / "base-without-manifest"
+    base_dir.mkdir()
+    sample_path = base_dir / "frozen_sample.json"
+    sample_path.write_bytes(BASE_SAMPLE.read_bytes())
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+
+    _assert_value_error(
+        "base frozen manifest.json is required to verify the published sample",
+        lambda: runner._read_base_sample(
+            sample_path,
+            per_group=500,
+            seed=42,
+            expected_labelled_sha256=sample["source"]["sha256"],
+            expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_group", "field", "value"),
+    [
+        ("outputs_sha256", "frozen_sample.json", "0" * 64),
+        ("outputs_sha256", "candidate_labels.csv", "0" * 64),
+        ("source_sha256", "labelled-eunis.parquet", "0" * 64),
+        ("source_sha256", "pipeline-manifest.json", "0" * 64),
+        ("selection", "per_group", 49),
+    ],
+)
+def test_base_reader_rejects_a_manifest_that_does_not_bind_its_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field_group: str,
+    field: str,
+    value: Any,
+) -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    manifest = json.loads(BASE_MANIFEST.read_text(encoding="utf-8"))
+    if field_group == "selection":
+        manifest[field] = value
+    else:
+        manifest[field_group][field] = value
+    base_dir = tmp_path / "rewritten-base"
+    base_dir.mkdir()
+    sample_path = base_dir / "frozen_sample.json"
+    sample_path.write_bytes(BASE_SAMPLE.read_bytes())
+    manifest_path = base_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(runner, "EXPECTED_BASE_MANIFEST_SHA256", runner.sha256_file(manifest_path))
+
+    with pytest.raises(ValueError, match="base frozen manifest"):
+        runner._read_base_sample(
+            sample_path,
+            per_group=500,
+            seed=42,
+            expected_labelled_sha256=sample["source"]["sha256"],
+            expected_pipeline_manifest_sha256=sample["source"]["pipeline_manifest_sha256"],
+        )
+
+
+@pytest.mark.parametrize("payload", ["not-json", "[]"])
+def test_base_reader_rejects_an_unreadable_or_non_object_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: str,
+) -> None:
+    sample = json.loads(BASE_SAMPLE.read_text(encoding="utf-8"))
+    base_dir = tmp_path / "invalid-base-manifest"
+    base_dir.mkdir()
+    sample_path = base_dir / "frozen_sample.json"
+    sample_path.write_bytes(BASE_SAMPLE.read_bytes())
+    manifest_path = base_dir / "manifest.json"
+    manifest_path.write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(runner, "EXPECTED_BASE_MANIFEST_SHA256", runner.sha256_file(manifest_path))
+
+    with pytest.raises(ValueError, match="base frozen manifest"):
+        runner._read_base_sample(
+            sample_path,
             per_group=500,
             seed=42,
             expected_labelled_sha256=sample["source"]["sha256"],
@@ -401,6 +582,16 @@ def test_freeze_extension_keeps_the_committed_base_order_and_writes_1000_rows(
         runner,
         "EXPECTED_SAMPLE_IDS_SHA256",
         base_sample["selection"]["sample_ids_sha256"],
+    )
+    monkeypatch.setattr(
+        runner,
+        "EXPECTED_BASE_FROZEN_SAMPLE_SHA256",
+        runner.sha256_file(base_dir / "frozen_sample.json"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "EXPECTED_BASE_MANIFEST_SHA256",
+        runner.sha256_file(base_dir / "manifest.json"),
     )
 
     extended_summary = runner.freeze_sample(

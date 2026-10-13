@@ -94,7 +94,11 @@ uv run --locked --no-default-groups --extra geographic georeset-pilot freeze \
 ```
 
 The command rejects a base sample with a different seed, ID digest, labelled-pool hash, or
-pipeline-manifest hash. It writes a separate frozen run directory. The extension digest
+pipeline-manifest hash. It also requires the committed base sample JSON and its sibling
+`manifest.json` to match their published SHA-256 values, verifies that the manifest binds
+the sample and source checksums, recomputes each base sentence hash and row ID, and checks
+the base candidate checksum. This preserves the original 100 prompts and gold codes. It
+writes a separate frozen run directory. The extension digest
 `0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a` is pinned from the
 existing `dspark-sample-1000` branch and must be confirmed by freezing the authorized full
 pool before any model run. The source pool and pipeline manifest are not present in every

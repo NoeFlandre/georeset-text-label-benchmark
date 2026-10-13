@@ -26,6 +26,8 @@ from georeset_text_label_benchmark.pilot.geo_sampling import (
 )
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
+    EXPECTED_BASE_FROZEN_SAMPLE_SHA256,
+    EXPECTED_BASE_MANIFEST_SHA256,
     EXPECTED_SAMPLE_IDS_SHA256,
     SAMPLE_SEED,
     SAMPLE_SIZE,
@@ -314,6 +316,7 @@ def _read_base_sample(
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
         raise ValueError("base frozen sample must contain selected row objects")
     _validate_frozen_rows(rows, selection)
+    _validate_base_manifest(path, sample)
     return rows
 
 
@@ -372,6 +375,65 @@ def _validate_base_source(
         raise ValueError("base sample and labelled pool must have the same SHA-256")
     if source["pipeline_manifest_sha256"] != expected_pipeline_manifest_sha256:
         raise ValueError("base sample and pipeline manifest must have the same SHA-256")
+
+
+def _validate_base_manifest(path: Path, sample: Mapping[str, Any]) -> None:
+    sample_hash = sha256_file(path)
+    if sample_hash != EXPECTED_BASE_FROZEN_SAMPLE_SHA256:
+        raise ValueError("base frozen sample checksum does not match the published pilot")
+    manifest_path = path.with_name("manifest.json")
+    manifest = _read_base_manifest(manifest_path)
+    _validate_base_manifest_contents(manifest, sample, sample_hash)
+
+
+def _read_base_manifest(path: Path) -> Mapping[str, Any]:
+    if not path.is_file():
+        raise ValueError("base frozen manifest.json is required to verify the published sample")
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("base frozen manifest.json is unreadable") from error
+    if not isinstance(manifest, Mapping):
+        raise ValueError("base frozen manifest.json must contain a JSON object")
+    if sha256_file(path) != EXPECTED_BASE_MANIFEST_SHA256:
+        raise ValueError("base frozen manifest checksum does not match the published pilot")
+    return manifest
+
+
+def _validate_base_manifest_contents(
+    manifest: Mapping[str, Any], sample: Mapping[str, Any], sample_hash: str
+) -> None:
+    _validate_base_manifest_outputs(manifest.get("outputs_sha256"), sample_hash)
+    _validate_base_manifest_sources(manifest.get("source_sha256"), sample["source"])
+    _validate_base_manifest_selection(manifest, sample["selection"])
+
+
+def _validate_base_manifest_outputs(outputs: Any, sample_hash: str) -> None:
+    if not isinstance(outputs, Mapping):
+        raise ValueError("base frozen manifest is missing input or output checksums")
+    if outputs.get("frozen_sample.json") != sample_hash:
+        raise ValueError("base frozen manifest checksums do not match the published sample")
+    if outputs.get("candidate_labels.csv") != CANDIDATE_LABELS_SHA256:
+        raise ValueError("base frozen manifest checksums do not match the published sample")
+
+
+def _validate_base_manifest_sources(source_hashes: Any, source: Mapping[str, Any]) -> None:
+    if not isinstance(source_hashes, Mapping):
+        raise ValueError("base frozen manifest is missing input or output checksums")
+    if source_hashes.get(LABELLED_NAME) != source["sha256"]:
+        raise ValueError("base frozen manifest checksums do not match the published sample")
+    if source_hashes.get(PIPELINE_MANIFEST_NAME) != source["pipeline_manifest_sha256"]:
+        raise ValueError("base frozen manifest checksums do not match the published sample")
+
+
+def _validate_base_manifest_selection(
+    manifest: Mapping[str, Any], selection: Mapping[str, Any]
+) -> None:
+    if any(
+        manifest.get(key) != selection.get(key)
+        for key in ("method", "seed", "per_group", "sample_size", "sample_ids_sha256")
+    ):
+        raise ValueError("base frozen manifest selection does not match the published sample")
 
 
 def _selection_metadata(
@@ -489,6 +551,7 @@ def _is_sha256(value: Any) -> bool:
 
 def _validate_frozen_rows(rows: list[dict[str, Any]], selection: Mapping[str, Any]) -> None:
     _validate_frozen_row_count(rows, selection)
+    _validate_frozen_row_contents(rows)
     ids = [row["sample_id"] for row in rows]
     _require_unique_frozen_values(ids)
     _require_unique_frozen_values([row["text_sha256"] for row in rows])
@@ -503,6 +566,26 @@ def _validate_frozen_row_count(
 ) -> None:
     if len(rows) != selection["sample_size"]:
         raise ValueError("frozen sample row count does not match its declaration")
+
+
+def _validate_frozen_row_contents(rows: Sequence[Mapping[str, Any]]) -> None:
+    for row in rows:
+        _validate_frozen_row_content(row)
+
+
+def _validate_frozen_row_content(row: Mapping[str, Any]) -> None:
+    sentence = row.get("sentence")
+    if not isinstance(sentence, str):
+        raise ValueError("frozen sample sentence must be text")
+    text_hash = hashlib.sha256(sentence.encode("utf-8")).hexdigest()
+    if row.get("text_sha256") != text_hash:
+        raise ValueError("frozen sample sentence hash mismatch")
+    try:
+        expected_id = sample_id_of(row)
+    except (KeyError, TypeError) as error:
+        raise ValueError("frozen sample row identity is incomplete") from error
+    if row.get("sample_id") != expected_id:
+        raise ValueError("frozen sample ID does not match its row identity")
 
 
 def _require_unique_frozen_values(values: Sequence[Any]) -> None:
