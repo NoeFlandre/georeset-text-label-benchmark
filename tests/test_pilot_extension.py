@@ -526,22 +526,23 @@ def test_extension_default_seed_and_seeded_duplicate_winner() -> None:
     assert [row["osm_id"] for row in geo_sampling._deduplicate([first, duplicate], 42)] == [21]
 
 
-def test_extension_uses_seed_when_deduplicating_duplicate_sentences() -> None:
+def test_extension_uses_caller_seed_when_deduplicating_duplicate_sentences() -> None:
     first = _row(1, "yes", 10.0, 0.0)
     duplicate = _row(2, "yes", 20.0, 0.0)
-    duplicate["text_sha256"] = first["text_sha256"]
-    no_row = _row(3, "no", 30.0, 0.0)
+    third_duplicate = _row(6, "yes", 60.0, 0.0)
+    duplicate["text_sha256"] = third_duplicate["text_sha256"] = first["text_sha256"]
+    no_row = _row(10, "no", 30.0, 0.0)
 
     added = extend_geographic_sample(
-        [first, duplicate, no_row],
+        [first, duplicate, third_duplicate, no_row],
         cell_of=_simple_cell_of,
         centre_of=_simple_centre_of,
         existing=[],
         per_group=1,
-        seed=42,
+        seed=7,
     )
 
-    assert [(row["decision"], row["osm_id"]) for row in added] == [("yes", 1), ("no", 3)]
+    assert [(row["decision"], row["osm_id"]) for row in added] == [("yes", 2), ("no", 10)]
 
 
 def test_existing_extension_cells_are_partitioned_by_decision() -> None:
