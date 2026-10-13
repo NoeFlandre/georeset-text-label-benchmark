@@ -398,10 +398,57 @@ def _prediction_row(
         "prompt_tokens": prompt_tokens,
         "generated_tokens": generated_tokens,
         "finish_reason": finish_reason,
+        "finish_reason_metadata_json": _finish_reason_metadata_json(meta),
+        **_output_token_diagnostics(output),
         "accepted_drafts": _optional_int(meta.get("spec_num_correct_drafts")),
         "proposed_drafts": _optional_int(meta.get("spec_num_proposed_drafts")),
         "generation_seconds": elapsed_seconds,
     }
+
+
+def _finish_reason_metadata_json(meta: Mapping[str, Any]) -> str | None:
+    """Preserve SGLang's unnormalized finish metadata as a stable JSON string."""
+    finish_metadata = meta.get("finish_reason")
+    if finish_metadata is None:
+        return None
+    if isinstance(finish_metadata, Mapping):
+        finish_metadata = dict(finish_metadata)
+    return json.dumps(
+        finish_metadata,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _output_token_diagnostics(output: Mapping[str, Any]) -> dict[str, Any]:
+    """Summarize returned token IDs, leaving unavailable data explicitly unknown."""
+    output_ids = output.get("output_ids")
+    if not _is_output_token_id_sequence(output_ids):
+        return {
+            "output_token_ids_available": None,
+            "last_output_token_id": None,
+            "target_eos_present": None,
+            "target_eos_first_position": None,
+        }
+    eos_present = dspark.TARGET_EOS_TOKEN_ID in output_ids
+    return {
+        "output_token_ids_available": True,
+        "last_output_token_id": output_ids[-1] if output_ids else None,
+        "target_eos_present": eos_present,
+        "target_eos_first_position": (
+            output_ids.index(dspark.TARGET_EOS_TOKEN_ID) if eos_present else None
+        ),
+    }
+
+
+def _is_output_token_id_sequence(value: Any) -> TypeGuard[Sequence[int]]:
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes, bytearray))
+        and all(isinstance(token_id, int) and not isinstance(token_id, bool) for token_id in value)
+    )
 
 
 def _metrics_payload(

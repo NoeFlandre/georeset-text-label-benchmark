@@ -122,7 +122,8 @@ the smoke gate rejects any truncated row. The historical eight-row smoke at a
 16,384-token cap reported two rows that continued enumerating candidate codes or repeating
 a code list without stopping. The historical 100-row run at computation commit
 `ce2173476115cdb15c2f4e525bd0e6cbf8a0ffe3` reported 16 `generation_length` rows at that
-same cap. Earlier 512- and 8,192-token smokes also failed their gate ([issue #19](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19)).
+same cap ([full-run report](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19#issuecomment-6119763909)). Earlier
+512- and 8,192-token smokes also failed their gate ([smoke report](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19#issuecomment-6106289763)).
 
 The pinned target config and tokenizer agree on EOS token ID `124900`
 (`<|im_end|>`). The runner passes that ID to SGLang 0.5.20, preserves the stop token in
@@ -188,6 +189,17 @@ Output files: `dspark_predictions.parquet`, `dspark_metrics.json` and
 `dspark_manifest.json`. The manifest records the runtime, the frozen input hashes and
 the smoke gate result, if any.
 
+Prediction rows retain the decoded `raw_output` and normalized `finish_reason` used
+by the existing parser. They also record `finish_reason_metadata_json`, a compact,
+key-sorted JSON copy of SGLang's returned `meta_info.finish_reason`, and token-level
+diagnostics from the same response's `output_ids`: `output_token_ids_available`,
+`last_output_token_id`, `target_eos_present`, and the zero-based
+`target_eos_first_position`. The full token sequence is not stored. If token IDs or
+finish metadata are missing, their diagnostic values are null (unknown); visible EOS
+text in `raw_output` is not treated as proof of the EOS token ID. Older prediction
+files without these fields cannot establish token-level EOS presence. These fields
+are diagnostic only and do not alter generation, parsing, metrics, or the smoke gate.
+
 ## Metrics
 
 - Top-1 accuracy over all rows. An invalid output counts as wrong.
@@ -223,7 +235,11 @@ Direct generation gives one code per row, so there is no top-5 metric.
   It reported top-1 `0.03`, macro-F1 `0.0105`, coverage `0.84` (84 valid rows), and 16
   outputs truncated at the generation limit. Its smoke gate failed; this is a historical
   result, separate from any new run.
+- Prior publication evidence locates the historical 100-row files in
+  `pilot/runs/dspark-100-seed42/` at [dataset revision
+  `d0b2337c98a44d58b815fd5d876d608418654ff7`](https://huggingface.co/datasets/NoeFlandre/georeset-text-label-benchmark/tree/d0b2337c98a44d58b815fd5d876d608418654ff7).
+  This historical pointer does not establish the current Hub head or the publication state
+  of the 1,000-row extension.
 - The 1,000-row sample has not been frozen from the authorized source pool in this workspace.
   The 100-row sample, historical run, and root overlap artifacts remain separate; new
-  artifacts must use new paths. The dataset publication state is not inferred from this
-  checkout.
+  artifacts must use new paths.

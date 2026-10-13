@@ -209,6 +209,7 @@ class _FakeEngine:
     def __init__(self) -> None:
         self.calls: list[list[int]] = []
         self.shutdown_called = False
+        self.include_output_ids = False
 
     async def generate(self, input_ids: list[int]) -> dict[str, Any]:
         assert isinstance(input_ids, list)
@@ -221,15 +222,21 @@ class _FakeEngine:
             raw, finish = "reasoning </think>NOT_A_CODE", "stop"
         else:
             raw, finish = "</think>U62", "length"
-        return {
+        finish_metadata: dict[str, Any] = {"type": finish}
+        if self.include_output_ids and index == 1:
+            finish_metadata["matched"] = dspark.TARGET_EOS_TOKEN_ID
+        output: dict[str, Any] = {
             "text": raw,
             "meta_info": {
                 "completion_tokens": 17,
-                "finish_reason": {"type": finish},
+                "finish_reason": finish_metadata,
                 "spec_num_correct_drafts": 5,
                 "spec_num_proposed_drafts": 9,
             },
         }
+        if self.include_output_ids and index == 1:
+            output["output_ids"] = [101, dspark.TARGET_EOS_TOKEN_ID, 102]
+        return output
 
     def shutdown(self) -> None:
         self.shutdown_called = True
@@ -473,6 +480,7 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
     (run_dir / "predictions.parquet").write_bytes(b"existing predictions")
     tokenizer = _PromptTokenizer()
     engine = _FakeEngine()
+    engine.include_output_ids = True
     engine_construction: list[tuple[Any, ...]] = []
     cache_arguments: list[Path] = []
 
@@ -543,6 +551,11 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "prompt_tokens": prompt_tokens,
         "generated_tokens": 17,
         "finish_reason": "stop",
+        "finish_reason_metadata_json": '{"matched":124900,"type":"stop"}',
+        "output_token_ids_available": True,
+        "last_output_token_id": 102,
+        "target_eos_present": True,
+        "target_eos_first_position": 1,
         "accepted_drafts": 5,
         "proposed_drafts": 9,
         "generation_seconds": 1,
@@ -594,6 +607,11 @@ def test_runner_uses_only_pinned_frozen_rows_and_writes_sidecar_outputs(
         "prompt_tokens": prompt_tokens,
         "generated_tokens": 17,
         "finish_reason": "stop",
+        "finish_reason_metadata_json": '{"type":"stop"}',
+        "output_token_ids_available": None,
+        "last_output_token_id": None,
+        "target_eos_present": None,
+        "target_eos_first_position": None,
         "accepted_drafts": 5,
         "proposed_drafts": 9,
         "generation_seconds": 1,
@@ -2167,10 +2185,113 @@ def test_prediction_row_preserves_empty_text_and_zero_completion_tokens() -> Non
         "prompt_tokens": 1,
         "generated_tokens": 0,
         "finish_reason": "unknown",
+        "finish_reason_metadata_json": None,
+        "output_token_ids_available": None,
+        "last_output_token_id": None,
+        "target_eos_present": None,
+        "target_eos_first_position": None,
         "accepted_drafts": None,
         "proposed_drafts": None,
         "generation_seconds": 0.25,
     }
+
+
+def test_prediction_row_preserves_finish_metadata_and_eos_token_diagnostics() -> None:
+    row = _row(1)
+    finish_metadata = {"type": "stop", "matched": dspark.TARGET_EOS_TOKEN_ID}
+    prediction = dspark_runner._prediction_row(
+        row,
+        prompt_tokens=1,
+        prompt_hash="prompt-hash",
+        output={
+            "text": "</think>T11<|im_end|>",
+            "output_ids": [101, dspark.TARGET_EOS_TOKEN_ID, 102],
+            "meta_info": {
+                "completion_tokens": 3,
+                "finish_reason": finish_metadata,
+            },
+        },
+        elapsed_seconds=0.25,
+        candidate_codes=["T11"],
+        candidate_names={"T11": "Temperate forest"},
+    )
+
+    assert prediction["finish_reason"] == "stop"
+    assert prediction["finish_reason_metadata_json"] == ('{"matched":124900,"type":"stop"}')
+    assert prediction["output_token_ids_available"] is True
+    assert prediction["last_output_token_id"] == 102
+    assert prediction["target_eos_present"] is True
+    assert prediction["target_eos_first_position"] == 1
+    assert prediction["parse_status"] == "valid"
+    assert prediction["parsed_eunis_code"] == "T11"
+
+
+def test_prediction_row_reports_missing_token_ids_and_finish_metadata_as_unknown() -> None:
+    prediction = dspark_runner._prediction_row(
+        _row(1),
+        prompt_tokens=1,
+        prompt_hash="prompt-hash",
+        output={"text": "</think>T11<|im_end|>"},
+        elapsed_seconds=0.25,
+        candidate_codes=["T11"],
+        candidate_names={"T11": "Temperate forest"},
+    )
+
+    assert prediction["finish_reason"] == "unknown"
+    assert prediction["finish_reason_metadata_json"] is None
+    assert prediction["output_token_ids_available"] is None
+    assert prediction["last_output_token_id"] is None
+    assert prediction["target_eos_present"] is None
+    assert prediction["target_eos_first_position"] is None
+
+
+def test_prediction_row_records_known_eos_absence_and_empty_token_ids() -> None:
+    output_without_eos = dspark_runner._prediction_row(
+        _row(1),
+        prompt_tokens=1,
+        prompt_hash="prompt-hash",
+        output={"output_ids": [101, 102], "meta_info": {"finish_reason": "length"}},
+        elapsed_seconds=0.25,
+        candidate_codes=["T11"],
+        candidate_names={"T11": "Temperate forest"},
+    )
+    output_with_empty_ids = dspark_runner._prediction_row(
+        _row(2),
+        prompt_tokens=1,
+        prompt_hash="prompt-hash",
+        output={"output_ids": [], "meta_info": {"finish_reason": "length"}},
+        elapsed_seconds=0.25,
+        candidate_codes=["T11"],
+        candidate_names={"T11": "Temperate forest"},
+    )
+
+    assert output_without_eos["output_token_ids_available"] is True
+    assert output_without_eos["last_output_token_id"] == 102
+    assert output_without_eos["target_eos_present"] is False
+    assert output_without_eos["target_eos_first_position"] is None
+    assert output_without_eos["parse_status"] == "truncated"
+    assert output_with_empty_ids["output_token_ids_available"] is True
+    assert output_with_empty_ids["last_output_token_id"] is None
+    assert output_with_empty_ids["target_eos_present"] is False
+    assert output_with_empty_ids["target_eos_first_position"] is None
+
+
+@pytest.mark.parametrize("output_ids", ["124900", b"124900", [True], [124900, None]])
+def test_prediction_row_treats_malformed_token_ids_as_unknown(output_ids: Any) -> None:
+    prediction = dspark_runner._prediction_row(
+        _row(1),
+        prompt_tokens=1,
+        prompt_hash="prompt-hash",
+        output={"output_ids": output_ids},
+        elapsed_seconds=0.25,
+        candidate_codes=["T11"],
+        candidate_names={"T11": "Temperate forest"},
+    )
+
+    assert prediction["output_token_ids_available"] is None
+    assert prediction["last_output_token_id"] is None
+    assert prediction["target_eos_present"] is None
+    assert prediction["target_eos_first_position"] is None
 
 
 def test_prediction_rows_reject_unaligned_sequences() -> None:
