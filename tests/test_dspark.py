@@ -1496,6 +1496,77 @@ def test_dspark_resume_validates_smoke_scope_before_publication(
     assert protocol_calls[0][-1] == scope
 
 
+def test_dspark_resume_rejects_diagnostic_stage_for_default_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staging = tmp_path / ".smoke.staging-test"
+    sample = {
+        "source": {},
+        "candidate_labels": {"codes": ["T11"]},
+        "selection": {"sample_ids_sha256": "a" * 64},
+    }
+    diagnostic_config = dspark_runner._generation_config(
+        dspark.TARGET_CHAT_TEMPLATE_SHA256,
+        sample,
+        dspark.BUDGET_DIAGNOSTIC_PROFILE,
+    )
+    manifest = {
+        "generation_config": diagnostic_config,
+        "generation_config_sha256": dspark_runner._sha256_json(diagnostic_config),
+    }
+    published: list[Path] = []
+    monkeypatch.setattr(dspark_runner, "_read_staged_dspark_manifest", lambda _path: manifest)
+    monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_protocol", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "_validate_staged_dspark_hashes", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "_read_staged_dspark_metrics", lambda _path: {})
+    monkeypatch.setattr(dspark_runner, "_validate_staged_smoke_gate", lambda *_args: None)
+    monkeypatch.setattr(dspark_runner, "ensure_publication_supported", lambda _path: None)
+    monkeypatch.setattr(
+        dspark_runner,
+        "publish_directory",
+        lambda _staging, destination: published.append(destination),
+    )
+
+    with pytest.raises(
+        ValueError, match="retained DSpark staging generation config does not match"
+    ):
+        dspark_runner._resume_staged_dspark_run(
+            tmp_path / "pilot",
+            tmp_path / "destination",
+            staging,
+            sample,
+            [{"eunis_code": "T11", "eunis_name": "name"}],
+            "a" * 40,
+            "b" * 40,
+            "c" * 64,
+        )
+
+    assert published == []
+
+
+def test_dspark_resume_accepts_legacy_512_stage_for_default_profile(tmp_path: Path) -> None:
+    sample = {
+        "candidate_labels": {"codes": ["T11"]},
+        "selection": {"sample_ids_sha256": "a" * 64},
+    }
+    legacy_config = dspark_runner._generation_config(
+        dspark.TARGET_CHAT_TEMPLATE_SHA256,
+        sample,
+        dspark.DEFAULT_GENERATION_PROFILE,
+    )
+    manifest = {
+        "generation_config": legacy_config,
+        "generation_config_sha256": dspark_runner._sha256_json(legacy_config),
+    }
+
+    dspark_runner._validate_staged_generation_config(
+        tmp_path / "staging",
+        manifest,
+        sample,
+        dspark.DEFAULT_GENERATION_PROFILE,
+    )
+
+
 @pytest.mark.parametrize(
     ("metrics_gate", "manifest_gate", "processed_row_count", "expected_error"),
     [

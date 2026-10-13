@@ -748,7 +748,11 @@ def _validate_staged_generation_config(
         else generation_profile
     )
     if profile.profile_id == dspark.DEFAULT_GENERATION_PROFILE:
-        return
+        if _is_default_staged_generation_config(manifest):
+            return
+        raise ValueError(
+            f"retained DSpark staging generation config does not match this profile: {staging}"
+        )
     expected = _generation_config(
         dspark.TARGET_CHAT_TEMPLATE_SHA256,
         sample,
@@ -760,6 +764,24 @@ def _validate_staged_generation_config(
         raise ValueError(
             f"retained DSpark staging generation config does not match this profile: {staging}"
         )
+
+
+def _is_default_staged_generation_config(manifest: Mapping[str, Any]) -> bool:
+    """Accept legacy 512-token stages while rejecting named or differently capped profiles."""
+    if "generation_config" not in manifest:
+        return True
+    config = manifest.get("generation_config")
+    if not isinstance(config, Mapping):
+        return False
+    sampling = config.get("sampling")
+    if not isinstance(sampling, Mapping):
+        return False
+    return (
+        "generation_profile" not in config
+        and config.get("maximum_new_tokens") == dspark.MAX_NEW_TOKENS
+        and sampling.get("max_new_tokens") == dspark.MAX_NEW_TOKENS
+        and manifest.get("generation_config_sha256") == _sha256_json(config)
+    )
 
 
 def _read_staged_dspark_manifest(staging: Path) -> Mapping[str, Any]:
