@@ -1072,8 +1072,20 @@ def _validate_sample_selection(
 
 def _validate_sample_selection_protocol(selection: Mapping[str, Any], sample_size: int) -> None:
     expected_method = SELECTION_METHOD if sample_size == SAMPLE_SIZE else EXTENDED_SELECTION_METHOD
-    if selection.get("per_group") != sample_size // 2 or selection.get("method") != expected_method:
+    if (
+        not _sample_group_size_matches(selection, sample_size)
+        or selection.get("method") != expected_method
+    ):
         raise ValueError("frozen sample selection method or group size does not match the protocol")
+
+
+def _sample_group_size_matches(selection: Mapping[str, Any], sample_size: int) -> bool:
+    per_group = selection.get("per_group")
+    return (
+        not isinstance(per_group, bool)
+        and isinstance(per_group, int)
+        and 2 * per_group == sample_size
+    )
 
 
 def _validate_sample_digests(sample: Mapping[str, Any]) -> None:

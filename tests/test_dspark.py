@@ -2226,11 +2226,21 @@ def test_prediction_row_preserves_finish_metadata_and_eos_token_diagnostics() ->
     assert prediction["parsed_eunis_code"] == "T11"
 
 
-def test_prediction_row_serializes_unicode_and_non_json_finish_metadata() -> None:
+def test_prediction_row_serializes_unicode_and_non_json_finish_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class StringableMetadata:
         def __str__(self) -> str:
             return "metadata-sentinel"
 
+    original_dumps = json.dumps
+    ensure_ascii_values: list[bool | None] = []
+
+    def record_json_options(value: Any, **kwargs: Any) -> str:
+        ensure_ascii_values.append(kwargs.get("ensure_ascii"))
+        return original_dumps(value, **kwargs)
+
+    monkeypatch.setattr(dspark_runner.json, "dumps", record_json_options)
     prediction = dspark_runner._prediction_row(
         _row(1),
         prompt_tokens=1,
@@ -2252,6 +2262,7 @@ def test_prediction_row_serializes_unicode_and_non_json_finish_metadata() -> Non
     assert prediction["finish_reason_metadata_json"] == (
         '{"display_name":"forêt","opaque":"metadata-sentinel","type":"stop"}'
     )
+    assert ensure_ascii_values == [False]
 
 
 def test_prediction_row_reports_missing_token_ids_and_finish_metadata_as_unknown() -> None:

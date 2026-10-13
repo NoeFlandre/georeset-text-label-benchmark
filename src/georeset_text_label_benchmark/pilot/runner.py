@@ -286,7 +286,7 @@ def _write_frozen_artifacts(
     sample: Mapping[str, Any],
     labelled_hash: str,
 ) -> None:
-    output_dir.mkdir(parents=True, exist_ok=False)
+    output_dir.mkdir(parents=True)
     shutil.copyfile(candidate_csv, output_dir / "candidate_labels.csv")
     _write_json_exclusive(output_dir / "frozen_sample.json", sample)
     _write_json_exclusive(
@@ -346,7 +346,12 @@ def _validate_base_identity(selection: Mapping[str, Any], seed: int) -> None:
 
 
 def _validate_base_group_size(selection: Mapping[str, Any]) -> None:
-    if selection.get("per_group") != SAMPLE_SIZE // 2:
+    per_group = selection.get("per_group")
+    if (
+        isinstance(per_group, bool)
+        or not isinstance(per_group, int)
+        or 2 * per_group != SAMPLE_SIZE
+    ):
         raise ValueError("base sample must contain the published 50/50 sample")
 
 
@@ -529,8 +534,12 @@ def _require_supported_selection_method(selection: Mapping[str, Any]) -> None:
 
 
 def _require_declared_group_size(selection: Mapping[str, Any]) -> None:
-    per_group = selection.get("per_group", -1)
-    if selection.get("sample_size") != 2 * per_group:
+    per_group = selection.get("per_group")
+    if (
+        isinstance(per_group, bool)
+        or not isinstance(per_group, int)
+        or selection.get("sample_size") != 2 * per_group
+    ):
         raise ValueError("frozen sample size does not match its per-group count")
 
 
@@ -581,8 +590,8 @@ def _unique_polygon_count(rows: Sequence[Mapping[str, Any]]) -> int:
 
 def _require_unique_group_cells(rows: Sequence[Mapping[str, Any]], method: str) -> None:
     cells = _cells_by_decision(rows)
-    _require_unique_cells(cells["yes"], "yes")
-    _require_unique_cells(cells["no"], "no")
+    _require_unique_cells(cells["yes"])
+    _require_unique_cells(cells["no"])
     if method == SELECTION_METHOD:
         _require_disjoint_decision_cells(cells["yes"], cells["no"])
 
@@ -591,7 +600,7 @@ def _cells_by_decision(rows: Sequence[Mapping[str, Any]]) -> dict[str, list[str]
     return {group: [row["h3_cell"] for row in rows if row["decision"] == group] for group in GROUPS}
 
 
-def _require_unique_cells(cells: Sequence[str], group: str) -> None:
+def _require_unique_cells(cells: Sequence[str]) -> None:
     if len(cells) != len(set(cells)):
         raise ValueError("frozen sample must have one sentence per cell within each group")
 

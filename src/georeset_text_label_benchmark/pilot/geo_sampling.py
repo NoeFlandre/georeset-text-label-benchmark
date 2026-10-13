@@ -330,17 +330,14 @@ def _extend_group(
     chosen, candidates, centres, nearest = _extension_state(
         group, cells, existing, per_group, centre_of
     )
+    remaining = per_group - len(chosen)
     added: list[dict[str, Any]] = []
-    while candidates and len(chosen) < per_group:
+    while candidates and remaining:
         cell = _farthest_extension_cell(candidates, nearest, seed)
         candidates.remove(cell)
-        chosen.append(cell)
+        remaining -= 1
         _update_nearest_extension_distances(candidates, nearest, centres, cell)
         added.append(_row_for_extension_cell(cells[cell][0], cell, centres[cell]))
-    if len(chosen) < per_group:
-        raise ValueError(
-            f"need {per_group - len(chosen)} more {group} cells, found {len(candidates)}"
-        )
     return added
 
 
