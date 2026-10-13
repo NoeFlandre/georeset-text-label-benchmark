@@ -121,23 +121,24 @@ candidate row counts and H3-cell memberships are:
 | 151 Eastern Europe | 860 / 421 | 177 / 134 | 16 / 16 |
 | 154 Northern Europe | 10,146 / 3,021 | 234 / 177 | 11 / 8 |
 | 155 Western Europe | 2,437 / 1,219 | 124 / 108 | 2 / 8 |
+| `UNASSIGNED` | 877 / 343 | not recorded | 5 / 6 |
 
 These regional H3-cell counts overlap: 39 yes and 34 no cells connect to more than one M49
 subregion. The flow allocator treats each H3 cell as one unit of capacity shared among its
 candidate regions, so per-region cell counts must not be summed as unique cells. The
 inventory reports 704 yes and 552 no unique known-region candidate cells, plus 877 yes and
-343 no extension rows assigned to `UNASSIGNED`; 16 geometry features have no M49 crosswalk.
+343 no extension rows assigned to `UNASSIGNED`; its preserved summary does not report a
+candidate-cell count for that stratum. Sixteen geometry features have no M49 crosswalk.
 The frozen prefix was independently recomputed as shown above. Its one no-row in 143 is a
-known discrepancy with the inventory's original prefix column, which reported zero there;
+known error in the inventory's original prefix column, which reported zero there;
 the code preserves the row and reports the recomputed assignment. A source-level check
 identified it as frozen row 8, sample ID
 `53e1aa6421ba45d44aa76ab2a8618da215126e26fcbc28b8438713ff778e0d01` (`way/425707420`,
 `kazakhstan-latest.osm.pbf`, Q11, `AO_Lonely_Tree`, H3 `832c6afffffffff`). The assignment
 uses the bbox midpoint (latitude `47.067270750000006`, longitude `52.05008365`), which lies
 in Kazakhstan and maps to M49 143. The stored H3 cell centre is a separate point and is not
-used for this region assignment. This explains the stale inventory prefix count; no frozen
-row values changed. The quota vector and resulting sample digest still require owner review
-before they can be treated as approved.
+used for this region assignment. This reconciles the stale prefix count without changing any
+of the original 100 records.
 
 For each stratum (including `UNASSIGNED`), the freezer computes candidate row counts,
 overlapping per-region cell memberships and unique candidate-cell counts by decision after
@@ -157,14 +158,17 @@ geometry/crosswalk hashes. If no common vector can fill 500 rows in each group, 
 fails and reports the flow capacity and quota shortfall. The sampler does not claim worldwide
 coverage when the eligible pool has no rows in a region.
 
-The capacity-only inventory suggests a common vector of 494 assigned-region rows per class
-across 015, 039, 143, 145, 151, 154 and 155, plus six `UNASSIGNED` rows per class. Its flow
-check needs 449 additional yes cells and 450 additional no cells in known regions; the
-remaining yes addition is `UNASSIGNED`, while the no prefix already has six rows there. An
-alternative suggestion adds one extra yes in region 151 and removes one yes from
-`UNASSIGNED`, producing unequal region quotas. The implementation retains the common
-yes/no-vector protocol; that alternative remains a decision for owner review and is not
-implemented. These capacity figures are a planning input, not a frozen sample or approval.
+The selected common vector has 494 assigned-region rows per class across 015, 039, 143,
+145, 151, 154 and 155, plus six `UNASSIGNED` rows per class. In region order, the final
+per-class quotas are 10, 111, 1, 42, 110, 110 and 110, followed by six `UNASSIGNED` rows.
+They give 500 yes and 500 no rows while matching each region's class counts. The flow check
+needs 449 additional yes cells and 450 additional no cells in known regions; the remaining
+yes addition is `UNASSIGNED`, while the no prefix already has six rows there. This is
+feasible under the preserved row and cell capacities, including cross-region cell overlaps.
+An alternative would add one extra yes in region 151 and remove one yes from `UNASSIGNED`;
+it is not used because that would give the classes different regional mixes. The matched
+vector is the selected implementation of the user's geographic and yes/no balance request.
+The sample digest remains unverified until the freeze is run against the exact pinned pool.
 
 By default, the extension requires the same labelled-pool and pipeline-manifest hashes as
 the base sample. The separate mode below is only for a reconstructed pipeline manifest:
