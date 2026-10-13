@@ -318,6 +318,10 @@ def test_dspark_protocol_pins_target_draft_runtime_and_generation() -> None:
     assert dspark.EXPECTED_SAMPLE_IDS_SHA256 == (
         "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d"
     )
+    assert dspark.SUPPORTED_SAMPLE_SIZES == (100, 1000)
+    assert dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE[1000] == (
+        "0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a"
+    )
     assert dspark.engine_kwargs() == {
         "model_path": "LiquidAI/LFM2.5-2.6B",
         "revision": "654f9463ce32b05d0429d76fe1f580b27d4c1ac0",
@@ -2267,7 +2271,7 @@ def test_runner_requires_frozen_manifest_before_gpu_preflight(
             "sample_size",
             99,
             CANDIDATE_LABELS_SHA256,
-            "DSpark evaluation requires the published 100-row pilot sample",
+            "DSpark evaluation requires a supported pilot sample size",
         ),
         (
             "seed",
@@ -2294,6 +2298,8 @@ def test_runner_rejects_sample_protocol_drift(
             "sample_size": 100,
             "seed": 42,
             "sample_ids_sha256": dspark.EXPECTED_SAMPLE_IDS_SHA256,
+            "per_group": 50,
+            "method": runner.SELECTION_METHOD,
         },
         "candidate_labels": {"sha256": candidate_hash},
     }
@@ -2302,6 +2308,25 @@ def test_runner_rejects_sample_protocol_drift(
     with pytest.raises(ValueError, match=message) as error:
         dspark_runner._validate_published_sample(sample, [{}] * 100)
     assert str(error.value) == message
+
+
+def test_runner_accepts_only_the_pinned_1000_row_extension() -> None:
+    sample = {
+        "selection": {
+            "sample_size": 1000,
+            "per_group": 500,
+            "seed": 42,
+            "method": runner.EXTENDED_SELECTION_METHOD,
+            "sample_ids_sha256": dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE[1000],
+        },
+        "candidate_labels": {"sha256": CANDIDATE_LABELS_SHA256},
+    }
+
+    dspark_runner._validate_published_sample(sample, [{}] * 1000)
+
+    sample["selection"]["sample_ids_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="frozen sample IDs do not match the published pilot"):
+        dspark_runner._validate_published_sample(sample, [{}] * 1000)
 
 
 def test_runner_rejects_context_overflow_before_constructing_engine(
@@ -3847,6 +3872,22 @@ def test_default_dspark_output_names_separate_smoke_and_full_runs() -> None:
     )
     explicit = Path("/persistent/pilot/smoke-unique-commit")
     assert dspark_runner._output_destination(frozen_run, explicit, True) == explicit
+
+
+def test_default_full_output_name_uses_frozen_sample_size() -> None:
+    frozen_run = Path("/persistent/pilot/pilot-1000-seed42")
+
+    assert dspark_runner._output_destination(frozen_run, None, False, sample_size=1000) == Path(
+        "/persistent/pilot/lfm2.5-2.6b-dspark-1000-seed42"
+    )
+
+
+def test_default_smoke_output_name_identifies_its_frozen_sample_size() -> None:
+    frozen_run = Path("/persistent/pilot/pilot-1000-seed42")
+
+    assert dspark_runner._output_destination(frozen_run, None, True, sample_size=1000) == Path(
+        "/persistent/pilot/lfm2.5-2.6b-dspark-smoke-8-from-1000-seed42"
+    )
 
 
 def test_smoke_gate_requires_six_valid_eos_answers_and_no_truncations() -> None:

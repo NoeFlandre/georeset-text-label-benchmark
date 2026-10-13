@@ -14,8 +14,13 @@ import pyarrow.parquet as pq
 import pytest
 
 from georeset_text_label_benchmark.output_schema import LABELLED_SCHEMA
-from georeset_text_label_benchmark.pilot.geo_sampling import h3_cell_of, h3_centre_of
+from georeset_text_label_benchmark.pilot.geo_sampling import (
+    H3_RESOLUTION,
+    h3_cell_of,
+    h3_centre_of,
+)
 from georeset_text_label_benchmark.pilot.runner import (
+    SELECTION_METHOD,
     _is_sha256,
     _read_frozen_sample,
     _read_pipeline_manifest,
@@ -455,8 +460,14 @@ def _frozen_sample_document(note: str) -> dict[str, Any]:
         "note": note,
         "source": {"file": LABELLED, "sha256": "a" * 64, "pipeline_manifest_sha256": "b" * 64},
         "selection": {
+            "method": SELECTION_METHOD,
             "sample_size": 2,
             "per_group": 1,
+            "decision_counts": {"no": 1, "yes": 1},
+            "unique_sentence_hash_count": 2,
+            "unique_polygon_count": 2,
+            "h3_resolution": H3_RESOLUTION,
+            "cell_count": 2,
             "sample_ids_sha256": _sha256_json([row["sample_id"] for row in rows]),
         },
         "selected_rows": rows,

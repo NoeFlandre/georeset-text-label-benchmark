@@ -1,4 +1,4 @@
-"""Pinned LFM2.5 + DSpark generation contract for the 100-row EUNIS pilot."""
+"""Pinned LFM2.5 + DSpark generation contract for the EUNIS pilot samples."""
 
 from __future__ import annotations
 
@@ -11,7 +11,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from georeset_text_label_benchmark.pilot.protocol import SAMPLE_SEED
+# Re-export the immutable sample protocol for adapter callers.
+from georeset_text_label_benchmark.pilot.protocol import (  # noqa: F401
+    EXPECTED_SAMPLE_IDS_SHA256,
+    EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE,
+    SAMPLE_SEED,
+    SUPPORTED_SAMPLE_SIZES,
+)
 
 TARGET_MODEL = "LiquidAI/LFM2.5-2.6B"
 TARGET_REVISION = "654f9463ce32b05d0429d76fe1f580b27d4c1ac0"
@@ -30,7 +36,6 @@ PROMPT_SHA256 = hashlib.sha256(PROMPT_INSTRUCTIONS.encode("utf-8")).hexdigest()
 TARGET_EOS_TOKEN = "<|im_end|>"
 TARGET_EOS_TOKEN_ID = 124900
 TARGET_CHAT_TEMPLATE_SHA256 = "ea663864491de7ade391839479860ca95541f892f72665c73251fbd4643b1bef"
-EXPECTED_SAMPLE_IDS_SHA256 = "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d"
 MODEL_CONTEXT_TOKENS = 131_072
 RUNTIME_CONTEXT_TOKENS = 128_000
 MAX_NEW_TOKENS = 512

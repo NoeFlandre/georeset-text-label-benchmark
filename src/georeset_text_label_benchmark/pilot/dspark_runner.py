@@ -1,4 +1,4 @@
-"""Run the frozen 100-row pilot as direct, single-label LFM2.5 DSpark generation."""
+"""Run the supported frozen EUNIS samples as direct LFM2.5 DSpark generation."""
 
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ from georeset_text_label_benchmark.pilot.publication import (
     staged_directory,
 )
 from georeset_text_label_benchmark.pilot.runner import (
+    EXTENDED_SELECTION_METHOD,
+    SELECTION_METHOD,
     _candidate_provenance,
     _sha256_json,
     _validate_commit,
@@ -86,10 +88,12 @@ def run_dspark_pilot(
     smoke_evidence: Path | None = None,
 ) -> dict[str, Any]:
     """Run the frozen DSpark pilot or its fixed eight-row readiness smoke."""
-    destination = _output_destination(run_dir, output_dir, smoke)
-    _validate_run_options(run_dir, destination, computation_commit, validation_commit)
     sample, frozen_rows, candidates = read_frozen_pilot_inputs(run_dir)
     _validate_published_sample(sample, frozen_rows)
+    destination = _output_destination(
+        run_dir, output_dir, smoke, sample_size=sample["selection"]["sample_size"]
+    )
+    _validate_run_options(run_dir, destination, computation_commit, validation_commit)
     frozen_manifest_sha256 = _validate_frozen_manifest(run_dir, sample)
     smoke_evidence_manifest = _validate_full_run_smoke_evidence(
         smoke,
@@ -204,11 +208,21 @@ def run_dspark_pilot(
     return result
 
 
-def _output_destination(run_dir: Path, output_dir: Path | None, smoke: bool) -> Path:
+def _output_destination(
+    run_dir: Path,
+    output_dir: Path | None,
+    smoke: bool,
+    *,
+    sample_size: int = SAMPLE_SIZE,
+) -> Path:
     """Use a caller-supplied path or a distinct default name for each run scope."""
     if output_dir is not None:
         return output_dir
-    name = "lfm2.5-2.6b-dspark-smoke-8-seed42" if smoke else "lfm2.5-2.6b-dspark-100-seed42"
+    if smoke:
+        sample_suffix = "" if sample_size == SAMPLE_SIZE else f"-from-{sample_size}"
+        name = f"lfm2.5-2.6b-dspark-smoke-8{sample_suffix}-seed42"
+    else:
+        name = f"lfm2.5-2.6b-dspark-{sample_size}-seed42"
     return run_dir.parent / name
 
 
@@ -1001,15 +1015,29 @@ def _verify_frozen_selection(manifest: Mapping[str, Any], sample: Mapping[str, A
 def _validate_sample_selection(
     selection: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]
 ) -> None:
-    if selection["sample_size"] != SAMPLE_SIZE or len(rows) != SAMPLE_SIZE:
-        raise ValueError("DSpark evaluation requires the published 100-row pilot sample")
+    sample_size = selection["sample_size"]
+    if sample_size not in dspark.SUPPORTED_SAMPLE_SIZES or len(rows) != sample_size:
+        raise ValueError("DSpark evaluation requires a supported pilot sample size")
     if selection["seed"] != SAMPLE_SEED:
         raise ValueError("frozen sample seed does not match the published pilot")
+    _validate_sample_selection_protocol(selection, sample_size)
+
+
+def _validate_sample_selection_protocol(selection: Mapping[str, Any], sample_size: int) -> None:
+    expected_method = SELECTION_METHOD if sample_size == SAMPLE_SIZE else EXTENDED_SELECTION_METHOD
+    if selection.get("per_group") != sample_size // 2 or selection.get("method") != expected_method:
+        raise ValueError("frozen sample selection method or group size does not match the protocol")
 
 
 def _validate_sample_digests(sample: Mapping[str, Any]) -> None:
     selection = sample["selection"]
-    if selection["sample_ids_sha256"] != dspark.EXPECTED_SAMPLE_IDS_SHA256:
+    sample_size = selection["sample_size"]
+    expected = (
+        dspark.EXPECTED_SAMPLE_IDS_SHA256
+        if sample_size == SAMPLE_SIZE
+        else dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE.get(sample_size)
+    )
+    if expected is None or selection["sample_ids_sha256"] != expected:
         raise ValueError("frozen sample IDs do not match the published pilot")
     if sample["candidate_labels"]["sha256"] != CANDIDATE_LABELS_SHA256:
         raise ValueError("candidate CSV hash does not match the published pilot")

@@ -133,13 +133,17 @@ def _deduplicate(rows: list[Mapping[str, Any]], seed: int) -> list[Mapping[str, 
     seen_polygons: set[tuple[str, str, int]] = set()
     kept: list[Mapping[str, Any]] = []
     for row in ordered:
-        polygon = (row["source_pbf"], row["osm_type"], row["osm_id"])
+        polygon = _polygon_key(row)
         if row["text_sha256"] in seen_text or polygon in seen_polygons:
             continue
         seen_text.add(row["text_sha256"])
         seen_polygons.add(polygon)
         kept.append(row)
     return kept
+
+
+def _polygon_key(row: Mapping[str, Any]) -> tuple[str, str, int]:
+    return row["source_pbf"], row["osm_type"], row["osm_id"]
 
 
 def _candidates_by_cell(
@@ -231,3 +235,192 @@ def _haversine_km(first: tuple[float, float], second: tuple[float, float]) -> fl
         + math.cos(lat_1) * math.cos(lat_2) * math.sin((lon_2 - lon_1) / 2) ** 2
     )
     return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(haversine))
+
+
+def extend_geographic_sample(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    cell_of: CellOf,
+    centre_of: CentreOf,
+    existing: Sequence[Mapping[str, Any]],
+    per_group: int,
+    seed: int = 42,
+) -> list[dict[str, Any]]:
+    """Add rows by group maximin spacing while keeping the existing sample unchanged."""
+    if per_group < 1:
+        raise ValueError("per_group must be positive")
+    _validate_existing_sample(existing, per_group)
+    eligible = _deduplicate(_eligible(rows), seed)
+    candidates = _remove_existing_identities(eligible, existing)
+    by_group = _candidates_by_cell(candidates, cell_of)
+    added: list[dict[str, Any]] = []
+    for group in GROUPS:
+        added.extend(_extend_group(group, by_group[group], existing, per_group, centre_of, seed))
+    return added
+
+
+def _validate_existing_sample(existing: Sequence[Mapping[str, Any]], per_group: int) -> None:
+    if _has_unknown_decision(existing):
+        raise ValueError("existing sample has an unknown decision")
+    for group in GROUPS:
+        _validate_existing_group(existing, group, per_group)
+    _validate_existing_identities(existing)
+
+
+def _has_unknown_decision(existing: Sequence[Mapping[str, Any]]) -> bool:
+    return any(row.get("decision") not in GROUPS for row in existing)
+
+
+def _validate_existing_group(
+    existing: Sequence[Mapping[str, Any]], group: str, per_group: int
+) -> None:
+    rows = _existing_group_rows(existing, group)
+    _require_group_capacity(rows, group, per_group)
+    _require_unique_group_cell_values(rows, group)
+
+
+def _existing_group_rows(
+    existing: Sequence[Mapping[str, Any]], group: str
+) -> list[Mapping[str, Any]]:
+    return [row for row in existing if row["decision"] == group]
+
+
+def _require_group_capacity(rows: Sequence[Mapping[str, Any]], group: str, per_group: int) -> None:
+    if len(rows) > per_group:
+        raise ValueError(f"existing sample has more than {per_group} {group} rows")
+
+
+def _require_unique_group_cell_values(rows: Sequence[Mapping[str, Any]], group: str) -> None:
+    cells = [row["h3_cell"] for row in rows]
+    if len(set(cells)) != len(cells):
+        raise ValueError(f"existing sample has duplicate {group} cells")
+
+
+def _validate_existing_identities(existing: Sequence[Mapping[str, Any]]) -> None:
+    texts = [row["text_sha256"] for row in existing]
+    polygons = [_polygon_key(row) for row in existing]
+    if len(set(texts)) != len(texts) or len(set(polygons)) != len(polygons):
+        raise ValueError("existing sample must have unique sentence hashes and polygons")
+
+
+def _remove_existing_identities(
+    rows: Sequence[Mapping[str, Any]], existing: Sequence[Mapping[str, Any]]
+) -> list[Mapping[str, Any]]:
+    existing_text = {row["text_sha256"] for row in existing}
+    existing_polygons = {_polygon_key(row) for row in existing}
+    return [row for row in rows if not _identity_is_existing(row, existing_text, existing_polygons)]
+
+
+def _identity_is_existing(
+    row: Mapping[str, Any],
+    existing_text: set[str],
+    existing_polygons: set[tuple[str, str, int]],
+) -> bool:
+    return row["text_sha256"] in existing_text or _polygon_key(row) in existing_polygons
+
+
+def _extend_group(
+    group: str,
+    cells: Mapping[str, Sequence[Mapping[str, Any]]],
+    existing: Sequence[Mapping[str, Any]],
+    per_group: int,
+    centre_of: CentreOf,
+    seed: int,
+) -> list[dict[str, Any]]:
+    chosen, candidates, centres, nearest = _extension_state(
+        group, cells, existing, per_group, centre_of
+    )
+    added: list[dict[str, Any]] = []
+    while candidates and len(chosen) < per_group:
+        cell = _farthest_extension_cell(candidates, nearest, seed)
+        candidates.remove(cell)
+        chosen.append(cell)
+        _update_nearest_extension_distances(candidates, nearest, centres, cell)
+        added.append(_row_for_extension_cell(cells[cell][0], cell, centres[cell]))
+    if len(chosen) < per_group:
+        raise ValueError(
+            f"need {per_group - len(chosen)} more {group} cells, found {len(candidates)}"
+        )
+    return added
+
+
+def _extension_state(
+    group: str,
+    cells: Mapping[str, Sequence[Mapping[str, Any]]],
+    existing: Sequence[Mapping[str, Any]],
+    per_group: int,
+    centre_of: CentreOf,
+) -> tuple[list[str], list[str], dict[str, tuple[float, float]], dict[str, float]]:
+    chosen = _chosen_extension_cells(group, existing)
+    candidates = _available_extension_cells(cells, chosen)
+    needed = per_group - len(chosen)
+    _require_extension_capacity(candidates, needed, group)
+    centres = _extension_centres(candidates, chosen, centre_of)
+    nearest = _nearest_extension_distances(candidates, chosen, centres)
+    return chosen, candidates, centres, nearest
+
+
+def _chosen_extension_cells(group: str, existing: Sequence[Mapping[str, Any]]) -> list[str]:
+    return [row["h3_cell"] for row in existing if row["decision"] == group]
+
+
+def _available_extension_cells(cells: Mapping[str, Any], chosen: Sequence[str]) -> list[str]:
+    taken = set(chosen)
+    return [cell for cell in sorted(cells) if cell not in taken]
+
+
+def _require_extension_capacity(candidates: Sequence[str], needed: int, group: str) -> None:
+    if len(candidates) < needed:
+        raise ValueError(f"need {needed} more {group} cells, found {len(candidates)}")
+
+
+def _extension_centres(
+    candidates: Sequence[str], chosen: Sequence[str], centre_of: CentreOf
+) -> dict[str, tuple[float, float]]:
+    return {cell: centre_of(cell) for cell in {*candidates, *chosen}}
+
+
+def _nearest_extension_distances(
+    candidates: Sequence[str],
+    chosen: Sequence[str],
+    centres: Mapping[str, tuple[float, float]],
+) -> dict[str, float]:
+    return {
+        cell: min(
+            (_distance_from_chosen(cell, other, centres) for other in chosen), default=math.inf
+        )
+        for cell in candidates
+    }
+
+
+def _distance_from_chosen(
+    cell: str, chosen: str, centres: Mapping[str, tuple[float, float]]
+) -> float:
+    return _haversine_km(centres[cell], centres[chosen])
+
+
+def _farthest_extension_cell(
+    candidates: Sequence[str], nearest: Mapping[str, float], seed: int
+) -> str:
+    return max(candidates, key=lambda cell: (nearest[cell], _stable_key(seed, cell)))
+
+
+def _update_nearest_extension_distances(
+    candidates: Sequence[str],
+    nearest: dict[str, float],
+    centres: Mapping[str, tuple[float, float]],
+    chosen: str,
+) -> None:
+    for cell in candidates:
+        nearest[cell] = min(nearest[cell], _haversine_km(centres[cell], centres[chosen]))
+
+
+def _row_for_extension_cell(
+    row: Mapping[str, Any], cell: str, centre: tuple[float, float]
+) -> dict[str, Any]:
+    return {
+        **row,
+        "h3_cell": cell,
+        "cell_centre_lat": centre[0],
+        "cell_centre_lon": centre[1],
+    }

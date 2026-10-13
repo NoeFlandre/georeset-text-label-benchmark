@@ -227,7 +227,7 @@ def test_grid_wrapper_usage_names_the_geographic_run_directory() -> None:
         line for line in wrapper.read_text(encoding="utf-8").splitlines() if "Usage:" in line
     )
 
-    assert "pilot-100-seed42" in usage
+    assert "frozen-pilot" in usage
     assert "e5-small" not in wrapper.read_text(encoding="utf-8")
 
 

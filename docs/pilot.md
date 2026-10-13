@@ -69,6 +69,33 @@ When the reader loads a frozen run, it checks the invariants of the 100 rows. It
 the 50/50 balance, that cells are distinct, and that each cell matches its centre. It
 does not re-run the sampler, because the pool is not part of the frozen run.
 
+### 1,000-row extension
+
+The extended protocol starts with the committed 100-row sample above and keeps those rows
+and their order. It adds 450 rows to each decision group. The new rows use one sentence per
+resolution-3 cell within each group; yes and no cells may overlap. Maximin selection starts
+from the existing cells for that group. Exact sentence hashes and polygon keys remain unique
+across the complete 1,000-row sample. The seed remains 42.
+
+Freeze the extension from the same labelled pool and pipeline manifest as the base sample:
+
+```bash
+uv run georeset-pilot freeze \
+  --labelled-parquet <run>/labelled-eunis.parquet \
+  --pipeline-manifest <run>/manifest.json \
+  --output-dir artifacts/pilot-1000-seed42 \
+  --per-group 500 \
+  --seed 42 \
+  --extend-from artifacts/pilot-100-seed42/frozen_sample.json
+```
+
+The command rejects a base sample with a different seed, ID digest, labelled-pool hash, or
+pipeline-manifest hash. It writes a separate frozen run directory. The extension digest
+`0b877d222c8a3891bb34c4ca618aaf8c671817569786c7976628d465e0e8349a` is pinned from the
+existing `dspark-sample-1000` branch and must be confirmed by freezing the authorized full
+pool before any model run. The source pool and pipeline manifest are not present in every
+code workspace.
+
 ## Model and decoding
 
 | Setting | Value |
@@ -84,6 +111,25 @@ The pinned chat template opens assistant turns with `<think>`. The parser reads 
 text after the final `</think>` and accepts exactly one candidate code. Truncated
 output, unclosed reasoning, unknown codes and other formats are kept as invalid rows
 with the raw output and a reason.
+
+### Truncation diagnosis
+
+The current direct-label protocol leaves the pinned template and `512`-token cap intact.
+It does not turn truncated output into a prediction: a `length` finish reason is recorded
+as invalid, and the smoke gate rejects any truncated row. The historical 100-row run at
+commit `ce2173476115cdb15c2f4e525bd0e6cbf8a0ffe3` still had 16 rows hit the generation
+limit at 16,384 tokens, so a larger cap alone is not a fix. Earlier 512- and 8,192-token
+smokes also failed their gate ([issue #19](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19)).
+
+A candidate remedy is a separately named `eunis-constrained-code-v1` protocol: omit the
+template's forced `<think>` generation prefix, then use SGLang's request-level regex
+constraint to allow only one of the same 158 candidate codes. SGLang 0.5.20 exposes a
+`regex` sampling parameter in its [pinned source](https://github.com/sgl-project/sglang/blob/v0.5.20/python/sglang/srt/sampling/sampling_params.py)
+and documents constrained output in its [structured-output guide](https://docs.sglang.ai/advanced_features/structured_outputs.html).
+This changes whether the model can reason in free text before answering, so results would
+need a new protocol label and separate output path. It is not enabled by this document;
+the owner must choose the protocol, and its matching eight-row smoke must pass the existing
+runtime and truncation gate before a full run.
 
 ## Prompt
 
@@ -101,11 +147,21 @@ with all 158 candidates.
 ## Run
 
 `run-dspark-smoke` runs eight rows and must pass its gate before the full run.
-`run-dspark` runs all 100 rows and requires `--smoke-evidence` naming a passing smoke output
-for the same frozen inputs and commit. Both need an NVIDIA GPU with at least 16 GiB of memory
+`run-dspark` runs all rows in the frozen 100- or 1,000-row sample and requires
+`--smoke-evidence` naming a passing smoke output for the same frozen inputs and commit. Both
+need an NVIDIA GPU with at least 16 GiB of memory
 and compute capability 8.0 or newer. Both write to a new output directory, separate
 from the frozen input and from the smoke evidence. The Grid5000 wrapper is
 `scripts/run-dspark-grid5000.sh`.
+
+The wrapper expects exactly one visible GPU, CUDA 13.0, and driver 580.65.06 or newer. It
+requires at least 20 GiB free in job-local temporary storage and 1 GiB free for persistent
+outputs. The allocated job has a one-hour wall limit; the wrapper stops after 55 minutes.
+For 1,000 rows, the pinned 512-token cap allows up to 512,000 generated tokens, processed
+sequentially. Actual runtime depends on output lengths and GPU throughput; the eight-row
+smoke validates readiness and truncation behavior but does not estimate full-run duration.
+Preflight Grid allocations and other running or pending jobs before each reservation or
+resubmission.
 
 ```bash
 uv run georeset-pilot run-dspark \
@@ -122,7 +178,7 @@ the smoke gate result, if any.
 
 ## Metrics
 
-- Top-1 accuracy over all 100 rows. An invalid output counts as wrong.
+- Top-1 accuracy over all rows. An invalid output counts as wrong.
 - Macro-F1 over all 158 candidates. A code with no gold support and no predictions
   contributes zero.
 - Coverage: the share of rows with a valid code.
@@ -135,19 +191,27 @@ Direct generation gives one code per row, so there is no top-5 metric.
 - The gold code is the polygon's existing EUNIS assignment. It is polygon-level
   context, not a judgment about the sentence.
 - EUNIS scientific validation is unconfirmed.
-- One sample of 100 rows is a pilot. It is not a benchmark score.
+- The 100-row sample and its 1,000-row extension are pilots. They are not benchmark scores.
 
 ## Status
 
 - The labelled pool was built by the pipeline at commit `9f834e4c`. Its baseline counts
   match the pinned source.
-- The sample was frozen from that pool. Its sample ID digest is
-  `e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d`. DSpark accepts
-  this sample only.
+- The 100-row sample was frozen from that pool. Its sample ID digest is
+  `e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d`. The runner accepts
+  the 100-row sample and the 1,000-row extension protocol described above. The extension
+  digest remains unverified until it is frozen from the authorized source pool.
 - Four pool rows have codes outside the 158-code table (`R41`, `R1K`). They are left
   out before sampling and counted in `source_coverage`.
-- The GPU inference run has not been done yet.
 - The three frozen inputs are committed under `artifacts/pilot-100-seed42/`:
   `frozen_sample.json`, `candidate_labels.csv` and `manifest.json`. Use that directory as
   `--run-dir`.
-- The E5 run and the failed DSpark run are being removed from the Hub by a separate task.
+- A full 100-row DSpark run was recorded in [issue #19](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19)
+  at computation commit `ce2173476115cdb15c2f4e525bd0e6cbf8a0ffe3`, with a 16,384-token cap.
+  It reported top-1 `0.03`, macro-F1 `0.0105`, coverage `0.84` (84 valid rows), and 16
+  outputs truncated at the generation limit. Its smoke gate failed; this is a historical
+  result, separate from any new run.
+- The 1,000-row sample has not been frozen from the authorized source pool in this workspace.
+  The 100-row sample, historical run, and root overlap artifacts remain separate; new
+  artifacts must use new paths. The dataset publication state is not inferred from this
+  checkout.

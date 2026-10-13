@@ -16,7 +16,9 @@ import pyarrow.parquet as pq
 
 from georeset_text_label_benchmark.output_schema import LABELLED_SCHEMA
 from georeset_text_label_benchmark.pilot.geo_sampling import (
+    GROUPS,
     H3_RESOLUTION,
+    extend_geographic_sample,
     h3_cell_of,
     h3_centre_of,
     sample_id_of,
@@ -24,6 +26,7 @@ from georeset_text_label_benchmark.pilot.geo_sampling import (
 )
 from georeset_text_label_benchmark.pilot.protocol import (
     CANDIDATE_LABELS_SHA256,
+    EXPECTED_SAMPLE_IDS_SHA256,
     SAMPLE_SEED,
     SAMPLE_SIZE,
 )
@@ -32,6 +35,12 @@ from georeset_text_label_benchmark.pilot.sampling import build_candidate_labels
 LABELLED_NAME = "labelled-eunis.parquet"
 PIPELINE_MANIFEST_NAME = "pipeline-manifest.json"
 SOURCE_COLUMNS = tuple(LABELLED_SCHEMA.names)
+EXTENDED_SELECTION_METHOD = (
+    "H3 resolution 3 cells with maximin spacing; one sentence per cell within each group; "
+    "yes and no may share a cell; the first 50 yes and 50 no are the published pilot sample; "
+    "English only; one occurrence per exact sentence hash and per polygon; occurrences "
+    "ordered by SHA256(seed:occurrence)."
+)
 SELECTION_METHOD = (
     "H3 resolution 3 cells with maximin spacing and a seeded tie-break; one sentence per "
     "cell; 50 yes and 50 no on disjoint cells; English only; one occurrence per exact "
@@ -197,6 +206,7 @@ def freeze_sample(
     expected_candidate_sha256: str | None = CANDIDATE_LABELS_SHA256,
     per_group: int = SAMPLE_SIZE // 2,
     seed: int = SAMPLE_SEED,
+    extend_from: Path | None = None,
 ) -> dict[str, Any]:
     """Write the geographic yes/no sample and its candidate table before inference."""
     if output_dir.exists():
@@ -204,28 +214,20 @@ def freeze_sample(
     labelled_hash, candidate_hash, manifest = _validate_freeze_inputs(
         labelled_parquet, candidate_csv, pipeline_manifest, expected_candidate_sha256
     )
+    pipeline_hash = sha256_file(pipeline_manifest)
     all_rows, _ = _read_source_rows(labelled_parquet)
     taxonomy = _read_taxonomy(candidate_csv)
     source_rows = [row for row in all_rows if row["eunis_code"] in taxonomy]
     candidates = build_candidate_labels(source_rows, taxonomy)
     _validate_candidate_count(candidates)
-    selected = [
-        {**row, "sample_id": sample_id_of(row)}
-        for row in select_geographic_sample(
-            source_rows,
-            cell_of=h3_cell_of,
-            centre_of=h3_centre_of,
-            per_group=per_group,
-            seed=seed,
-        )
-    ]
-    output_dir.mkdir(parents=True, exist_ok=False)
-    shutil.copyfile(candidate_csv, output_dir / "candidate_labels.csv")
+    selected, method = _select_frozen_rows(
+        source_rows, per_group, seed, extend_from, labelled_hash, pipeline_hash
+    )
     sample = _frozen_sample(
         _FreezeInputs(
             manifest=manifest,
             labelled_hash=labelled_hash,
-            pipeline_hash=sha256_file(pipeline_manifest),
+            pipeline_hash=pipeline_hash,
             candidate_hash=candidate_hash,
         ),
         source_rows,
@@ -233,10 +235,59 @@ def freeze_sample(
         selected,
         per_group,
         seed,
+        method,
     )
     sample["source_coverage"]["rows_outside_candidate_vocabulary"] = len(all_rows) - len(
         source_rows
     )
+    _write_frozen_artifacts(output_dir, candidate_csv, sample, labelled_hash)
+    return _freeze_summary(output_dir, per_group * 2, len(candidates), sample)
+
+
+def _select_frozen_rows(
+    source_rows: Sequence[Mapping[str, Any]],
+    per_group: int,
+    seed: int,
+    extend_from: Path | None,
+    labelled_hash: str,
+    pipeline_hash: str,
+) -> tuple[list[dict[str, Any]], str]:
+    if extend_from is None:
+        selected = select_geographic_sample(
+            source_rows,
+            cell_of=h3_cell_of,
+            centre_of=h3_centre_of,
+            per_group=per_group,
+            seed=seed,
+        )
+        return [{**row, "sample_id": sample_id_of(row)} for row in selected], SELECTION_METHOD
+    base = _read_base_sample(
+        extend_from,
+        per_group,
+        seed,
+        expected_labelled_sha256=labelled_hash,
+        expected_pipeline_manifest_sha256=pipeline_hash,
+    )
+    added = extend_geographic_sample(
+        source_rows,
+        cell_of=h3_cell_of,
+        centre_of=h3_centre_of,
+        existing=base,
+        per_group=per_group,
+        seed=seed,
+    )
+    additions = [{**row, "sample_id": sample_id_of(row)} for row in added]
+    return [*base, *additions], EXTENDED_SELECTION_METHOD
+
+
+def _write_frozen_artifacts(
+    output_dir: Path,
+    candidate_csv: Path,
+    sample: Mapping[str, Any],
+    labelled_hash: str,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=False)
+    shutil.copyfile(candidate_csv, output_dir / "candidate_labels.csv")
     _write_json_exclusive(output_dir / "frozen_sample.json", sample)
     _write_json_exclusive(
         output_dir / "manifest.json",
@@ -244,14 +295,81 @@ def freeze_sample(
             output_dir, sample, labelled_hash, sample["source"]["pipeline_manifest_sha256"]
         ),
     )
-    return _freeze_summary(output_dir, per_group * 2, len(candidates), sample)
+
+
+def _read_base_sample(
+    path: Path,
+    per_group: int,
+    seed: int,
+    *,
+    expected_labelled_sha256: str,
+    expected_pipeline_manifest_sha256: str,
+) -> list[dict[str, Any]]:
+    """Load the published pilot after checking its identity and source provenance."""
+    sample = _read_base_sample_json(path)
+    selection = sample["selection"]
+    _validate_base_selection(selection, per_group, seed)
+    _validate_base_source(sample, expected_labelled_sha256, expected_pipeline_manifest_sha256)
+    rows = sample.get("selected_rows")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("base frozen sample must contain selected row objects")
+    _validate_frozen_rows(rows, selection)
+    return rows
+
+
+def _read_base_sample_json(path: Path) -> Mapping[str, Any]:
+    try:
+        sample = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("base frozen sample is unreadable") from error
+    if not isinstance(sample, Mapping) or not isinstance(sample.get("selection"), Mapping):
+        raise ValueError("base frozen sample must contain a selection object")
+    return sample
+
+
+def _validate_base_selection(selection: Mapping[str, Any], per_group: int, seed: int) -> None:
+    _validate_base_identity(selection, seed)
+    _validate_base_group_size(selection)
+    if selection["per_group"] > per_group:
+        raise ValueError("requested per_group is smaller than the base sample")
+
+
+def _validate_base_identity(selection: Mapping[str, Any], seed: int) -> None:
+    expected = {
+        "method": SELECTION_METHOD,
+        "seed": seed,
+        "sample_size": SAMPLE_SIZE,
+        "sample_ids_sha256": EXPECTED_SAMPLE_IDS_SHA256,
+    }
+    if any(selection.get(key) != value for key, value in expected.items()):
+        raise ValueError("base sample must be the published pilot sample with the same seed")
+
+
+def _validate_base_group_size(selection: Mapping[str, Any]) -> None:
+    if selection.get("per_group") != SAMPLE_SIZE // 2:
+        raise ValueError("base sample must contain the published 50/50 sample")
+
+
+def _validate_base_source(
+    sample: Mapping[str, Any],
+    expected_labelled_sha256: str,
+    expected_pipeline_manifest_sha256: str,
+) -> None:
+    source = sample.get("source")
+    if not isinstance(source, Mapping):
+        raise ValueError("base frozen sample must contain source provenance")
+    _validate_frozen_source(source)
+    if source["sha256"] != expected_labelled_sha256:
+        raise ValueError("base sample and labelled pool must have the same SHA-256")
+    if source["pipeline_manifest_sha256"] != expected_pipeline_manifest_sha256:
+        raise ValueError("base sample and pipeline manifest must have the same SHA-256")
 
 
 def _selection_metadata(
-    selected: Sequence[Mapping[str, Any]], per_group: int, seed: int
+    selected: Sequence[Mapping[str, Any]], per_group: int, seed: int, method: str
 ) -> dict[str, Any]:
     return {
-        "method": SELECTION_METHOD,
+        "method": method,
         "seed": seed,
         "per_group": per_group,
         "sample_size": 2 * per_group,
@@ -294,12 +412,13 @@ def _frozen_sample(
     selected: Sequence[Mapping[str, Any]],
     per_group: int,
     seed: int,
+    method: str,
 ) -> dict[str, Any]:
     return {
         "format_version": 2,
         "source": _frozen_source(inputs.manifest, inputs.labelled_hash, inputs.pipeline_hash),
         "source_coverage": _sample_metadata(source_rows),
-        "selection": _selection_metadata(selected, per_group, seed),
+        "selection": _selection_metadata(selected, per_group, seed, method),
         "candidate_labels": {
             "file": "candidate_labels.csv",
             "sha256": inputs.candidate_hash,
@@ -389,7 +508,97 @@ def _validate_frozen_ids(ids: Sequence[str], selection: Mapping[str, Any]) -> No
 
 def _validate_frozen_selection(rows: list[dict[str, Any]], selection: Mapping[str, Any]) -> None:
     _require_balanced_decisions(rows, selection["per_group"])
+    _validate_selection_metadata(rows, selection)
     _require_cell_centres(rows)
+    _require_unique_group_cells(rows, selection["method"])
+
+
+def _validate_selection_metadata(
+    rows: Sequence[Mapping[str, Any]], selection: Mapping[str, Any]
+) -> None:
+    _require_supported_selection_method(selection)
+    _require_declared_group_size(selection)
+    _require_h3_resolution(selection)
+    _require_declared_cell_count(rows, selection)
+    _validate_selection_counts(rows, selection)
+
+
+def _require_supported_selection_method(selection: Mapping[str, Any]) -> None:
+    if selection.get("method") not in {SELECTION_METHOD, EXTENDED_SELECTION_METHOD}:
+        raise ValueError("frozen sample selection method is not supported")
+
+
+def _require_declared_group_size(selection: Mapping[str, Any]) -> None:
+    per_group = selection.get("per_group", -1)
+    if selection.get("sample_size") != 2 * per_group:
+        raise ValueError("frozen sample size does not match its per-group count")
+
+
+def _require_h3_resolution(selection: Mapping[str, Any]) -> None:
+    if selection.get("h3_resolution") != H3_RESOLUTION:
+        raise ValueError("frozen sample H3 resolution does not match the protocol")
+
+
+def _require_declared_cell_count(
+    rows: Sequence[Mapping[str, Any]], selection: Mapping[str, Any]
+) -> None:
+    if selection.get("cell_count") != _unique_cell_count(rows):
+        raise ValueError("frozen sample cell count does not match its rows")
+
+
+def _unique_cell_count(rows: Sequence[Mapping[str, Any]]) -> int:
+    return len({row["h3_cell"] for row in rows})
+
+
+def _validate_selection_counts(
+    rows: Sequence[Mapping[str, Any]], selection: Mapping[str, Any]
+) -> None:
+    expected = _selection_row_counts(rows)
+    if any(selection.get(key) != value for key, value in expected.items()):
+        raise ValueError("frozen sample counts do not match its rows")
+
+
+def _selection_row_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "decision_counts": _decision_counts(rows),
+        "unique_sentence_hash_count": _unique_sentence_hash_count(rows),
+        "unique_polygon_count": _unique_polygon_count(rows),
+    }
+
+
+def _decision_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    return dict(sorted(Counter(row["decision"] for row in rows).items()))
+
+
+def _unique_sentence_hash_count(rows: Sequence[Mapping[str, Any]]) -> int:
+    return len({row["text_sha256"] for row in rows})
+
+
+def _unique_polygon_count(rows: Sequence[Mapping[str, Any]]) -> int:
+    polygons = {(row["source_pbf"], row["osm_type"], row["osm_id"]) for row in rows}
+    return len(polygons)
+
+
+def _require_unique_group_cells(rows: Sequence[Mapping[str, Any]], method: str) -> None:
+    cells = _cells_by_decision(rows)
+    _require_unique_cells(cells["yes"], "yes")
+    _require_unique_cells(cells["no"], "no")
+    if method == SELECTION_METHOD:
+        _require_disjoint_decision_cells(cells["yes"], cells["no"])
+
+
+def _cells_by_decision(rows: Sequence[Mapping[str, Any]]) -> dict[str, list[str]]:
+    return {group: [row["h3_cell"] for row in rows if row["decision"] == group] for group in GROUPS}
+
+
+def _require_unique_cells(cells: Sequence[str], group: str) -> None:
+    if len(cells) != len(set(cells)):
+        raise ValueError("frozen sample must have one sentence per cell within each group")
+
+
+def _require_disjoint_decision_cells(yes_cells: Sequence[str], no_cells: Sequence[str]) -> None:
+    if set(yes_cells).intersection(no_cells):
+        raise ValueError("published pilot sample must use disjoint yes and no cells")
 
 
 def _require_balanced_decisions(rows: Sequence[Mapping[str, Any]], per_group: int) -> None:

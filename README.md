@@ -72,7 +72,12 @@ uv run georeset-pilot freeze \
 ```
 
 Inference needs an NVIDIA GPU. It is run on Grid5000 with
-`scripts/run-dspark-grid5000.sh`. The sample and the new results are not published yet.
+`scripts/run-dspark-grid5000.sh`. The 100-row sample is committed here, and the historical
+100-row DSpark result is recorded in [issue #19](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19).
+Prior publication evidence identifies those artifacts in dataset revision
+[`d0b2337c98a44d58b815fd5d876d608418654ff7`](https://huggingface.co/datasets/NoeFlandre/georeset-text-label-benchmark/tree/d0b2337c98a44d58b815fd5d876d608418654ff7).
+The 1,000-row extension is a separate sample and result; it still needs a verified freeze
+from the authorized labelled pool before any GPU run or publication.
 
 ## Engineering checks
 
