@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from georeset_text_label_benchmark.pilot import dspark
 from georeset_text_label_benchmark.pilot.dspark_runner import run_dspark_pilot
 from georeset_text_label_benchmark.pilot.protocol import SAMPLE_SEED, SAMPLE_SIZE
 from georeset_text_label_benchmark.pilot.runner import freeze_sample
@@ -33,16 +34,16 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="allow a different manifest for an extension when the pinned labelled pool is identical",
     )
-    dspark = commands.add_parser(
+    dspark_run = commands.add_parser(
         "run-dspark", help="predict one EUNIS code per row with pinned LFM2.5 + DSpark"
     )
-    dspark.add_argument("--run-dir", type=Path, default=PILOT_RUN_DIR)
-    dspark.add_argument("--output-dir", type=Path)
-    dspark.add_argument("--model-cache", type=Path, default=Path(".cache/model-dspark"))
-    dspark.add_argument("--model-cache-seed", type=Path)
-    dspark.add_argument("--computation-commit", required=True)
-    dspark.add_argument("--validation-commit", required=True)
-    dspark.add_argument("--smoke-evidence", type=Path, required=True)
+    dspark_run.add_argument("--run-dir", type=Path, default=PILOT_RUN_DIR)
+    dspark_run.add_argument("--output-dir", type=Path)
+    dspark_run.add_argument("--model-cache", type=Path, default=Path(".cache/model-dspark"))
+    dspark_run.add_argument("--model-cache-seed", type=Path)
+    dspark_run.add_argument("--computation-commit", required=True)
+    dspark_run.add_argument("--validation-commit", required=True)
+    dspark_run.add_argument("--smoke-evidence", type=Path, required=True)
     smoke = commands.add_parser(
         "run-dspark-smoke", help="run a bounded eight-row LFM2.5 + DSpark readiness smoke"
     )
@@ -52,6 +53,12 @@ def _parser() -> argparse.ArgumentParser:
     smoke.add_argument("--model-cache-seed", type=Path)
     smoke.add_argument("--computation-commit", required=True)
     smoke.add_argument("--validation-commit", required=True)
+    smoke.add_argument(
+        "--generation-profile",
+        choices=dspark.GENERATION_PROFILE_NAMES,
+        default=dspark.DEFAULT_GENERATION_PROFILE,
+        help="select the generation budget for this bounded smoke",
+    )
     return parser
 
 
@@ -81,13 +88,18 @@ def _freeze_sample_command(args: argparse.Namespace) -> dict[str, Any]:
 def _run_dspark_command(args: argparse.Namespace) -> dict[str, Any]:
     """Run the DSpark pilot or bounded smoke for the selected subcommand."""
     smoke = args.command == "run-dspark-smoke"
+    options: dict[str, Any] = {
+        "output_dir": args.output_dir,
+        "model_cache_dir": args.model_cache,
+        "model_cache_seed_dir": args.model_cache_seed,
+        "computation_commit": args.computation_commit,
+        "validation_commit": args.validation_commit,
+        "smoke": smoke,
+        "smoke_evidence": None if smoke else args.smoke_evidence,
+    }
+    if smoke:
+        options["generation_profile"] = args.generation_profile
     return run_dspark_pilot(
         args.run_dir,
-        output_dir=args.output_dir,
-        model_cache_dir=args.model_cache,
-        model_cache_seed_dir=args.model_cache_seed,
-        computation_commit=args.computation_commit,
-        validation_commit=args.validation_commit,
-        smoke=smoke,
-        smoke_evidence=None if smoke else args.smoke_evidence,
+        **options,
     )

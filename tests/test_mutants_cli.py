@@ -102,7 +102,8 @@ def test_run_dspark_smoke_help_lists_exactly_its_flags(monkeypatch: pytest.Monke
         "                                       OUTPUT_DIR [--model-cache MODEL_CACHE]\n"
         "                                       [--model-cache-seed MODEL_CACHE_SEED]\n"
         "                                       --computation-commit COMPUTATION_COMMIT\n"
-        "                                       --validation-commit VALIDATION_COMMIT\n\n"
+        "                                       --validation-commit VALIDATION_COMMIT\n"
+        "                                       [--generation-profile {eunis-direct-label-512-v1,lfm25-dspark-max-new-tokens-16384-diagnostic-v1}]\n\n"
         "options:\n"
         "  -h, --help            show this help message and exit\n"
         "  --run-dir RUN_DIR\n"
@@ -111,6 +112,8 @@ def test_run_dspark_smoke_help_lists_exactly_its_flags(monkeypatch: pytest.Monke
         "  --model-cache-seed MODEL_CACHE_SEED\n"
         "  --computation-commit COMPUTATION_COMMIT\n"
         "  --validation-commit VALIDATION_COMMIT\n"
+        "  --generation-profile {eunis-direct-label-512-v1,lfm25-dspark-max-new-tokens-16384-diagnostic-v1}\n"
+        "                        select the generation budget for this bounded smoke\n"
     )
 
 
@@ -257,6 +260,7 @@ def test_run_dspark_smoke_defaults_name_the_pilot_run_and_model_cache() -> None:
         model_cache_seed=None,
         computation_commit=COMMIT,
         validation_commit=VALIDATION_COMMIT,
+        generation_profile="eunis-direct-label-512-v1",
     )
 
 

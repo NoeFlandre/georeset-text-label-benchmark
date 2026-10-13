@@ -1801,7 +1801,11 @@ def test_run_dspark_pilot_uses_scope_specific_default_and_resumes_scope(
     assert result is returned
     assert captured["args"][1] == tmp_path / "lfm2.5-2.6b-dspark-smoke-8-seed42"
     assert captured["args"][-1] == scope
-    assert captured["kwargs"] == {"smoke_evidence_manifest": None, "smoke_evidence_path": None}
+    assert captured["kwargs"] == {
+        "generation_profile": dspark.generation_profile(dspark.DEFAULT_GENERATION_PROFILE),
+        "smoke_evidence_manifest": None,
+        "smoke_evidence_path": None,
+    }
 
 
 @pytest.mark.parametrize(
@@ -2714,6 +2718,7 @@ def test_full_run_rejects_smoke_metrics_that_contradict_predictions(
     ("keys", "value"),
     [
         (("generation_config", "sampling", "temperature"), 0.2),
+        (("generation_config", "sampling", "max_new_tokens"), 16_384),
         (("model", "revision"), "0" * 40),
     ],
 )
@@ -4028,6 +4033,147 @@ def test_generation_settings_match_pinned_model_and_sglang_contract() -> None:
     assert dspark.ENGINE_ARGS["random_seed"] == 42
 
 
+def test_budget_diagnostic_profile_only_changes_the_generation_cap() -> None:
+    historical = dspark.generation_profile(dspark.DEFAULT_GENERATION_PROFILE)
+    diagnostic = dspark.generation_profile(dspark.BUDGET_DIAGNOSTIC_PROFILE)
+    historical_sampling = dspark.sampling_params(historical)
+    diagnostic_sampling = dspark.sampling_params(diagnostic)
+
+    assert historical.max_new_tokens == 512
+    assert diagnostic.profile_id == dspark.BUDGET_DIAGNOSTIC_PROFILE
+    assert diagnostic.version == 1
+    assert diagnostic.max_new_tokens == 16_384
+    assert diagnostic.smoke_only is True
+    assert diagnostic_sampling == {
+        **historical_sampling,
+        "max_new_tokens": 16_384,
+    }
+    dspark.validate_context_length(19_448, max_new_tokens=diagnostic.max_new_tokens)
+    with pytest.raises(ValueError, match="prompt plus generation cap exceeds SGLang context"):
+        dspark.validate_context_length(
+            dspark.RUNTIME_CONTEXT_TOKENS - diagnostic.max_new_tokens + 1,
+            max_new_tokens=diagnostic.max_new_tokens,
+        )
+
+
+def test_length_finish_remains_truncated_under_budget_diagnostic() -> None:
+    parsed = dspark.parse_label(
+        "</think>T11",
+        finish_reason="length",
+        candidate_codes=["T11"],
+    )
+
+    assert parsed == dspark.ParsedLabel(None, "truncated", "generation_length")
+
+
+def test_budget_diagnostic_smoke_records_cap_and_length_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "pilot"
+    run_dir.mkdir()
+    selected = _write_frozen_run(run_dir)
+    output_dir = tmp_path / "budget-diagnostic-smoke"
+    generation_calls: list[dict[str, Any]] = []
+
+    class _LengthEngine:
+        version = "0.5.20"
+
+        def __init__(self, engine_kwargs: Mapping[str, Any], sampling: Mapping[str, Any]) -> None:
+            generation_calls.append(
+                {"engine_kwargs": dict(engine_kwargs), "sampling": dict(sampling)}
+            )
+
+        async def generate(self, _input_ids: list[int]) -> dict[str, Any]:
+            return {
+                "text": "unfinished reasoning",
+                "output_ids": [7] * 16_384,
+                "meta_info": {
+                    "completion_tokens": 16_384,
+                    "finish_reason": {"type": "length", "matched": None},
+                },
+            }
+
+        def shutdown(self) -> None:
+            pass
+
+    tokenizer = _PromptTokenizer()
+    monkeypatch.setattr(dspark, "load_tokenizer", lambda: tokenizer)
+    monkeypatch.setattr(dspark, "SGLangEngine", _LengthEngine)
+    monkeypatch.setattr(dspark_runner, "_require_supported_gpu", lambda: {"name": "mock GPU"})
+    monkeypatch.setattr(dspark_runner, "_runtime_compatibility_preflight", _mock_cuda_preflight)
+    monkeypatch.setattr(dspark_runner, "_prepare_model_cache", lambda _path: tmp_path / "cache")
+    monkeypatch.setattr(
+        dspark,
+        "EXPECTED_SAMPLE_IDS_SHA256",
+        runner._sha256_json([row["sample_id"] for row in selected]),
+    )
+    monkeypatch.setattr(dspark_runner, "_runtime_metadata", _mock_runtime_metadata)
+    monkeypatch.setattr(dspark_runner, "_clock", iter(range(1_000)).__next__)
+
+    result = dspark_runner.run_dspark_pilot(
+        run_dir,
+        computation_commit="a" * 40,
+        validation_commit="b" * 40,
+        output_dir=output_dir,
+        smoke=True,
+        generation_profile=dspark.BUDGET_DIAGNOSTIC_PROFILE,
+    )
+
+    predictions = pq.read_table(output_dir / dspark_runner.PREDICTIONS_NAME).to_pylist()
+    manifest = json.loads((output_dir / dspark_runner.MANIFEST_NAME).read_text(encoding="utf-8"))
+    assert len(predictions) == dspark.MAX_SMOKE_ROWS
+    assert generation_calls[0]["sampling"] == {
+        **dspark.SAMPLING,
+        "max_new_tokens": 16_384,
+    }
+    assert all(call["sampling"]["max_new_tokens"] == 16_384 for call in generation_calls)
+    assert all(row["generated_tokens"] == 16_384 for row in predictions)
+    assert all(row["finish_reason"] == "length" for row in predictions)
+    assert all(
+        row["finish_reason_metadata_json"] == '{"matched":null,"type":"length"}'
+        for row in predictions
+    )
+    assert all(row["parse_status"] == "truncated" for row in predictions)
+    assert all(row["parse_error"] == "generation_length" for row in predictions)
+    assert all(row["raw_output"] == "unfinished reasoning" for row in predictions)
+    assert all(row["target_eos_present"] is False for row in predictions)
+    assert result["smoke_gate"]["passed"] is False
+    assert result["smoke_gate"]["truncated_count"] == dspark.MAX_SMOKE_ROWS
+    assert manifest["generation_config"]["maximum_new_tokens"] == 16_384
+    assert manifest["generation_config"]["sampling"]["max_new_tokens"] == 16_384
+    assert (
+        "current 512-token default"
+        in manifest["generation_config"]["setting_provenance"]["sampling.max_new_tokens"]
+    )
+    assert any("current 512-token default" in note for note in manifest["limitations"])
+    assert manifest["generation_config"]["generation_profile"] == {
+        "profile_id": dspark.BUDGET_DIAGNOSTIC_PROFILE,
+        "version": 1,
+        "scope": "bounded-smoke-only",
+        "max_new_tokens": 16_384,
+        "based_on_profile": dspark.DEFAULT_GENERATION_PROFILE,
+        "comparability": "generation budget differs; report as a separate diagnostic",
+    }
+    assert manifest["generation_config_sha256"] == dspark_runner._sha256_json(
+        manifest["generation_config"]
+    )
+
+
+def test_budget_diagnostic_profile_is_rejected_for_full_run_before_reading_inputs(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError, match="diagnostic generation profile is restricted to smoke runs"
+    ):
+        dspark_runner.run_dspark_pilot(
+            tmp_path / "missing-inputs",
+            computation_commit="a" * 40,
+            validation_commit="b" * 40,
+            smoke=False,
+            generation_profile=dspark.BUDGET_DIAGNOSTIC_PROFILE,
+        )
+
+
 def test_smoke_row_selection_prefers_language_diversity_then_frozen_order() -> None:
     rows = [
         {"sample_id": str(index), "language_code": language}
@@ -4331,6 +4477,7 @@ def test_dspark_smoke_cli_requires_separate_output_and_fails_closed(
                 "validation_commit": "b" * 40,
                 "smoke": True,
                 "smoke_evidence": None,
+                "generation_profile": dspark.DEFAULT_GENERATION_PROFILE,
             },
         )
     ]
@@ -4383,6 +4530,56 @@ def test_dspark_smoke_cli_requires_a_distinct_output_directory() -> None:
     assert defaults.run_dir == Path("artifacts/pilot-100-seed42")
     assert defaults.model_cache == Path(".cache/model-dspark")
     assert defaults.model_cache_seed is None
+    assert defaults.generation_profile == dspark.DEFAULT_GENERATION_PROFILE
+
+
+def test_dspark_smoke_cli_passes_the_named_budget_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def run(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"sample_count": 8, "smoke_gate": {"passed": False}}
+
+    monkeypatch.setattr(cli, "run_dspark_pilot", run)
+    assert (
+        cli.main(
+            [
+                "run-dspark-smoke",
+                "--output-dir",
+                "diagnostic-output",
+                "--computation-commit",
+                "a" * 40,
+                "--validation-commit",
+                "b" * 40,
+                "--generation-profile",
+                dspark.BUDGET_DIAGNOSTIC_PROFILE,
+            ]
+        )
+        == 1
+    )
+    assert calls[0]["generation_profile"] == dspark.BUDGET_DIAGNOSTIC_PROFILE
+
+
+def test_full_run_cli_does_not_allow_a_budget_profile() -> None:
+    with pytest.raises(SystemExit) as error:
+        cli._parser().parse_args(
+            [
+                "run-dspark",
+                "--output-dir",
+                "full-output",
+                "--computation-commit",
+                "a" * 40,
+                "--validation-commit",
+                "b" * 40,
+                "--smoke-evidence",
+                "passing-smoke",
+                "--generation-profile",
+                dspark.BUDGET_DIAGNOSTIC_PROFILE,
+            ]
+        )
+    assert error.value.code == 2
 
 
 def test_dspark_cli_parses_model_cache_seed_as_a_path() -> None:

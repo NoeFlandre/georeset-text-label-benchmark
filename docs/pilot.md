@@ -225,7 +225,7 @@ raw output and a reason.
 
 ### Truncation diagnosis
 
-The direct-label protocol keeps the pinned template, sampling settings, EOS handling,
+The direct-label default keeps the pinned template, sampling settings, EOS handling,
 parser and `512`-token cap intact. A `length` finish reason is recorded as invalid, and
 the smoke gate rejects any truncated row. The historical 100-row run at computation
 commit `ce2173476115cdb15c2f4e525bd0e6cbf8a0ffe3` reported 16 `generation_length` rows at
@@ -238,6 +238,9 @@ runtime context. These rows reached the generation cap before the parser's final
 boundary; the stored trace does not establish whether the model or runtime failed to emit
 the expected end marker. Earlier 512- and 8,192-token smokes also failed their gate
 ([smoke report](https://github.com/NoeFlandre/georeset-text-label-benchmark/issues/19#issuecomment-6106289763)).
+The historical prediction rows separately report 84 `valid` parser results (3 correct and
+81 valid but wrong), 16 truncated results, and overall top-1 accuracy `0.03` with `0.84`
+coverage. The 84 stop finishes alone are not treated as evidence of 84 valid labels.
 
 The pinned target config and tokenizer agree on EOS token ID `124900`
 (`<|im_end|>`). The runner passes that ID to SGLang 0.5.20, preserves the stop token in
@@ -255,6 +258,35 @@ none produced a valid final answer, and the repeated-suffix detector found zero 
 shows the cap ended generation before an answer in those rows. It does not show EOS parser
 loss or a repetition loop. The output Parquet SHA-256 was
 `41d2d64e5e00e4a28940d27d349b9f16918d77e9aefedd3f2774f635d4d903ad`.
+
+For a bounded diagnosis only, `run-dspark-smoke` accepts the versioned profile
+`lfm25-dspark-max-new-tokens-16384-diagnostic-v1`. It changes only `max_new_tokens` from
+the current default profile's 512 to 16,384. The target and draft revisions, prompt and chat
+template, temperature, top-k, repetition penalty, stop ID, special-token handling, seed,
+engine settings, parser, eight-row selection and smoke gate stay fixed. The profile ID,
+version, cap and separate-comparability note are recorded in the generation config and its
+SHA-256. Raw output, normalized and raw finish metadata, generated-token count and EOS
+diagnostics remain in prediction rows. A `length` finish still counts as truncated, and any
+truncated row fails the unchanged smoke gate. The diagnostic profile is rejected for full
+runs and cannot serve as evidence for the historical 100-row full-run result.
+
+Run only after the sample is frozen, exact-head CI has passed, the GPU owner has approved
+the command and a resource preflight confirms the existing allocation:
+
+```bash
+uv run georeset-pilot run-dspark-smoke \
+  --run-dir <frozen-sample-dir> \
+  --output-dir <fresh-diagnostic-output-dir> \
+  --computation-commit <40-hex-commit> \
+  --validation-commit <40-hex-commit> \
+  --generation-profile lfm25-dspark-max-new-tokens-16384-diagnostic-v1
+```
+
+This eight-row diagnostic has a maximum of 131,072 generated tokens. It changes the
+generation budget and is not directly comparable to the current 512-token default; it is
+not a 1,000-row evaluation. The historical 100-row full run used a 16,384-token cap, but
+this eight-row smoke remains a separate run with a different sample scope and commit. Do
+not use its result to waive the smoke gate or to claim a complete evaluation.
 
 The historical predictions include decoded text and finish reasons but not complete
 token-ID traces. They show generation stopped at the configured token cap before a final

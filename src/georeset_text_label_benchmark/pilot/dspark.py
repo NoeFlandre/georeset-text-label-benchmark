@@ -42,6 +42,8 @@ MAX_NEW_TOKENS = 512
 MAX_CONCURRENCY = 1
 MAX_SMOKE_ROWS = 8
 MIN_SMOKE_VALID_OUTPUTS = 6
+DEFAULT_GENERATION_PROFILE = "eunis-direct-label-512-v1"
+BUDGET_DIAGNOSTIC_PROFILE = "lfm25-dspark-max-new-tokens-16384-diagnostic-v1"
 # This pinned template ignores enable_thinking and always opens <think> for generation.
 CHAT_TEMPLATE_KWARGS: dict[str, bool] = {}
 SAMPLING: dict[str, Any] = {
@@ -68,6 +70,53 @@ ENGINE_ARGS: dict[str, Any] = {
 THINK_CLOSE = "</think>"
 _CODE_ONLY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _END_MARKERS = (TARGET_EOS_TOKEN,)
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationProfile:
+    """Named token-budget setting while the rest of the generation contract stays pinned."""
+
+    profile_id: str
+    version: int
+    max_new_tokens: int
+    smoke_only: bool
+
+
+_GENERATION_PROFILES = {
+    DEFAULT_GENERATION_PROFILE: GenerationProfile(
+        profile_id=DEFAULT_GENERATION_PROFILE,
+        version=1,
+        max_new_tokens=MAX_NEW_TOKENS,
+        smoke_only=False,
+    ),
+    BUDGET_DIAGNOSTIC_PROFILE: GenerationProfile(
+        profile_id=BUDGET_DIAGNOSTIC_PROFILE,
+        version=1,
+        max_new_tokens=16_384,
+        smoke_only=True,
+    ),
+}
+GENERATION_PROFILE_NAMES = tuple(_GENERATION_PROFILES)
+
+
+def generation_profile(profile_id: str) -> GenerationProfile:
+    """Resolve one explicitly supported generation profile."""
+    try:
+        return _GENERATION_PROFILES[profile_id]
+    except KeyError as error:
+        raise ValueError(f"unsupported generation profile: {profile_id}") from error
+
+
+def sampling_params(
+    profile: GenerationProfile | str = DEFAULT_GENERATION_PROFILE,
+) -> dict[str, Any]:
+    """Copy the pinned sampling settings with only the selected token budget applied."""
+    resolved = generation_profile(profile) if isinstance(profile, str) else profile
+    params = {**SAMPLING, "stop_token_ids": list(SAMPLING["stop_token_ids"])}
+    params["max_new_tokens"] = resolved.max_new_tokens
+    return params
+
+
 GENERATION_SETTING_PROVENANCE = {
     "chat_template_kwargs": (
         "The pinned chat_template.jinja has no enable_thinking option and appends <think> "
