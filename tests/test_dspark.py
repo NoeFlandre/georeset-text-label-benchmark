@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -3884,6 +3885,41 @@ def test_grid5000_runner_loads_the_cuda_toolkit_before_installing_sglang() -> No
     assert content.index("export CUDA_HOME=") < content.index("run_bounded uv sync")
     assert 'paths.append(("model cache seed", sys.argv[4]))' in content
     assert 'DS_PILOT_ARGS+=(--model-cache-seed "$MODEL_CACHE_SEED")' in content
+
+
+def test_grid5000_dspark_environment_includes_the_geographic_cli_dependency() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    script = (project_root / "scripts/run-dspark-grid5000.sh").read_text(encoding="utf-8")
+    exported = subprocess.run(
+        [
+            "uv",
+            "export",
+            "--locked",
+            "--no-default-groups",
+            "--extra",
+            "dspark",
+            "--extra",
+            "geographic",
+            "--format",
+            "requirements.txt",
+            "--no-header",
+            "--no-annotate",
+        ],
+        check=True,
+        capture_output=True,
+        cwd=project_root,
+        text=True,
+    )
+
+    assert (
+        "run_bounded uv sync --locked --no-default-groups --extra dspark --extra geographic "
+        "--python 3.12"
+    ) in script
+    assert (
+        "run_bounded uv run --locked --no-default-groups --extra dspark --extra geographic "
+        '\\\n  georeset-pilot "$RUN_COMMAND"' in script
+    )
+    assert re.search(r"(?m)^h3[=<>!~]", exported.stdout)
 
 
 def test_actual_pinned_template_still_opens_thinking_and_ignores_false_flag() -> None:

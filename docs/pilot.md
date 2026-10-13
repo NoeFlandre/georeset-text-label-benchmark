@@ -39,8 +39,12 @@ disjoint, the freeze stops with an error.
 
 ## Freeze
 
+Install the H3-backed sampler dependency with
+`uv sync --locked --no-default-groups --extra geographic`, then include the same extra
+when launching the freeze command.
+
 ```bash
-uv run georeset-pilot freeze \
+uv run --locked --no-default-groups --extra geographic georeset-pilot freeze \
   --labelled-parquet <run>/labelled-eunis.parquet \
   --pipeline-manifest <run>/manifest.json \
   --output-dir artifacts/pilot-100-seed42
@@ -80,7 +84,7 @@ across the complete 1,000-row sample. The seed remains 42.
 Freeze the extension from the same labelled pool and pipeline manifest as the base sample:
 
 ```bash
-uv run georeset-pilot freeze \
+uv run --locked --no-default-groups --extra geographic georeset-pilot freeze \
   --labelled-parquet <run>/labelled-eunis.parquet \
   --pipeline-manifest <run>/manifest.json \
   --output-dir artifacts/pilot-1000-seed42 \

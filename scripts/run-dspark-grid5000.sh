@@ -310,7 +310,7 @@ JOB_BUDGET_SECONDS=$((55 * 60))
 
 cd "$PROJECT_ROOT"
 echo "Installing the locked DSpark runtime in job-local temporary storage."
-run_bounded uv sync --locked --no-default-groups --extra dspark --python 3.12
+run_bounded uv sync --locked --no-default-groups --extra dspark --extra geographic --python 3.12
 run_bounded uv cache clean
 if [[ "$RUN_COMMAND" == "run-dspark-smoke" ]]; then
   echo "Running the fixed eight-row readiness smoke; temporary cache limit is 20 GiB."
@@ -330,7 +330,8 @@ fi
 if [[ "$RUN_COMMAND" == run-dspark ]]; then
   DS_PILOT_ARGS+=(--smoke-evidence "$SMOKE_EVIDENCE")
 fi
-run_bounded uv run --locked georeset-pilot "$RUN_COMMAND" "${DS_PILOT_ARGS[@]}"
+run_bounded uv run --locked --no-default-groups --extra dspark --extra geographic \
+  georeset-pilot "$RUN_COMMAND" "${DS_PILOT_ARGS[@]}"
 
 OUTPUT_BYTES=$(runner_check_directory_limit "$OUTPUT_DIR" "$MAX_OUTPUT_BYTES" \
   "Persistent evaluation outputs" "1 GiB")

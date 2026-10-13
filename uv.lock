@@ -3,22 +3,22 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version == '3.13.*' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version < '3.13' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version >= '3.14' and sys_platform == 'darwin' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version == '3.13.*' and sys_platform == 'darwin' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version < '3.13' and sys_platform == 'darwin' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version >= '3.14' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version == '3.13.*' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version == '3.13.*' and sys_platform == 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version == '3.13.*' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version < '3.13' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version < '3.13' and sys_platform == 'darwin' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version < '3.13' and sys_platform == 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version < '3.13' and sys_platform == 'emscripten' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version >= '3.14' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version == '3.13.*' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version < '3.13' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
 ]
 conflicts = [[
@@ -1160,8 +1160,10 @@ dspark = [
     { name = "sglang" },
     { name = "transformers" },
 ]
-pilot = [
+geographic = [
     { name = "h3" },
+]
+pilot = [
     { name = "torch" },
     { name = "transformers" },
 ]
@@ -1181,7 +1183,7 @@ dev = [
 requires-dist = [
     { name = "flashinfer-python", extras = ["cu13"], marker = "extra == 'dspark'", specifier = "==0.6.18" },
     { name = "fsspec", specifier = ">=2024.3.1" },
-    { name = "h3", marker = "extra == 'pilot'", specifier = ">=4.3,<5" },
+    { name = "h3", marker = "extra == 'geographic'", specifier = ">=4.3,<5" },
     { name = "huggingface-hub", specifier = ">=1.6.0,<2.0.0" },
     { name = "pyarrow", specifier = ">=20.0.0" },
     { name = "sglang", marker = "extra == 'dspark'", specifier = "==0.5.20" },
@@ -1189,7 +1191,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'dspark'", specifier = ">=5.0,<6.0" },
     { name = "transformers", marker = "extra == 'pilot'", specifier = ">=5.0,<6.0" },
 ]
-provides-extras = ["pilot", "dspark"]
+provides-extras = ["pilot", "geographic", "dspark"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2566,16 +2568,16 @@ version = "2.4.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version == '3.13.*' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version < '3.13' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version >= '3.14' and sys_platform == 'darwin' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
-    "python_full_version == '3.13.*' and sys_platform == 'darwin' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version == '3.13.*' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version == '3.13.*' and sys_platform == 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
     "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-29-georeset-text-label-benchmark-dspark' and extra != 'extra-29-georeset-text-label-benchmark-pilot'",
+    "python_full_version < '3.13' and extra != 'extra-29-georeset-text-label-benchmark-dspark' and extra == 'extra-29-georeset-text-label-benchmark-pilot'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d0/ad/fed0499ce6a338d2a03ebae59cd15093910c8875328855781952abf6c2fe/numpy-2.4.6.tar.gz", hash = "sha256:f3a3570c4a2a16746ac2c31a7c7c7b0c186b95ce902e33db6f28094ed7387dda", size = 20735807, upload-time = "2026-05-18T23:37:14.07Z" }
 wheels = [

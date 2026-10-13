@@ -64,7 +64,7 @@ to the model. See [`docs/pilot.md`](docs/pilot.md) for the sample rules, prompt,
 settings, metrics and limits.
 
 ```bash
-uv sync --locked --all-groups --extra pilot
+uv sync --locked --all-groups --extra pilot --extra geographic
 uv run georeset-pilot freeze \
   --labelled-parquet <run>/labelled-eunis.parquet \
   --pipeline-manifest <run>/manifest.json \
