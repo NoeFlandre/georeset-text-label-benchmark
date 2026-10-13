@@ -129,8 +129,15 @@ inventory reports 704 yes and 552 no unique known-region candidate cells, plus 8
 343 no extension rows assigned to `UNASSIGNED`; 16 geometry features have no M49 crosswalk.
 The frozen prefix was independently recomputed as shown above. Its one no-row in 143 is a
 known discrepancy with the inventory's original prefix column, which reported zero there;
-the code preserves the row and reports the recomputed assignment. Resolve that discrepancy
-before treating a resulting sample digest as approved.
+the code preserves the row and reports the recomputed assignment. A source-level check
+identified it as frozen row 8, sample ID
+`53e1aa6421ba45d44aa76ab2a8618da215126e26fcbc28b8438713ff778e0d01` (`way/425707420`,
+`kazakhstan-latest.osm.pbf`, Q11, `AO_Lonely_Tree`, H3 `832c6afffffffff`). The assignment
+uses the bbox midpoint (latitude `47.067270750000006`, longitude `52.05008365`), which lies
+in Kazakhstan and maps to M49 143. The stored H3 cell centre is a separate point and is not
+used for this region assignment. This explains the stale inventory prefix count; no frozen
+row values changed. The quota vector and resulting sample digest still require owner review
+before they can be treated as approved.
 
 For each stratum (including `UNASSIGNED`), the freezer computes candidate row counts,
 overlapping per-region cell memberships and unique candidate-cell counts by decision after
