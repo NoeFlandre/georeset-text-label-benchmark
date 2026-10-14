@@ -167,6 +167,10 @@ They give 500 yes and 500 no rows while matching each region's class counts. The
 needs 449 additional yes cells and 450 additional no cells in known regions; the remaining
 yes addition is `UNASSIGNED`, while the no prefix already has six rows there. This is
 feasible under the preserved row and cell capacities, including cross-region cell overlaps.
+The final `UNASSIGNED` quota includes the prefix: five yes prefix rows require one yes
+extension row, and six no prefix rows require zero no extension rows. The inventory reports
+877 yes and 343 no extension candidate rows in `UNASSIGNED`, confirming that the required
+yes candidate exists; the preserved flow check also confirms no same-class H3 reuse.
 An alternative would add one extra yes in region 151 and remove one yes from `UNASSIGNED`;
 it is not used because that would give the classes different regional mixes. The matched
 vector is the selected implementation of the user's geographic and yes/no balance request.
