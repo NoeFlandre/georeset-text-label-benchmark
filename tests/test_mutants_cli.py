@@ -410,12 +410,19 @@ def test_candidates_are_sorted_by_code_regardless_of_row_order() -> None:
     assert [candidate["eunis_code"] for candidate in candidates] == ["MA221", "T11", "ZZ9"]
 
 
-def test_taxonomy_must_cover_exactly_the_observed_codes() -> None:
-    message = "taxonomy codes do not match observed EUNIS codes"
+def test_taxonomy_vocabulary_can_include_codes_absent_from_observed_rows() -> None:
+    candidates = build_candidate_labels(
+        [_row()], {"T11": _taxonomy(), "MA221": _taxonomy("Saltmarsh")}
+    )
+
+    assert [candidate["eunis_code"] for candidate in candidates] == ["MA221", "T11"]
+    assert candidates[0]["eunis_name"] == "Saltmarsh"
+
+
+def test_observed_codes_must_be_present_in_taxonomy() -> None:
+    message = "observed EUNIS codes are absent from taxonomy: T11"
     with pytest.raises(ValueError, match=_exact(message)):
         build_candidate_labels([_row()], {})
-    with pytest.raises(ValueError, match=_exact(message)):
-        build_candidate_labels([_row()], {"T11": _taxonomy(), "MA221": _taxonomy("Saltmarsh")})
 
 
 @pytest.mark.parametrize(

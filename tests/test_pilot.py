@@ -190,9 +190,24 @@ def test_candidate_text_uses_exact_source_names_and_authoritative_descriptions()
     ]
 
 
+def test_candidate_labels_include_taxonomy_codes_absent_from_source_pool() -> None:
+    rows = [_row(1, "one")]
+    taxonomy: Mapping[str, Mapping[str, str]] = {
+        "T11": _taxonomy("Temperate forest", "Forest description."),
+        "MA221": _taxonomy("Atlantic saltmarsh", "Marine description."),
+    }
+
+    candidates = build_candidate_labels(rows, taxonomy)
+
+    assert [candidate["eunis_code"] for candidate in candidates] == ["MA221", "T11"]
+    absent = candidates[0]
+    assert absent["eunis_name"] == "Atlantic saltmarsh"
+    assert absent["candidate_text"] == "Atlantic saltmarsh\nMarine description."
+
+
 def test_candidate_text_fails_closed_on_code_name_or_definition_gaps() -> None:
     row = _row(1, "one")
-    with pytest.raises(ValueError, match="taxonomy codes do not match observed EUNIS codes"):
+    with pytest.raises(ValueError, match="observed EUNIS codes are absent from taxonomy: T11"):
         build_candidate_labels([row], {})
 
     mismatch = _taxonomy("Different forest name", "Forest description.")
