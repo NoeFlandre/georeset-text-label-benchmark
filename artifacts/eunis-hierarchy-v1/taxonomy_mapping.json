@@ -1,0 +1,2876 @@
+{
+  "candidate_chains": [
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA22",
+        "MA221"
+      ],
+      "code": "MA221",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA22",
+        "MA222"
+      ],
+      "code": "MA222",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA22",
+        "MA223"
+      ],
+      "code": "MA223",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA22",
+        "MA224"
+      ],
+      "code": "MA224",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA22",
+        "MA225"
+      ],
+      "code": "MA225",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA23",
+        "MA232"
+      ],
+      "code": "MA232",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA25",
+        "MA251"
+      ],
+      "code": "MA251",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA25",
+        "MA252"
+      ],
+      "code": "MA252",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "M",
+        "MA2",
+        "MA25",
+        "MA253"
+      ],
+      "code": "MA253",
+      "leaf_level": 4,
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N11"
+      ],
+      "code": "N11",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N12"
+      ],
+      "code": "N12",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N15"
+      ],
+      "code": "N15",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N16"
+      ],
+      "code": "N16",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N17"
+      ],
+      "code": "N17",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N18"
+      ],
+      "code": "N18",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N19"
+      ],
+      "code": "N19",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N1A"
+      ],
+      "code": "N1A",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N1B"
+      ],
+      "code": "N1B",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N1D"
+      ],
+      "code": "N1D",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N1F"
+      ],
+      "code": "N1F",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N1G"
+      ],
+      "code": "N1G",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N1H"
+      ],
+      "code": "N1H",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N1",
+        "N1J"
+      ],
+      "code": "N1J",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "N",
+        "N2",
+        "N21"
+      ],
+      "code": "N21",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q1",
+        "Q11"
+      ],
+      "code": "Q11",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q1",
+        "Q12"
+      ],
+      "code": "Q12",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q2",
+        "Q21"
+      ],
+      "code": "Q21",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q2",
+        "Q22"
+      ],
+      "code": "Q22",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q2",
+        "Q23"
+      ],
+      "code": "Q23",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q2",
+        "Q24"
+      ],
+      "code": "Q24",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q2",
+        "Q25"
+      ],
+      "code": "Q25",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q3",
+        "Q31"
+      ],
+      "code": "Q31",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q4",
+        "Q41"
+      ],
+      "code": "Q41",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q4",
+        "Q42"
+      ],
+      "code": "Q42",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q4",
+        "Q43"
+      ],
+      "code": "Q43",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q4",
+        "Q44"
+      ],
+      "code": "Q44",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q4",
+        "Q45"
+      ],
+      "code": "Q45",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q4",
+        "Q46"
+      ],
+      "code": "Q46",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q5",
+        "Q51"
+      ],
+      "code": "Q51",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q5",
+        "Q52"
+      ],
+      "code": "Q52",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q5",
+        "Q53"
+      ],
+      "code": "Q53",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "Q",
+        "Q5",
+        "Q54"
+      ],
+      "code": "Q54",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R11"
+      ],
+      "code": "R11",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R12"
+      ],
+      "code": "R12",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R13"
+      ],
+      "code": "R13",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R14"
+      ],
+      "code": "R14",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R16"
+      ],
+      "code": "R16",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R17"
+      ],
+      "code": "R17",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R18"
+      ],
+      "code": "R18",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R19"
+      ],
+      "code": "R19",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1A"
+      ],
+      "code": "R1A",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1B"
+      ],
+      "code": "R1B",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1D"
+      ],
+      "code": "R1D",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1E"
+      ],
+      "code": "R1E",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1F"
+      ],
+      "code": "R1F",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1M"
+      ],
+      "code": "R1M",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1N"
+      ],
+      "code": "R1N",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1P"
+      ],
+      "code": "R1P",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1Q"
+      ],
+      "code": "R1Q",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1R"
+      ],
+      "code": "R1R",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R1",
+        "R1S"
+      ],
+      "code": "R1S",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R2",
+        "R21"
+      ],
+      "code": "R21",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R2",
+        "R22"
+      ],
+      "code": "R22",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R3",
+        "R31"
+      ],
+      "code": "R31",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R3",
+        "R32"
+      ],
+      "code": "R32",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R3",
+        "R34"
+      ],
+      "code": "R34",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R3",
+        "R35"
+      ],
+      "code": "R35",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R3",
+        "R36"
+      ],
+      "code": "R36",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R3",
+        "R37"
+      ],
+      "code": "R37",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R4",
+        "R45"
+      ],
+      "code": "R45",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R5",
+        "R51"
+      ],
+      "code": "R51",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R5",
+        "R52"
+      ],
+      "code": "R52",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R5",
+        "R54"
+      ],
+      "code": "R54",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R5",
+        "R55"
+      ],
+      "code": "R55",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R5",
+        "R57"
+      ],
+      "code": "R57",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R6",
+        "R61"
+      ],
+      "code": "R61",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R6",
+        "R62"
+      ],
+      "code": "R62",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "R",
+        "R6",
+        "R63"
+      ],
+      "code": "R63",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S1",
+        "S11"
+      ],
+      "code": "S11",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S2",
+        "S21"
+      ],
+      "code": "S21",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S2",
+        "S22"
+      ],
+      "code": "S22",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S2",
+        "S23"
+      ],
+      "code": "S23",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S2",
+        "S25"
+      ],
+      "code": "S25",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S3",
+        "S31"
+      ],
+      "code": "S31",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S3",
+        "S32"
+      ],
+      "code": "S32",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S3",
+        "S33"
+      ],
+      "code": "S33",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S3",
+        "S35"
+      ],
+      "code": "S35",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S3",
+        "S36"
+      ],
+      "code": "S36",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S3",
+        "S37"
+      ],
+      "code": "S37",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S3",
+        "S38"
+      ],
+      "code": "S38",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S4",
+        "S42"
+      ],
+      "code": "S42",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S5",
+        "S51"
+      ],
+      "code": "S51",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S5",
+        "S52"
+      ],
+      "code": "S52",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S5",
+        "S53"
+      ],
+      "code": "S53",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S5",
+        "S54"
+      ],
+      "code": "S54",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S6",
+        "S61"
+      ],
+      "code": "S61",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S6",
+        "S62"
+      ],
+      "code": "S62",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S6",
+        "S63"
+      ],
+      "code": "S63",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S6",
+        "S65"
+      ],
+      "code": "S65",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S6",
+        "S66"
+      ],
+      "code": "S66",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S7",
+        "S72"
+      ],
+      "code": "S72",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S7",
+        "S73"
+      ],
+      "code": "S73",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S9",
+        "S91"
+      ],
+      "code": "S91",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S9",
+        "S92"
+      ],
+      "code": "S92",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "S",
+        "S9",
+        "S93"
+      ],
+      "code": "S93",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T11"
+      ],
+      "code": "T11",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T12"
+      ],
+      "code": "T12",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T13"
+      ],
+      "code": "T13",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T14"
+      ],
+      "code": "T14",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T15"
+      ],
+      "code": "T15",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T16"
+      ],
+      "code": "T16",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T17"
+      ],
+      "code": "T17",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T18"
+      ],
+      "code": "T18",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T19"
+      ],
+      "code": "T19",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T1A"
+      ],
+      "code": "T1A",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T1B"
+      ],
+      "code": "T1B",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T1C"
+      ],
+      "code": "T1C",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T1D"
+      ],
+      "code": "T1D",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T1E"
+      ],
+      "code": "T1E",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T1F"
+      ],
+      "code": "T1F",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T1",
+        "T1H"
+      ],
+      "code": "T1H",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T2",
+        "T21"
+      ],
+      "code": "T21",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T2",
+        "T22"
+      ],
+      "code": "T22",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T2",
+        "T24"
+      ],
+      "code": "T24",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T2",
+        "T29"
+      ],
+      "code": "T29",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T31"
+      ],
+      "code": "T31",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T32"
+      ],
+      "code": "T32",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T33"
+      ],
+      "code": "T33",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T34"
+      ],
+      "code": "T34",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T35"
+      ],
+      "code": "T35",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T36"
+      ],
+      "code": "T36",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T37"
+      ],
+      "code": "T37",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T3A"
+      ],
+      "code": "T3A",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T3C"
+      ],
+      "code": "T3C",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T3D"
+      ],
+      "code": "T3D",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T3F"
+      ],
+      "code": "T3F",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T3G"
+      ],
+      "code": "T3G",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T3J"
+      ],
+      "code": "T3J",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T3K"
+      ],
+      "code": "T3K",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "T",
+        "T3",
+        "T3M"
+      ],
+      "code": "T3M",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U2",
+        "U22"
+      ],
+      "code": "U22",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U2",
+        "U23"
+      ],
+      "code": "U23",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U2",
+        "U24"
+      ],
+      "code": "U24",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U2",
+        "U25"
+      ],
+      "code": "U25",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U2",
+        "U26"
+      ],
+      "code": "U26",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U2",
+        "U27"
+      ],
+      "code": "U27",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U2",
+        "U28"
+      ],
+      "code": "U28",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U2",
+        "U29"
+      ],
+      "code": "U29",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U32"
+      ],
+      "code": "U32",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U33"
+      ],
+      "code": "U33",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U34"
+      ],
+      "code": "U34",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U36"
+      ],
+      "code": "U36",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U37"
+      ],
+      "code": "U37",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U38"
+      ],
+      "code": "U38",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U3A"
+      ],
+      "code": "U3A",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U3B"
+      ],
+      "code": "U3B",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U3",
+        "U3D"
+      ],
+      "code": "U3D",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    },
+    {
+      "ancestor_chain": [
+        "U",
+        "U6",
+        "U62"
+      ],
+      "code": "U62",
+      "leaf_level": 3,
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a"
+    }
+  ],
+  "candidate_csv_sha256": "2e6cc694da7baa8edf9debeed08a0adda719518be74e659a0533b3ae9e56afa8",
+  "classifications": [
+    {
+      "classification_release": "EUNIS marine habitat classification review v1 (2022)",
+      "classification_source": "https://doi.org/10.2909/8a5eccda-e6ea-4018-a373-5c76a8eeec78",
+      "levels": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "nodes": [
+        {
+          "code": "M",
+          "level": 1,
+          "name": "Marine benthic habitats",
+          "parent_code": null
+        },
+        {
+          "code": "MA2",
+          "level": 2,
+          "name": "Littoral biogenic habitat",
+          "parent_code": "M"
+        },
+        {
+          "code": "MA22",
+          "level": 3,
+          "name": "Atlantic littoral biogenic habitat",
+          "parent_code": "MA2"
+        },
+        {
+          "code": "MA23",
+          "level": 3,
+          "name": "Baltic hydrolittoral biogenic habitat",
+          "parent_code": "MA2"
+        },
+        {
+          "code": "MA25",
+          "level": 3,
+          "name": "Mediterranean littoral biogenic habitat",
+          "parent_code": "MA2"
+        },
+        {
+          "code": "MA221",
+          "level": 4,
+          "name": "Atlantic saltmarsh driftlines",
+          "parent_code": "MA22"
+        },
+        {
+          "code": "MA222",
+          "level": 4,
+          "name": "Atlantic upper saltmarshes",
+          "parent_code": "MA22"
+        },
+        {
+          "code": "MA223",
+          "level": 4,
+          "name": "Atlantic upper-mid saltmarshes and saline and brackish reed, rush and sedge beds",
+          "parent_code": "MA22"
+        },
+        {
+          "code": "MA224",
+          "level": 4,
+          "name": "Atlantic mid-low saltmarshes",
+          "parent_code": "MA22"
+        },
+        {
+          "code": "MA225",
+          "level": 4,
+          "name": "Atlantic pioneer saltmarshes",
+          "parent_code": "MA22"
+        },
+        {
+          "code": "MA232",
+          "level": 4,
+          "name": "Baltic coastal meadow",
+          "parent_code": "MA23"
+        },
+        {
+          "code": "MA251",
+          "level": 4,
+          "name": "Mediterranean upper saltmarshes",
+          "parent_code": "MA25"
+        },
+        {
+          "code": "MA252",
+          "level": 4,
+          "name": "Mediterranean upper-mid saltmarshes and saline and brackish reed, rush and sedge beds",
+          "parent_code": "MA25"
+        },
+        {
+          "code": "MA253",
+          "level": 4,
+          "name": "Mediterranean mid-low saltmarshes",
+          "parent_code": "MA25"
+        }
+      ],
+      "source_sha256": "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a",
+      "workbook_name": "EUNIS marine habitat classification 2022 including crosswalks.xlsx",
+      "workbook_sha256": "09b47b35c1b6f41c3cff3365bc55e4bc42770945b9103e369b5cdeda9c1aa429",
+      "workbook_url": "https://sdi.eea.europa.eu/datashare/s/Aaj3DLQoiFHZCW5/download"
+    },
+    {
+      "classification_release": "EUNIS terrestrial habitat classification review v1 (2021; updated 2023)",
+      "classification_source": "https://doi.org/10.2909/bfe4c237-e378-4a83-ab21-b3807f96c2e2",
+      "levels": [
+        1,
+        2,
+        3
+      ],
+      "nodes": [
+        {
+          "code": "N",
+          "level": 1,
+          "name": "Coastal habitats",
+          "parent_code": null
+        },
+        {
+          "code": "Q",
+          "level": 1,
+          "name": "Wetlands",
+          "parent_code": null
+        },
+        {
+          "code": "R",
+          "level": 1,
+          "name": "Grasslands and lands dominated by forbs, mosses or lichens",
+          "parent_code": null
+        },
+        {
+          "code": "S",
+          "level": 1,
+          "name": "Heathland, scrub and tundra",
+          "parent_code": null
+        },
+        {
+          "code": "T",
+          "level": 1,
+          "name": "Forest and other wooded land",
+          "parent_code": null
+        },
+        {
+          "code": "U",
+          "level": 1,
+          "name": "Inland habitats with no or little soil and mostly with sparse vegetation",
+          "parent_code": null
+        },
+        {
+          "code": "N1",
+          "level": 2,
+          "name": "Coastal dunes and sandy shores",
+          "parent_code": "N"
+        },
+        {
+          "code": "N2",
+          "level": 2,
+          "name": "Coastal shingle",
+          "parent_code": "N"
+        },
+        {
+          "code": "Q1",
+          "level": 2,
+          "name": "Raised and blanket bogs",
+          "parent_code": "Q"
+        },
+        {
+          "code": "Q2",
+          "level": 2,
+          "name": "Valley mires, poor fens and transition mires",
+          "parent_code": "Q"
+        },
+        {
+          "code": "Q3",
+          "level": 2,
+          "name": "Palsa mires",
+          "parent_code": "Q"
+        },
+        {
+          "code": "Q4",
+          "level": 2,
+          "name": "Base-rich fens and calcareous spring mires",
+          "parent_code": "Q"
+        },
+        {
+          "code": "Q5",
+          "level": 2,
+          "name": "Helophyte beds",
+          "parent_code": "Q"
+        },
+        {
+          "code": "R1",
+          "level": 2,
+          "name": "Dry grasslands",
+          "parent_code": "R"
+        },
+        {
+          "code": "R2",
+          "level": 2,
+          "name": "Mesic grasslands",
+          "parent_code": "R"
+        },
+        {
+          "code": "R3",
+          "level": 2,
+          "name": "Seasonally wet and wet grasslands",
+          "parent_code": "R"
+        },
+        {
+          "code": "R4",
+          "level": 2,
+          "name": "Alpine and subalpine grasslands",
+          "parent_code": "R"
+        },
+        {
+          "code": "R5",
+          "level": 2,
+          "name": "Forest fringes and clearings and tall forb stands",
+          "parent_code": "R"
+        },
+        {
+          "code": "R6",
+          "level": 2,
+          "name": "Inland salt steppes and salt marshes",
+          "parent_code": "R"
+        },
+        {
+          "code": "S1",
+          "level": 2,
+          "name": "Tundra",
+          "parent_code": "S"
+        },
+        {
+          "code": "S2",
+          "level": 2,
+          "name": "Arctic, alpine and subalpine scrub",
+          "parent_code": "S"
+        },
+        {
+          "code": "S3",
+          "level": 2,
+          "name": "Temperate and mediterranean-montane scrub",
+          "parent_code": "S"
+        },
+        {
+          "code": "S4",
+          "level": 2,
+          "name": "Temperate shrub heathland",
+          "parent_code": "S"
+        },
+        {
+          "code": "S5",
+          "level": 2,
+          "name": "Maquis, arborescent matorral and thermo-Mediterranean scrub",
+          "parent_code": "S"
+        },
+        {
+          "code": "S6",
+          "level": 2,
+          "name": "Garrigue",
+          "parent_code": "S"
+        },
+        {
+          "code": "S7",
+          "level": 2,
+          "name": "Spiny Mediterranean heaths (phrygana, hedgehog-heaths and related coastal cliff vegetation)",
+          "parent_code": "S"
+        },
+        {
+          "code": "S9",
+          "level": 2,
+          "name": "Riverine and fen scrubs",
+          "parent_code": "S"
+        },
+        {
+          "code": "T1",
+          "level": 2,
+          "name": "Deciduous broadleaved forest",
+          "parent_code": "T"
+        },
+        {
+          "code": "T2",
+          "level": 2,
+          "name": "Broadleaved evergreen forest",
+          "parent_code": "T"
+        },
+        {
+          "code": "T3",
+          "level": 2,
+          "name": "Coniferous forest",
+          "parent_code": "T"
+        },
+        {
+          "code": "U2",
+          "level": 2,
+          "name": "Screes",
+          "parent_code": "U"
+        },
+        {
+          "code": "U3",
+          "level": 2,
+          "name": "Inland cliffs, rock pavements and outcrops",
+          "parent_code": "U"
+        },
+        {
+          "code": "U6",
+          "level": 2,
+          "name": "Recent volcanic features",
+          "parent_code": "U"
+        },
+        {
+          "code": "N11",
+          "level": 3,
+          "name": "Atlantic, Baltic and Arctic sand beach",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N12",
+          "level": 3,
+          "name": "Mediterranean and Black Sea sand beach",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N15",
+          "level": 3,
+          "name": "Atlantic and Baltic coastal dune grassland (grey dune)",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N16",
+          "level": 3,
+          "name": "Mediterranean and Macaronesian coastal dune grassland (grey dune)",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N17",
+          "level": 3,
+          "name": "Black Sea coastal dune grassland (grey dune)",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N18",
+          "level": 3,
+          "name": "Atlantic and Baltic coastal Empetrum heath",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N19",
+          "level": 3,
+          "name": "Atlantic coastal Calluna and Ulex heath",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N1A",
+          "level": 3,
+          "name": "Atlantic and Baltic coastal dune scrub",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N1B",
+          "level": 3,
+          "name": "Mediterranean and Black Sea coastal dune scrub",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N1D",
+          "level": 3,
+          "name": "Atlantic and Baltic broad-leaved coastal dune forest",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N1F",
+          "level": 3,
+          "name": "Baltic coniferous coastal dune forest",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N1G",
+          "level": 3,
+          "name": "Mediterranean coniferous coastal dune forest",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N1H",
+          "level": 3,
+          "name": "Atlantic and Baltic moist and wet dune slack",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N1J",
+          "level": 3,
+          "name": "Mediterranean and Black Sea moist and wet dune slack",
+          "parent_code": "N1"
+        },
+        {
+          "code": "N21",
+          "level": 3,
+          "name": "Atlantic, Baltic and Arctic coastal shingle beach",
+          "parent_code": "N2"
+        },
+        {
+          "code": "Q11",
+          "level": 3,
+          "name": "Raised bog",
+          "parent_code": "Q1"
+        },
+        {
+          "code": "Q12",
+          "level": 3,
+          "name": "Blanket bog",
+          "parent_code": "Q1"
+        },
+        {
+          "code": "Q21",
+          "level": 3,
+          "name": "Oceanic valley mire",
+          "parent_code": "Q2"
+        },
+        {
+          "code": "Q22",
+          "level": 3,
+          "name": "Poor fen",
+          "parent_code": "Q2"
+        },
+        {
+          "code": "Q23",
+          "level": 3,
+          "name": "Relict mire of Mediterranean mountains",
+          "parent_code": "Q2"
+        },
+        {
+          "code": "Q24",
+          "level": 3,
+          "name": "Intermediate fen and soft-water spring mire",
+          "parent_code": "Q2"
+        },
+        {
+          "code": "Q25",
+          "level": 3,
+          "name": "Non-calcareous quaking mire",
+          "parent_code": "Q2"
+        },
+        {
+          "code": "Q31",
+          "level": 3,
+          "name": "Palsa mire",
+          "parent_code": "Q3"
+        },
+        {
+          "code": "Q41",
+          "level": 3,
+          "name": "Alkaline, calcareous, carbonate-rich small-sedge spring fen",
+          "parent_code": "Q4"
+        },
+        {
+          "code": "Q42",
+          "level": 3,
+          "name": "Extremely rich moss-sedge fen",
+          "parent_code": "Q4"
+        },
+        {
+          "code": "Q43",
+          "level": 3,
+          "name": "Tall-sedge base-rich fen",
+          "parent_code": "Q4"
+        },
+        {
+          "code": "Q44",
+          "level": 3,
+          "name": "Calcareous quaking mire",
+          "parent_code": "Q4"
+        },
+        {
+          "code": "Q45",
+          "level": 3,
+          "name": "Arctic-alpine rich fen",
+          "parent_code": "Q4"
+        },
+        {
+          "code": "Q46",
+          "level": 3,
+          "name": "Carpathian travertine fen with halophytes",
+          "parent_code": "Q4"
+        },
+        {
+          "code": "Q51",
+          "level": 3,
+          "name": "Tall-helophyte bed",
+          "parent_code": "Q5"
+        },
+        {
+          "code": "Q52",
+          "level": 3,
+          "name": "Small-helophyte bed",
+          "parent_code": "Q5"
+        },
+        {
+          "code": "Q53",
+          "level": 3,
+          "name": "Tall-sedge bed",
+          "parent_code": "Q5"
+        },
+        {
+          "code": "Q54",
+          "level": 3,
+          "name": "Inland saline or brackish helophyte bed",
+          "parent_code": "Q5"
+        },
+        {
+          "code": "R11",
+          "level": 3,
+          "name": "Pannonian and Pontic sandy steppe",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R12",
+          "level": 3,
+          "name": "Cryptogam- and annual-dominated vegetation on siliceous rock outcrops",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R13",
+          "level": 3,
+          "name": "Cryptogam- and annual-dominated vegetation on calcareous and ultramafic rock outcrops",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R14",
+          "level": 3,
+          "name": "Perennial rocky grassland of the Italian Peninsula",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R16",
+          "level": 3,
+          "name": "Perennial rocky grassland of Central and South-Eastern Europe",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R17",
+          "level": 3,
+          "name": "Heavy-metal dry grassland of the Balkans",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R18",
+          "level": 3,
+          "name": "Perennial rocky calcareous grassland of subatlantic-submediterranean Europe",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R19",
+          "level": 3,
+          "name": "Dry steppic submediterranean pasture of the Amphi-Adriatic region",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1A",
+          "level": 3,
+          "name": "Semi-dry perennial calcareous grassland (meadow steppe)",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1B",
+          "level": 3,
+          "name": "Continental dry grassland (true steppe)",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1D",
+          "level": 3,
+          "name": "Mediterranean closely grazed dry grassland",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1E",
+          "level": 3,
+          "name": "Mediterranean tall perennial dry grassland",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1F",
+          "level": 3,
+          "name": "Mediterranean annual-rich dry grassland",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1M",
+          "level": 3,
+          "name": "Lowland to montane, dry to mesic grassland usually dominated by Nardus stricta",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1N",
+          "level": 3,
+          "name": "Open Iberian supramediterranean dry acid and neutral grassland",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1P",
+          "level": 3,
+          "name": "Oceanic to subcontinental inland sand grassland on dry acid and neutral soils",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1Q",
+          "level": 3,
+          "name": "Inland sanddrift and dune with siliceous grassland",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1R",
+          "level": 3,
+          "name": "Mediterranean to Atlantic open, dry, acid and neutral grassland",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R1S",
+          "level": 3,
+          "name": "Heavy-metal grassland in Western and Central Europe",
+          "parent_code": "R1"
+        },
+        {
+          "code": "R21",
+          "level": 3,
+          "name": "Mesic permanent pasture of lowlands and mountains",
+          "parent_code": "R2"
+        },
+        {
+          "code": "R22",
+          "level": 3,
+          "name": "Low and medium altitude hay meadow",
+          "parent_code": "R2"
+        },
+        {
+          "code": "R31",
+          "level": 3,
+          "name": "Mediterranean tall humid inland grassland",
+          "parent_code": "R3"
+        },
+        {
+          "code": "R32",
+          "level": 3,
+          "name": "Mediterranean short moist grassland of lowlands",
+          "parent_code": "R3"
+        },
+        {
+          "code": "R34",
+          "level": 3,
+          "name": "Submediterranean moist meadow",
+          "parent_code": "R3"
+        },
+        {
+          "code": "R35",
+          "level": 3,
+          "name": "Moist or wet mesotrophic to eutrophic hay meadow",
+          "parent_code": "R3"
+        },
+        {
+          "code": "R36",
+          "level": 3,
+          "name": "Moist or wet mesotrophic to eutrophic pasture",
+          "parent_code": "R3"
+        },
+        {
+          "code": "R37",
+          "level": 3,
+          "name": "Temperate and boreal moist or wet oligotrophic grassland",
+          "parent_code": "R3"
+        },
+        {
+          "code": "R45",
+          "level": 3,
+          "name": "Alpine and subalpine calcareous grassland of the Balkans and Apennines",
+          "parent_code": "R4"
+        },
+        {
+          "code": "R51",
+          "level": 3,
+          "name": "Thermophilous forest fringe of base-rich soils",
+          "parent_code": "R5"
+        },
+        {
+          "code": "R52",
+          "level": 3,
+          "name": "Forest fringe of acidic nutrient-poor soils",
+          "parent_code": "R5"
+        },
+        {
+          "code": "R54",
+          "level": 3,
+          "name": "Pteridium aquilinum vegetation",
+          "parent_code": "R5"
+        },
+        {
+          "code": "R55",
+          "level": 3,
+          "name": "Lowland moist or wet tall-herb and fern fringe",
+          "parent_code": "R5"
+        },
+        {
+          "code": "R57",
+          "level": 3,
+          "name": "Herbaceous forest clearing vegetation",
+          "parent_code": "R5"
+        },
+        {
+          "code": "R61",
+          "level": 3,
+          "name": "Mediterranean inland salt steppe",
+          "parent_code": "R6"
+        },
+        {
+          "code": "R62",
+          "level": 3,
+          "name": "Continental inland salt steppe",
+          "parent_code": "R6"
+        },
+        {
+          "code": "R63",
+          "level": 3,
+          "name": "Temperate inland salt marsh",
+          "parent_code": "R6"
+        },
+        {
+          "code": "S11",
+          "level": 3,
+          "name": "Shrub tundra",
+          "parent_code": "S1"
+        },
+        {
+          "code": "S21",
+          "level": 3,
+          "name": "Subarctic and alpine dwarf Salix scrub",
+          "parent_code": "S2"
+        },
+        {
+          "code": "S22",
+          "level": 3,
+          "name": "Alpine and subalpine ericoid heath",
+          "parent_code": "S2"
+        },
+        {
+          "code": "S23",
+          "level": 3,
+          "name": "Alpine and subalpine Juniperus scrub",
+          "parent_code": "S2"
+        },
+        {
+          "code": "S25",
+          "level": 3,
+          "name": "Subalpine and subarctic deciduous scrub",
+          "parent_code": "S2"
+        },
+        {
+          "code": "S31",
+          "level": 3,
+          "name": "Lowland to montane temperate and submediterranean Juniperus scrub",
+          "parent_code": "S3"
+        },
+        {
+          "code": "S32",
+          "level": 3,
+          "name": "Temperate Rubus scrub",
+          "parent_code": "S3"
+        },
+        {
+          "code": "S33",
+          "level": 3,
+          "name": "Lowland to montane temperate and submediterranean genistoid scrub",
+          "parent_code": "S3"
+        },
+        {
+          "code": "S35",
+          "level": 3,
+          "name": "Temperate and submediterranean thorn scrub",
+          "parent_code": "S3"
+        },
+        {
+          "code": "S36",
+          "level": 3,
+          "name": "Low steppic scrub",
+          "parent_code": "S3"
+        },
+        {
+          "code": "S37",
+          "level": 3,
+          "name": "Corylus avellana scrub",
+          "parent_code": "S3"
+        },
+        {
+          "code": "S38",
+          "level": 3,
+          "name": "Temperate forest clearing scrub",
+          "parent_code": "S3"
+        },
+        {
+          "code": "S42",
+          "level": 3,
+          "name": "Dry heath",
+          "parent_code": "S4"
+        },
+        {
+          "code": "S51",
+          "level": 3,
+          "name": "Mediterranean maquis and arborescent matorral",
+          "parent_code": "S5"
+        },
+        {
+          "code": "S52",
+          "level": 3,
+          "name": "Submediterranean pseudomaquis",
+          "parent_code": "S5"
+        },
+        {
+          "code": "S53",
+          "level": 3,
+          "name": "Spartium junceum scrub",
+          "parent_code": "S5"
+        },
+        {
+          "code": "S54",
+          "level": 3,
+          "name": "Thermomediterranean arid scrub",
+          "parent_code": "S5"
+        },
+        {
+          "code": "S61",
+          "level": 3,
+          "name": "Western basiphilous garrigue",
+          "parent_code": "S6"
+        },
+        {
+          "code": "S62",
+          "level": 3,
+          "name": "Western acidophilous garrigue",
+          "parent_code": "S6"
+        },
+        {
+          "code": "S63",
+          "level": 3,
+          "name": "Eastern garrigue",
+          "parent_code": "S6"
+        },
+        {
+          "code": "S65",
+          "level": 3,
+          "name": "Mediterranean gypsum scrub",
+          "parent_code": "S6"
+        },
+        {
+          "code": "S66",
+          "level": 3,
+          "name": "Mediterranean halo-nitrophilous scrub",
+          "parent_code": "S6"
+        },
+        {
+          "code": "S72",
+          "level": 3,
+          "name": "Eastern Mediterranean spiny heath (phrygana)",
+          "parent_code": "S7"
+        },
+        {
+          "code": "S73",
+          "level": 3,
+          "name": "Western Mediterranean mountain hedgehog-heath",
+          "parent_code": "S7"
+        },
+        {
+          "code": "S91",
+          "level": 3,
+          "name": "Temperate riparian scrub",
+          "parent_code": "S9"
+        },
+        {
+          "code": "S92",
+          "level": 3,
+          "name": "Salix fen scrub",
+          "parent_code": "S9"
+        },
+        {
+          "code": "S93",
+          "level": 3,
+          "name": "Mediterranean riparian scrub",
+          "parent_code": "S9"
+        },
+        {
+          "code": "T11",
+          "level": 3,
+          "name": "Temperate Salix and Populus riparian forest",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T12",
+          "level": 3,
+          "name": "Alnus glutinosa-Alnus incana forest on riparian and mineral soils",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T13",
+          "level": 3,
+          "name": "Temperate hardwood riparian forest",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T14",
+          "level": 3,
+          "name": "Mediterranean and Macaronesian riparian forest",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T15",
+          "level": 3,
+          "name": "Broadleaved swamp forest on non-acid peat",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T16",
+          "level": 3,
+          "name": "Broadleaved mire forest on acid peat",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T17",
+          "level": 3,
+          "name": "Fagus forest on non-acid soils",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T18",
+          "level": 3,
+          "name": "Fagus forest on acid soils",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T19",
+          "level": 3,
+          "name": "Temperate and submediterranean thermophilous deciduous forest",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T1A",
+          "level": 3,
+          "name": "Mediterranean thermophilous deciduous forest",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T1B",
+          "level": 3,
+          "name": "Acidophilous Quercus forest",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T1C",
+          "level": 3,
+          "name": "Temperate and boreal mountain Betula and Populus tremula forest on mineral soils",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T1D",
+          "level": 3,
+          "name": "Southern European mountain Betula and Populus tremula forest on mineral soils",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T1E",
+          "level": 3,
+          "name": "Carpinus and Quercus mesic deciduous forest",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T1F",
+          "level": 3,
+          "name": "Ravine forest",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T1H",
+          "level": 3,
+          "name": "Broadleaved deciduous plantation of non site-native trees",
+          "parent_code": "T1"
+        },
+        {
+          "code": "T21",
+          "level": 3,
+          "name": "Mediterranean evergreen Quercus forest",
+          "parent_code": "T2"
+        },
+        {
+          "code": "T22",
+          "level": 3,
+          "name": "Mainland laurophyllous forest",
+          "parent_code": "T2"
+        },
+        {
+          "code": "T24",
+          "level": 3,
+          "name": "Olea europaea-Ceratonia siliqua forest",
+          "parent_code": "T2"
+        },
+        {
+          "code": "T29",
+          "level": 3,
+          "name": "Broadleaved evergreen plantation of non site-native trees",
+          "parent_code": "T2"
+        },
+        {
+          "code": "T31",
+          "level": 3,
+          "name": "Temperate mountain Picea forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T32",
+          "level": 3,
+          "name": "Temperate mountain Abies forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T33",
+          "level": 3,
+          "name": "Mediterranean mountain Abies forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T34",
+          "level": 3,
+          "name": "Temperate subalpine Larix, Pinus cembra and Pinus uncinata forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T35",
+          "level": 3,
+          "name": "Temperate continental Pinus sylvestris forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T36",
+          "level": 3,
+          "name": "Temperate and submediterranean montane Pinus sylvestris-Pinus nigra forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T37",
+          "level": 3,
+          "name": "Mediterranean montane Pinus sylvestris-Pinus nigra forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T3A",
+          "level": 3,
+          "name": "Mediterranean lowland to submontane Pinus forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T3C",
+          "level": 3,
+          "name": "Taxus baccata forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T3D",
+          "level": 3,
+          "name": "Mediterranean Cupressaceae forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T3F",
+          "level": 3,
+          "name": "Dark taiga",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T3G",
+          "level": 3,
+          "name": "Pinus sylvestris light taiga",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T3J",
+          "level": 3,
+          "name": "Pinus and Larix mire forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T3K",
+          "level": 3,
+          "name": "Picea mire forest",
+          "parent_code": "T3"
+        },
+        {
+          "code": "T3M",
+          "level": 3,
+          "name": "Coniferous plantation of non site-native trees",
+          "parent_code": "T3"
+        },
+        {
+          "code": "U22",
+          "level": 3,
+          "name": "Temperate high-mountain siliceous scree",
+          "parent_code": "U2"
+        },
+        {
+          "code": "U23",
+          "level": 3,
+          "name": "Temperate, lowland to montane siliceous scree",
+          "parent_code": "U2"
+        },
+        {
+          "code": "U24",
+          "level": 3,
+          "name": "Mediterranean siliceous scree",
+          "parent_code": "U2"
+        },
+        {
+          "code": "U25",
+          "level": 3,
+          "name": "Boreal and arctic base-rich scree and block field",
+          "parent_code": "U2"
+        },
+        {
+          "code": "U26",
+          "level": 3,
+          "name": "Temperate high-mountain base-rich scree and moraine",
+          "parent_code": "U2"
+        },
+        {
+          "code": "U27",
+          "level": 3,
+          "name": "Temperate, lowland to montane base-rich scree",
+          "parent_code": "U2"
+        },
+        {
+          "code": "U28",
+          "level": 3,
+          "name": "Western Mediterranean base-rich scree",
+          "parent_code": "U2"
+        },
+        {
+          "code": "U29",
+          "level": 3,
+          "name": "Eastern Mediterranean base-rich scree",
+          "parent_code": "U2"
+        },
+        {
+          "code": "U32",
+          "level": 3,
+          "name": "Temperate high-mountain siliceous inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U33",
+          "level": 3,
+          "name": "Temperate, lowland to montane siliceous inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U34",
+          "level": 3,
+          "name": "Mediterranean siliceous inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U36",
+          "level": 3,
+          "name": "Temperate high-mountain base-rich inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U37",
+          "level": 3,
+          "name": "Temperate, lowland to montane base-rich inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U38",
+          "level": 3,
+          "name": "Mediterranean base-rich inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U3A",
+          "level": 3,
+          "name": "Temperate ultramafic inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U3B",
+          "level": 3,
+          "name": "Mediterranean ultramafic inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U3D",
+          "level": 3,
+          "name": "Wet inland cliff",
+          "parent_code": "U3"
+        },
+        {
+          "code": "U62",
+          "level": 3,
+          "name": "Mediterranean, Macaronesian and temperate volcanic field",
+          "parent_code": "U6"
+        }
+      ],
+      "source_sha256": "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a",
+      "workbook_name": "EUNIS terrestrial habitat classification 2021_1 including crosswalks.xlsx",
+      "workbook_sha256": "1427d22db8d77d1053ab1683aa60713bdec3d810605dd6b7bc16683b4ca14665",
+      "workbook_url": "https://sdi.eea.europa.eu/datashare/s/mqtf8t3acx9RECQ/download"
+    }
+  ],
+  "format_version": 1,
+  "source": {
+    "datahub_url": "https://www.eea.europa.eu/en/datahub/datahubitem-view/638330ea-90e6-4e41-81ea-e70f25ae7117",
+    "license": "CC-BY-4.0",
+    "mapping_method": "Parent is the immediately preceding lower-level classification row in the same official workbook sheet; hierarchy codes are never sliced by character position.",
+    "publisher": "European Environment Agency"
+  },
+  "verification": {
+    "ancestor_counts_by_level": {
+      "1": 7,
+      "2": 28,
+      "3": 152,
+      "4": 9
+    },
+    "audit_count_note": "The supplied terrestrial level-2 parent counts enumerate 27 unique codes; the EEA workbook confirms 27 terrestrial parents plus marine MA2, for 28 combined labels.",
+    "candidate_leaf_count": 158,
+    "candidate_leaf_counts_by_source_and_level": {
+      "8d50548ad4e8dc5aa1bbae07282441d9137b78a373ee46c43cfbbd5fb0e9322a:4": 9,
+      "d7ed5483bfc38804ba9c6039b73e5c75801f7e7e905b8118f55999f1b516744a:3": 149
+    },
+    "excluded_from_level_4": {
+      "candidate_count": 149,
+      "reason": "terrestrial reference codes are official level 3, so no level 4 target exists"
+    },
+    "sample_coverage": {
+      "decision_counts": {
+        "no": 50,
+        "yes": 50
+      },
+      "frozen_sample_sha256": "4c62ea9bd15839a80515eae344698acdad9b2cfc3b3ce2e90649d12f9c163a24",
+      "reference_eligibility_by_level": {
+        "1": {
+          "eligible_n": 100,
+          "excluded_shallower_reference_count": 0,
+          "no_eligible_n": 50,
+          "yes_eligible_n": 50
+        },
+        "2": {
+          "eligible_n": 100,
+          "excluded_shallower_reference_count": 0,
+          "no_eligible_n": 50,
+          "yes_eligible_n": 50
+        },
+        "3": {
+          "eligible_n": 100,
+          "excluded_shallower_reference_count": 0,
+          "no_eligible_n": 50,
+          "yes_eligible_n": 50
+        },
+        "4": {
+          "eligible_n": 0,
+          "excluded_shallower_reference_count": 100,
+          "no_eligible_n": 0,
+          "yes_eligible_n": 0
+        }
+      },
+      "sample_ids_sha256": "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d",
+      "sample_size": 100
+    },
+    "verified_examples": {
+      "MA221": [
+        "M",
+        "MA2",
+        "MA22",
+        "MA221"
+      ],
+      "N11": [
+        "N",
+        "N1",
+        "N11"
+      ]
+    }
+  }
+}

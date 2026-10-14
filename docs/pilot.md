@@ -130,6 +130,13 @@ the smoke gate result, if any.
 
 Direct generation gives one code per row, so there is no top-5 metric.
 
+The later retrospective EUNIS ancestor analysis is a separate derived report. It
+uses exact parent mappings from the official terrestrial 2021 and marine 2022
+classifications, preserves the fine-label report, and treats level 4 references
+as eligible only where the source taxonomy defines them. See
+[Hierarchical evaluation](hierarchical-evaluation.md) for its levels, counts,
+metric definitions, and scoring command.
+
 ## Limits
 
 - The gold code is the polygon's existing EUNIS assignment. It is polygon-level

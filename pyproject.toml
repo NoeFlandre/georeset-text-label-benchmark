@@ -81,7 +81,13 @@ python-version = "3.12"
 [tool.mutmut]
 source_paths = ["src/georeset_text_label_benchmark/"]
 pytest_add_cli_args_test_selection = ["tests"]
-also_copy = ["docs/", "scripts/", "artifacts/pilot-100-seed42/"]
+also_copy = [
+    "docs/",
+    "scripts/",
+    "artifacts/eunis-hierarchy-v1/",
+    "artifacts/pilot-100-seed42/",
+    "pilot_data/",
+]
 dict_synonyms = ["Dict"]
 on_dependency_change = "rerun"
 # PyTorch is imported by the test suite; forkserver avoids inheriting fork-unsafe runtime state.
