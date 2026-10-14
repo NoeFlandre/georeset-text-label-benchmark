@@ -13,6 +13,7 @@ from georeset_text_label_benchmark.errors import DataValidationError
 from georeset_text_label_benchmark.pilot import geo_sampling
 from georeset_text_label_benchmark.pilot.geo_sampling import (
     EARTH_RADIUS_KM,
+    GROUPS,
     H3_RESOLUTION,
     _haversine_km,
     _occurrence_id,
@@ -504,6 +505,183 @@ def test_region_balanced_extension_preserves_prefix_and_uses_common_capacity_awa
     )
 
 
+def test_synthetic_m49_capacity_graph_keeps_unassigned_at_prefix_minimum() -> None:
+    # Assigned-region row/cell capacities and cross-region membership counts mirror the
+    # verified inventory. The one unassigned cell per group is only a fixture placeholder;
+    # its actual production capacity was not measured in the inventory.
+    prefix_counts = {
+        "yes": {
+            "015": 4,
+            "039": 6,
+            "143": 0,
+            "145": 6,
+            "151": 16,
+            "154": 11,
+            "155": 2,
+            "UNASSIGNED": 5,
+        },
+        "no": {
+            "015": 2,
+            "039": 6,
+            "143": 1,
+            "145": 3,
+            "151": 16,
+            "154": 8,
+            "155": 8,
+            "UNASSIGNED": 6,
+        },
+    }
+    row_capacities = {
+        "yes": {
+            "015": 30,
+            "039": 1413,
+            "143": 7,
+            "145": 518,
+            "151": 860,
+            "154": 10146,
+            "155": 2437,
+            "UNASSIGNED": 877,
+        },
+        "no": {
+            "015": 17,
+            "034": 1,
+            "039": 543,
+            "145": 244,
+            "151": 421,
+            "154": 3021,
+            "155": 1219,
+            "UNASSIGNED": 343,
+        },
+    }
+    cell_capacities = {
+        "yes": {
+            "015": 12,
+            "039": 144,
+            "143": 2,
+            "145": 50,
+            "151": 177,
+            "154": 234,
+            "155": 124,
+            "UNASSIGNED": 1,
+        },
+        "no": {
+            "015": 8,
+            "034": 1,
+            "039": 119,
+            "145": 39,
+            "151": 134,
+            "154": 177,
+            "155": 108,
+            "UNASSIGNED": 1,
+        },
+    }
+    shared_cells = {
+        "yes": (("015", "039", 12), ("151", "154", 27)),
+        "no": (
+            ("015", "039", 8),
+            ("039", "151", 14),
+            ("151", "154", 11),
+            ("154", "155", 1),
+        ),
+    }
+    existing = _capacity_fixture_prefix(prefix_counts)
+    original_prefix = [dict(row) for row in existing]
+    cells_by_group, centres, coordinate_cells = _capacity_fixture_cells(
+        cell_capacities, shared_cells
+    )
+    candidates = _capacity_fixture_rows(row_capacities, cells_by_group, centres)
+
+    added, metadata = extend_region_balanced_sample(
+        candidates,
+        cell_of=lambda latitude, longitude: coordinate_cells[(latitude, longitude)],
+        centre_of=centres.__getitem__,
+        stratum_of=lambda row: row["m49_stratum"],
+        existing=existing,
+        per_group=500,
+        seed=SEED,
+        minimum_only_strata=("UNASSIGNED",),
+        quota_tie_break_order=(
+            "015",
+            "034",
+            "039",
+            "143",
+            "145",
+            "151",
+            "154",
+            "155",
+            "UNASSIGNED",
+        ),
+    )
+    repeated, repeated_metadata = extend_region_balanced_sample(
+        list(reversed(candidates)),
+        cell_of=lambda latitude, longitude: coordinate_cells[(latitude, longitude)],
+        centre_of=centres.__getitem__,
+        stratum_of=lambda row: row["m49_stratum"],
+        existing=existing,
+        per_group=500,
+        seed=SEED,
+        minimum_only_strata=("UNASSIGNED",),
+        quota_tie_break_order=(
+            "015",
+            "034",
+            "039",
+            "143",
+            "145",
+            "151",
+            "154",
+            "155",
+            "UNASSIGNED",
+        ),
+    )
+
+    assert metadata["target_counts_per_group"] == {
+        "015": 10,
+        "034": 0,
+        "039": 111,
+        "143": 1,
+        "145": 42,
+        "151": 110,
+        "154": 110,
+        "155": 110,
+        "UNASSIGNED": 6,
+    }
+    assert metadata["prefix_counts_by_decision"] == {
+        decision: {stratum: count for stratum, count in counts.items() if count > 0}
+        for decision, counts in prefix_counts.items()
+    }
+    assert metadata["minimum_only_strata"] == ["UNASSIGNED"]
+    assert metadata["quota_tie_break_order"] == [
+        "015",
+        "034",
+        "039",
+        "143",
+        "145",
+        "151",
+        "154",
+        "155",
+        "UNASSIGNED",
+    ]
+    assert metadata["candidate_row_capacity_by_decision"] == row_capacities
+    assert metadata["candidate_cell_capacity_by_decision"] == cell_capacities
+    assert metadata["candidate_unique_cell_count_by_decision"] == {"no": 553, "yes": 705}
+    assert metadata["candidate_multi_region_cell_count_by_decision"] == {"no": 34, "yes": 39}
+    assert repeated == added
+    assert repeated_metadata == metadata
+    assert existing == original_prefix
+    assert len(added) == 900
+    assert (
+        sum(row["m49_stratum"] == "UNASSIGNED" and row["decision"] == "yes" for row in added) == 1
+    )
+    assert not any(row["m49_stratum"] == "UNASSIGNED" and row["decision"] == "no" for row in added)
+    selected = [*existing, *added]
+    assert len({row["text_sha256"] for row in selected}) == 1000
+    assert len({(row["source_pbf"], row["osm_type"], row["osm_id"]) for row in selected}) == 1000
+    for decision in GROUPS:
+        rows = [row for row in selected if row["decision"] == decision]
+        assert len(rows) == 500
+        assert len({row["h3_cell"] for row in rows}) == 500
+
+
 def _flow_cell_of(lat: float, lon: float) -> str:
     group = "yes" if lon < 30 else "no"
     if lat < 1:
@@ -516,6 +694,111 @@ def _flow_centre_of(cell: str) -> tuple[float, float]:
     latitude = {"shared": 0.0, "a": 10.0, "b": 20.0}[location]
     longitude = 0.0 if group == "yes" else 60.0
     return latitude, longitude
+
+
+def _capacity_fixture_prefix(
+    prefix_counts: dict[str, dict[str, int]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    index = 0
+    for decision in GROUPS:
+        for stratum, count in prefix_counts[decision].items():
+            for _ in range(count):
+                latitude = -80.0 + index * 0.6
+                longitude = -170.0 + index * 0.4
+                rows.append(
+                    _stratified_existing_row(
+                        100_000 + index, decision, stratum, latitude, longitude
+                    )
+                )
+                index += 1
+    return rows
+
+
+def _capacity_fixture_cells(
+    capacities: dict[str, dict[str, int]],
+    shared: dict[str, tuple[tuple[str, str, int], ...]],
+) -> tuple[
+    dict[str, dict[str, list[str]]],
+    dict[str, tuple[float, float]],
+    dict[tuple[float, float], str],
+]:
+    centres: dict[str, tuple[float, float]] = {}
+    coordinate_cells: dict[tuple[float, float], str] = {}
+    groups = {
+        decision: _capacity_fixture_group_cells(
+            decision, capacities[decision], shared[decision], centres, coordinate_cells
+        )
+        for decision in GROUPS
+    }
+    return groups, centres, coordinate_cells
+
+
+def _capacity_fixture_group_cells(
+    decision: str,
+    capacities: dict[str, int],
+    shared: tuple[tuple[str, str, int], ...],
+    centres: dict[str, tuple[float, float]],
+    coordinate_cells: dict[tuple[float, float], str],
+) -> dict[str, list[str]]:
+    cells = {stratum: [] for stratum in capacities}
+    for left, right, count in shared:
+        for _ in range(count):
+            cell = _new_capacity_fixture_cell(decision, centres, coordinate_cells)
+            cells[left].append(cell)
+            cells[right].append(cell)
+    for stratum, capacity in capacities.items():
+        cells[stratum] = _fill_capacity_fixture_region(
+            decision, stratum, cells[stratum], capacity, centres, coordinate_cells
+        )
+    return cells
+
+
+def _fill_capacity_fixture_region(
+    decision: str,
+    stratum: str,
+    cells: list[str],
+    capacity: int,
+    centres: dict[str, tuple[float, float]],
+    coordinate_cells: dict[tuple[float, float], str],
+) -> list[str]:
+    while len(cells) < capacity:
+        cells.append(_new_capacity_fixture_cell(decision, centres, coordinate_cells))
+    return cells
+
+
+def _new_capacity_fixture_cell(
+    decision: str,
+    centres: dict[str, tuple[float, float]],
+    coordinate_cells: dict[tuple[float, float], str],
+) -> str:
+    index = len(centres)
+    cell = f"{decision}-capacity-cell-{index}"
+    centre = (-89.0 + index * 0.1, -179.0 + (index % 100) * 0.1)
+    centres[cell] = centre
+    coordinate_cells[centre] = cell
+    return cell
+
+
+def _capacity_fixture_rows(
+    row_capacities: dict[str, dict[str, int]],
+    cells_by_group: dict[str, dict[str, list[str]]],
+    centres: dict[str, tuple[float, float]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    next_id = 1
+    for decision in GROUPS:
+        for stratum, row_count in row_capacities[decision].items():
+            region_cells = cells_by_group[decision][stratum]
+            count, remainder = divmod(row_count, len(region_cells))
+            for index, cell in enumerate(region_cells):
+                latitude, longitude = centres[cell]
+                for _ in range(count + (index < remainder)):
+                    rows.append(
+                        _stratified_point_row(next_id, decision, stratum, latitude, longitude)
+                    )
+                    next_id += 1
+    return rows
 
 
 def test_cell_region_flow_preserves_feasibility_when_a_cell_has_multiple_regions() -> None:

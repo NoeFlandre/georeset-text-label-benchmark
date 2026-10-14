@@ -83,7 +83,8 @@ country polygons at 1:10m, version 5.1.1. Geometry is pinned at commit
 the subregion codes and names come from the official [UN M49](https://unstats.un.org/unsd/methodology/m49/overview/)
 English table. The derived GeoJSON asset SHA-256 is
 `7be15dfae4eb8741e2518e1bb8bd0e6f2334428ee2fcc9afc659c6377e0907c1` and is recorded in
-the frozen sample and freeze manifest.
+the frozen sample and freeze manifest. The extension quota protocol is
+`un-m49-10m-prefix-minimum-unassigned-common-quota-cell-flow-maximin-v3`.
 
 A bbox midpoint outside country polygons, inside a feature without an M49 crosswalk, or on
 an ambiguous cross-subregion boundary stays in the explicit `UNASSIGNED` stratum. The
@@ -146,12 +147,17 @@ For each stratum (including `UNASSIGNED`), the freezer computes candidate row co
 overlapping per-region cell memberships and unique candidate-cell counts by decision after
 excluding the immutable prefix and duplicate sentence/polygon identities. It chooses a
 shared yes/no quota vector constrained by prefix counts and bipartite cell-to-region
-max-flow feasibility, then balances feasible stratum counts as evenly as possible. A seeded
-SHA-256 tie-break makes equal quota choices deterministic. During selection, a maximin cell
-is accepted only if a residual max-flow check proves that the remaining quota can still be
-filled. Spacing is computed separately within each decision/stratum, starting from stored
-centres of prefix rows in that stratum. Each group has one sentence per H3 cell; yes and no
-may share cells. Sentence hashes and polygon keys stay unique across the full sample.
+max-flow feasibility. The v3 protocol fixes `UNASSIGNED` at the larger preserved-prefix
+count for yes or no, so it adds only rows required to balance that prefix. It allocates the
+remaining common quota across assigned M49 regions as evenly as their cell capacities allow.
+Equal quota counts use the versioned M49-code order `015, 034, 039, 143, 145, 151, 154,
+155, UNASSIGNED`, which is recorded and checked when reading the freeze. Seeded SHA-256
+tie-breaks resolve candidate and cell choices. During selection, a
+maximin cell is accepted only if a residual max-flow check proves that the remaining quota
+can still be filled. Spacing is computed separately within each decision/stratum, starting
+from stored centres of prefix rows in that stratum. Each group has one sentence per H3 cell;
+yes and no may share cells. Sentence hashes and polygon keys stay unique across the full
+sample.
 
 The freeze manifest records prefix counts, candidate row capacities, per-region cell
 memberships (which overlap), unique and multi-region cell counts by group, the common quota
@@ -161,9 +167,10 @@ fails and reports the flow capacity and quota shortfall. The sampler does not cl
 coverage when the eligible pool has no rows in a region.
 
 The selected common vector has 494 assigned-region rows per class across 015, 039, 143,
-145, 151, 154 and 155, plus six `UNASSIGNED` rows per class. In region order, the final
-per-class quotas are 10, 111, 1, 42, 110, 110 and 110, followed by six `UNASSIGNED` rows.
-They give 500 yes and 500 no rows while matching each region's class counts. The flow check
+145, 151, 154 and 155, plus six `UNASSIGNED` rows per class; 034 has quota zero. The final
+per-class quotas are 015=10, 034=0, 039=111, 143=1, 145=42, 151=110, 154=110 and 155=110,
+followed by six `UNASSIGNED` rows. They give 500 yes and 500 no rows while matching each
+region's class counts. The flow check
 needs 449 additional yes cells and 450 additional no cells in known regions; the remaining
 yes addition is `UNASSIGNED`, while the no prefix already has six rows there. This is
 feasible under the preserved row and cell capacities, including cross-region cell overlaps.
@@ -172,14 +179,20 @@ extension row, and six no prefix rows require zero no extension rows. The invent
 877 yes and 343 no extension candidate rows in `UNASSIGNED`, confirming that the required
 yes capacity exists; the preserved flow check also confirms no same-class H3 reuse. The
 inventory does not preserve the identity of the exact yes row that would be selected. Keep
-the freeze blocked until that single extension row is identified and verified against the
-byte-pinned Parquet alongside the immutable 100-row prefix.
+the freeze blocked until that single extension row is verified against the byte-pinned
+Parquet under the current H3 and M49 implementation. An earlier candidate ID
+`df9182f5e548223800b5987d306f6ce9291ba8f24b9449170148e2005e25e659` came from an older
+checkout without the current commit and pinned geography assets; it is not an approved
+identity.
 An alternative would add one extra yes in region 151 and remove one yes from `UNASSIGNED`;
 it is not used because that would give the classes different regional mixes. The matched
 vector is the selected implementation of the user's geographic and yes/no balance request.
-The sample digest remains unverified until the freeze is run against the exact pinned pool.
-Do not run this command until the required `UNASSIGNED` yes row has been verified by identity
-and the base-prefix digest has been rechecked against the committed sample.
+The execution owner reverified the immutable prefix against this head: 100 rows at 50/50,
+sample ID digest `e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d`, and
+selected-row digest `86435fd50d31d09322bffac18fccfe731b859a9cae72af746292ff8c81c80359`.
+The new sample digest remains unverified until the freeze runs against the exact pinned pool.
+Keep the freeze blocked until the required `UNASSIGNED` yes row identity is confirmed under
+the current protocol.
 
 By default, the extension requires the same labelled-pool and pipeline-manifest hashes as
 the base sample. The separate mode below is only for a reconstructed pipeline manifest:

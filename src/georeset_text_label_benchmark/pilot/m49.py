@@ -16,8 +16,22 @@ from georeset_text_label_benchmark.pilot.geo_sampling import bbox_centre
 
 M49_BOUNDARIES_SHA256 = "7be15dfae4eb8741e2518e1bb8bd0e6f2334428ee2fcc9afc659c6377e0907c1"
 M49_BOUNDARIES_RESOURCE = "data/un_m49_boundaries.geojson"
-M49_STRATIFICATION_VERSION = "un-m49-10m-common-quota-cell-flow-maximin-v2"
+M49_STRATIFICATION_VERSION = (
+    "un-m49-10m-prefix-minimum-unassigned-common-quota-cell-flow-maximin-v3"
+)
 M49_UNASSIGNED = "UNASSIGNED"
+M49_MINIMUM_ONLY_STRATA = (M49_UNASSIGNED,)
+M49_QUOTA_TIE_BREAK_ORDER = (
+    "015",
+    "034",
+    "039",
+    "143",
+    "145",
+    "151",
+    "154",
+    "155",
+    M49_UNASSIGNED,
+)
 _GRID_DEGREES = 5
 _BOUNDARY_EPSILON = 1e-10
 _Ring = tuple[tuple[float, float], ...]

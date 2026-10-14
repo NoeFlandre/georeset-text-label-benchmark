@@ -271,6 +271,8 @@ def extend_region_balanced_sample(
     existing: Sequence[Mapping[str, Any]],
     per_group: int,
     seed: int = 42,
+    minimum_only_strata: Sequence[str] = (),
+    quota_tie_break_order: Sequence[str] = (),
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Extend a frozen sample with common quotas constrained by cell-to-region flow."""
     if per_group < 1:
@@ -290,11 +292,15 @@ def extend_region_balanced_sample(
         seed,
         row_capacities,
         candidate_capacities,
+        minimum_only_strata,
+        quota_tie_break_order,
     )
     added = _extend_flow_by_region(by_group_region, existing, quotas, stratum_of, centre_of, seed)
     _require_extension_fill(added, existing, per_group)
     return added, {
         "target_counts_per_group": dict(sorted(quotas.items())),
+        "minimum_only_strata": sorted(set(minimum_only_strata)),
+        "quota_tie_break_order": list(quota_tie_break_order),
         "prefix_counts_by_decision": _format_group_stratum_counts(prefix_counts),
         "candidate_row_capacity_by_decision": _format_group_stratum_counts(row_capacities),
         "candidate_cell_capacity_by_decision": _format_group_stratum_counts(candidate_capacities),
@@ -428,9 +434,38 @@ def _common_stratum_quotas(
     seed: int,
     row_capacities: Mapping[str, Mapping[str, int]],
     cell_capacities: Mapping[str, Mapping[str, int]],
+    minimum_only_strata: Sequence[str],
+    quota_tie_break_order: Sequence[str],
 ) -> dict[str, int]:
     strata = _observed_strata(prefix, candidates)
+    minimum_only = {_validated_stratum(stratum) for stratum in minimum_only_strata}
     quotas = _minimum_common_quotas(strata, prefix)
+    _require_minimum_common_quotas_feasible(
+        per_group, quotas, prefix, candidates, row_capacities, cell_capacities
+    )
+    maximums = _minimum_only_quota_bounds(strata, prefix, cell_capacities, quotas, minimum_only)
+    return _complete_common_quota_vector(
+        quotas,
+        strata,
+        maximums,
+        prefix,
+        candidates,
+        per_group,
+        seed,
+        quota_tie_break_order,
+        row_capacities,
+        cell_capacities,
+    )
+
+
+def _require_minimum_common_quotas_feasible(
+    per_group: int,
+    quotas: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    row_capacities: Mapping[str, Mapping[str, int]],
+    cell_capacities: Mapping[str, Mapping[str, int]],
+) -> None:
     if (
         sum(quotas.values()) > per_group
         or _global_candidate_capacity_is_insufficient(per_group, prefix, candidates)
@@ -439,7 +474,34 @@ def _common_stratum_quotas(
         raise _region_capacity_error(
             per_group, quotas, prefix, candidates, row_capacities, cell_capacities
         )
+
+
+def _minimum_only_quota_bounds(
+    strata: Sequence[str],
+    prefix: Mapping[str, Mapping[str, int]],
+    cell_capacities: Mapping[str, Mapping[str, int]],
+    quotas: Mapping[str, int],
+    minimum_only: set[str],
+) -> dict[str, int]:
     maximums = _maximum_common_quota_bounds(strata, prefix, cell_capacities)
+    for stratum in minimum_only:
+        if stratum in quotas:
+            maximums[stratum] = quotas[stratum]
+    return maximums
+
+
+def _complete_common_quota_vector(
+    quotas: dict[str, int],
+    strata: Sequence[str],
+    maximums: Mapping[str, int],
+    prefix: Mapping[str, Mapping[str, int]],
+    candidates: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    per_group: int,
+    seed: int,
+    quota_tie_break_order: Sequence[str],
+    row_capacities: Mapping[str, Mapping[str, int]],
+    cell_capacities: Mapping[str, Mapping[str, int]],
+) -> dict[str, int]:
     completed = _search_common_quota_completion(
         quotas,
         strata,
@@ -449,6 +511,7 @@ def _common_stratum_quotas(
         per_group,
         seed,
         set(),
+        quota_tie_break_order,
     )
     if completed is None:
         raise _region_capacity_error(
@@ -532,6 +595,7 @@ def _search_common_quota_completion(
     per_group: int,
     seed: int,
     failed_states: set[tuple[int, ...]],
+    quota_tie_break_order: Sequence[str],
 ) -> dict[str, int] | None:
     initial_state = _quota_state(quotas, strata)
     if sum(initial_state) == per_group:
@@ -547,7 +611,7 @@ def _search_common_quota_completion(
         failed_states.add(initial_state)
         return None
     return _search_common_quota_stack(
-        [_quota_search_frame(initial_state, strata, seed)],
+        [_quota_search_frame(initial_state, strata, seed, quota_tie_break_order)],
         strata,
         maximums,
         prefix,
@@ -555,6 +619,7 @@ def _search_common_quota_completion(
         per_group,
         seed,
         failed_states,
+        quota_tie_break_order,
     )
 
 
@@ -567,10 +632,21 @@ def _quota_counts(state: tuple[int, ...], strata: Sequence[str]) -> dict[str, in
 
 
 def _quota_search_frame(
-    state: tuple[int, ...], strata: Sequence[str], seed: int
+    state: tuple[int, ...],
+    strata: Sequence[str],
+    seed: int,
+    quota_tie_break_order: Sequence[str],
 ) -> _QuotaSearchFrame:
     quotas = _quota_counts(state, strata)
-    ordered = sorted(strata, key=lambda item: (quotas[item], _stable_key(seed, item)))
+    priority = {stratum: index for index, stratum in enumerate(quota_tie_break_order)}
+    ordered = sorted(
+        strata,
+        key=lambda item: (
+            quotas[item],
+            priority.get(item, len(priority)),
+            _stable_key(seed, item),
+        ),
+    )
     return _QuotaSearchFrame(state, ordered)
 
 
@@ -596,6 +672,7 @@ def _search_common_quota_stack(
     per_group: int,
     seed: int,
     failed_states: set[tuple[int, ...]],
+    quota_tie_break_order: Sequence[str],
 ) -> dict[str, int] | None:
     while stack:
         frame = stack[-1]
@@ -615,6 +692,7 @@ def _search_common_quota_stack(
             seed,
             failed_states,
             stack,
+            quota_tie_break_order,
         )
         if completed is not None:
             return completed
@@ -646,6 +724,7 @@ def _accept_quota_trial(
     seed: int,
     failed_states: set[tuple[int, ...]],
     stack: list[_QuotaSearchFrame],
+    quota_tie_break_order: Sequence[str],
 ) -> dict[str, int] | None:
     if trial in failed_states:
         return None
@@ -659,7 +738,7 @@ def _accept_quota_trial(
     if _quota_upper_bounds_cannot_fill(quotas, strata, maximums, per_group - total):
         failed_states.add(trial)
         return None
-    stack.append(_quota_search_frame(trial, strata, seed))
+    stack.append(_quota_search_frame(trial, strata, seed, quota_tie_break_order))
     return None
 
 

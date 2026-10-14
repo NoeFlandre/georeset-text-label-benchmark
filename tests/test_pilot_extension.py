@@ -90,8 +90,11 @@ def _write_large_pool(directory: Path) -> tuple[Path, Path]:
                 candidate = candidates[index % len(candidates)]
                 # Both groups share the same geographic candidate capacity, which makes the
                 # common regional quota contract feasible while keeping row identities unique.
-                lat = -48.0 + 4.0 * i
-                lon = -168.0 + 14.0 * j
+                # Keep at least 500 distinct cells in one assigned M49 subregion so this
+                # large extension fixture can satisfy the production UNASSIGNED-minimum
+                # policy without relying on an oversized unassigned quota.
+                lat = 35.0 + 1.2 * i
+                lon = -125.0 + 2.3 * j
                 sentence = f"large pool sentence {index} {decision}"
                 rows.append(
                     {
@@ -725,7 +728,12 @@ def test_freeze_extension_keeps_the_committed_base_order_and_writes_1000_rows(
     assert extended_sample["selection"]["method"] == runner.EXTENDED_SELECTION_METHOD
     assert extended_sample["selection"]["decision_counts"] == {"no": 500, "yes": 500}
     geography = extended_sample["selection"]["geographic_stratification"]
-    assert geography["protocol_version"] == "un-m49-10m-common-quota-cell-flow-maximin-v2"
+    assert (
+        geography["protocol_version"]
+        == "un-m49-10m-prefix-minimum-unassigned-common-quota-cell-flow-maximin-v3"
+    )
+    assert geography["minimum_only_strata"] == ["UNASSIGNED"]
+    assert geography["quota_tie_break_order"] == list(runner.M49_QUOTA_TIE_BREAK_ORDER)
     assert (
         geography["selected_counts_by_decision"]["yes"]
         == geography["selected_counts_by_decision"]["no"]
@@ -892,6 +900,40 @@ def test_freeze_extension_keeps_the_committed_base_order_and_writes_1000_rows(
     _assert_value_error(
         "extended frozen sample M49 quota method is unsupported",
         lambda: runner._validate_frozen_rows(rows, quota_method_changed),
+    )
+
+    quota_policy_changed = json.loads(json.dumps(extended_sample["selection"]))
+    quota_policy_changed["geographic_stratification"]["minimum_only_strata"] = []
+    _assert_value_error(
+        "extended frozen sample M49 quota policy is unsupported",
+        lambda: runner._validate_frozen_rows(rows, quota_policy_changed),
+    )
+
+    quota_order_changed = json.loads(json.dumps(extended_sample["selection"]))
+    quota_order_changed["geographic_stratification"]["quota_tie_break_order"] = [
+        "UNASSIGNED",
+        "015",
+    ]
+    _assert_value_error(
+        "extended frozen sample M49 quota policy is unsupported",
+        lambda: runner._validate_frozen_rows(rows, quota_order_changed),
+    )
+
+
+def test_m49_unassigned_quota_must_equal_common_prefix_minimum() -> None:
+    quotas = {"021": 494, "UNASSIGNED": 6}
+    prefix = {
+        "yes": {"021": 45, "UNASSIGNED": 5},
+        "no": {"021": 44, "UNASSIGNED": 6},
+    }
+
+    runner._validate_m49_unassigned_quota_minimum(quotas, prefix)
+
+    _assert_value_error(
+        "extended frozen sample UNASSIGNED quota must equal the common prefix minimum",
+        lambda: runner._validate_m49_unassigned_quota_minimum(
+            {"021": 493, "UNASSIGNED": 7}, prefix
+        ),
     )
 
 

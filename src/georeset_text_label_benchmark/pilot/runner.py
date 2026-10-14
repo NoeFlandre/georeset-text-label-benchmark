@@ -25,6 +25,8 @@ from georeset_text_label_benchmark.pilot.geo_sampling import (
     select_geographic_sample,
 )
 from georeset_text_label_benchmark.pilot.m49 import (
+    M49_MINIMUM_ONLY_STRATA,
+    M49_QUOTA_TIE_BREAK_ORDER,
     M49_UNASSIGNED,
     M49Assignment,
     m49_assignment_for_row,
@@ -50,8 +52,9 @@ EXTENDED_SELECTION_METHOD = (
     "UN M49 subregion strata from polygon-bbox midpoints assigned against Natural Earth "
     "1:10m Admin-0 geometry; unassigned, unmapped, or ambiguous points remain explicit; "
     "each candidate H3 cell may connect to multiple regions; a bipartite max-flow check "
-    "constrains the common yes/no quota vector and maximin spacing selects cells within "
-    "each stratum from stored base-cell centres; one sentence per "
+    "constrains the common yes/no quota vector; UNASSIGNED stays at the common prefix "
+    "minimum while assigned regions balance as capacities allow with M49-code tie-breaks; "
+    "maximin spacing selects cells within each stratum from stored base-cell centres; one sentence per "
     "cell within each decision group; yes and no may share a cell; immutable 50 yes and 50 "
     "no published pilot prefix; English only; one occurrence per exact sentence hash and "
     "per polygon; occurrences ordered by SHA256(seed:occurrence)."
@@ -338,6 +341,8 @@ def _select_frozen_rows(
         existing=base,
         per_group=per_group,
         seed=seed,
+        minimum_only_strata=M49_MINIMUM_ONLY_STRATA,
+        quota_tie_break_order=M49_QUOTA_TIE_BREAK_ORDER,
     )
     additions = [{**row, "sample_id": sample_id_of(row)} for row in added]
     selected = [*base, *additions]
@@ -361,8 +366,9 @@ def _extension_geographic_metadata(
         **m49_boundary_provenance(),
         **stratum_metadata,
         "quota_method": (
-            "seed-hashed water filling with bipartite max-flow feasibility for shared "
-            "cell-to-region capacities"
+            "M49-code-ordered common-quota balancing with bipartite max-flow feasibility "
+            "for shared cell-to-region capacities; seeded SHA-256 resolves candidate and "
+            "cell ties"
         ),
         "region_names_by_code": dict(sorted(region_names.items())),
         "eligible_subregion_codes": sorted(code for code in quotas if code != M49_UNASSIGNED),
@@ -871,6 +877,7 @@ def _validate_m49_stratification(
     if not isinstance(geography, Mapping):
         raise ValueError("extended frozen sample must declare M49 geographic stratification")
     _validate_m49_provenance(geography)
+    _validate_m49_quota_protocol(geography)
     assignments = _validated_m49_assignments(rows, geography)
     region_counts, status_counts, region_names = _m49_assignment_counts(rows, assignments)
     _validate_m49_recorded_counts(geography, region_counts, status_counts, region_names)
@@ -882,10 +889,17 @@ def _validate_m49_provenance(geography: Mapping[str, Any]) -> None:
     if any(geography.get(key) != value for key, value in expected.items()):
         raise ValueError("extended frozen sample M49 boundary provenance is inconsistent")
     if geography.get("quota_method") != (
-        "seed-hashed water filling with bipartite max-flow feasibility for shared "
-        "cell-to-region capacities"
+        "M49-code-ordered common-quota balancing with bipartite max-flow feasibility for "
+        "shared cell-to-region capacities; seeded SHA-256 resolves candidate and cell ties"
     ):
         raise ValueError("extended frozen sample M49 quota method is unsupported")
+
+
+def _validate_m49_quota_protocol(geography: Mapping[str, Any]) -> None:
+    if geography.get("minimum_only_strata") != sorted(M49_MINIMUM_ONLY_STRATA):
+        raise ValueError("extended frozen sample M49 quota policy is unsupported")
+    if geography.get("quota_tie_break_order") != list(M49_QUOTA_TIE_BREAK_ORDER):
+        raise ValueError("extended frozen sample M49 quota policy is unsupported")
 
 
 def _validated_m49_assignments(
@@ -978,6 +992,7 @@ def _validate_m49_quotas(
     quotas, prefix, capacities = _m49_quota_mappings(geography)
     _validate_common_m49_quota(selection, quotas, region_counts)
     _validate_m49_capacity_records(geography, quotas, prefix, capacities)
+    _validate_m49_unassigned_quota_minimum(quotas, prefix)
     expected_prefix = _format_counter_groups(
         _m49_counts_from_pairs(rows[:SAMPLE_SIZE], assignments[:SAMPLE_SIZE])
     )
@@ -1004,6 +1019,16 @@ def _m49_quota_mappings(
     ):
         raise ValueError("extended frozen sample M49 quota records are missing")
     return quotas, prefix, capacities
+
+
+def _validate_m49_unassigned_quota_minimum(
+    quotas: Mapping[str, Any], prefix: Mapping[str, Mapping[str, Any]]
+) -> None:
+    minimum = max(prefix[group].get(M49_UNASSIGNED, 0) for group in GROUPS)
+    if quotas.get(M49_UNASSIGNED, 0) != minimum:
+        raise ValueError(
+            "extended frozen sample UNASSIGNED quota must equal the common prefix minimum"
+        )
 
 
 def _validate_common_m49_quota(
