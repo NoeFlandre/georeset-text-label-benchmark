@@ -27,6 +27,7 @@ from georeset_text_label_benchmark.pilot.m49 import (
         (41.9028, 12.4964, "039", "Southern Europe"),
         (36.8065, 10.1815, "015", "Northern Africa"),
         (39.9334, 32.8597, "145", "Western Asia"),
+        (47.067270750000006, 52.05008365, "143", "Central Asia"),
         (51.1694, 71.4491, "143", "Central Asia"),
     ],
 )
@@ -73,6 +74,29 @@ def test_overlapping_regions_are_left_unassigned(
 
     assert assignment.stratum == M49_UNASSIGNED
     assert assignment.status == "ambiguous_boundary"
+
+
+def test_repeated_coordinate_assignments_reuse_the_same_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ring = ((0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0), (0.0, 0.0))
+    polygon = m49._Polygon("015", "Northern Africa", (ring,), (0.0, 0.0, 2.0, 2.0))
+    loads = 0
+
+    def load_boundaries() -> tuple[
+        tuple[m49._Polygon, ...], dict[tuple[int, int], tuple[int, ...]]
+    ]:
+        nonlocal loads
+        loads += 1
+        return (polygon,), {(18, 36): (0,)}
+
+    monkeypatch.setattr(m49, "_load_boundaries", load_boundaries)
+
+    first = m49_assignment_for_coordinate(1.0, 1.0)
+    second = m49_assignment_for_coordinate(1.0, 1.0)
+
+    assert first == second
+    assert loads == 1
 
 
 def test_missing_m49_crosswalk_remains_explicitly_unassigned() -> None:
@@ -175,3 +199,22 @@ def test_ring_contains_handles_empty_rings_and_excludes_hole_boundaries() -> Non
     assert m49._ring_contains(square, 1.0, 1.0)
     assert not m49._ring_contains(square, 0.0, 1.0, boundary_is_inside=False)
     assert not m49._ring_contains(square, 3.0, 1.0)
+
+
+def test_polygon_contains_prepares_boundary_rings_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    outer = ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0), (0.0, 0.0))
+    hole = ((4.0, 4.0), (6.0, 4.0), (6.0, 6.0), (4.0, 6.0), (4.0, 4.0))
+    polygon = m49._Polygon("015", "Northern Africa", (outer, hole), (0.0, 0.0, 10.0, 10.0))
+    unwrap = m49._unwrap_ring
+    calls: list[tuple[tuple[float, float], ...]] = []
+
+    def record_unwrap(ring: tuple[tuple[float, float], ...]) -> tuple[tuple[float, float], ...]:
+        calls.append(ring)
+        return unwrap(ring)
+
+    monkeypatch.setattr(m49, "_unwrap_ring", record_unwrap)
+
+    assert m49._polygon_contains(polygon, 2.0, 2.0)
+    assert not m49._polygon_contains(polygon, 5.0, 5.0)
+    assert m49._polygon_contains(polygon, 2.0, 3.0)
+    assert calls == [outer, hole]

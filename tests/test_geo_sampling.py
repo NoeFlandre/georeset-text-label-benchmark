@@ -694,6 +694,63 @@ def test_region_maximin_spacing_uses_only_prefix_anchors_in_the_same_stratum() -
     assert yes_a[0]["osm_id"] == 11
 
 
+def test_incremental_region_distances_preserve_seeded_candidate_order() -> None:
+    cells = {
+        "a0": {"A": []},
+        "a1": {"A": []},
+        "ab": {"A": [], "B": []},
+        "b0": {"B": []},
+        "b1": {"B": []},
+        "b2": {"B": []},
+    }
+    centres = {
+        "a0": (0.0, 0.0),
+        "a1": (0.0, 10.0),
+        "ab": (20.0, 0.0),
+        "b0": (10.0, 10.0),
+        "b1": (5.0, 10.0),
+        "b2": (0.0, 10.0),
+        "anchor-a": (1.0, 1.0),
+        "anchor-b": (9.0, 9.0),
+    }
+    anchors = {"A": [centres["anchor-a"]], "B": [centres["anchor-b"]]}
+    nearest = geo_sampling._nearest_region_distances(cells, centres, anchors)
+    selected_cells: set[str] = set()
+
+    def assert_ranking_matches_reference(stratum: str) -> list[str]:
+        expected = sorted(
+            (
+                cell
+                for cell, regions in cells.items()
+                if stratum in regions and cell not in selected_cells
+            ),
+            key=lambda cell: (
+                -geo_sampling._nearest_anchor_distance(centres[cell], anchors[stratum]),
+                _stable_key(SEED, cell),
+            ),
+        )
+        actual = geo_sampling._rank_maximin_candidates(
+            stratum, cells, selected_cells, nearest, SEED
+        )
+        assert actual == expected
+        return actual
+
+    first_a_ranking = assert_ranking_matches_reference("A")
+    assert first_a_ranking[0] == "ab"
+    selected_cells.add("ab")
+    geo_sampling._update_nearest_region_distances("A", cells, centres, nearest, "ab")
+    anchors["A"].append(centres["ab"])
+    assert_ranking_matches_reference("A")
+
+    first_b_ranking = assert_ranking_matches_reference("B")
+    assert "ab" not in first_b_ranking
+    selected = first_b_ranking[0]
+    selected_cells.add(selected)
+    geo_sampling._update_nearest_region_distances("B", cells, centres, nearest, selected)
+    anchors["B"].append(centres[selected])
+    assert_ranking_matches_reference("B")
+
+
 def test_region_balanced_extension_requires_a_nonempty_stratum() -> None:
     base = _stratified_existing_row(1, "yes", "039", 0.0, 0.0)
     no_base = _stratified_existing_row(2, "no", "039", 0.0, 10.0)
@@ -760,7 +817,7 @@ def test_region_extension_rejects_nonpositive_size_before_reading_rows() -> None
 
 def test_stratification_helpers_fail_closed_on_inconsistent_internal_capacity() -> None:
     with pytest.raises(ValueError, match="exhausted feasible A cells"):
-        geo_sampling._maximin_feasible_cell("A", {}, {"A": 1}, set(), {}, {}, SEED)
+        geo_sampling._maximin_feasible_cell("A", {}, {"A": 1}, set(), {}, SEED)
     with pytest.raises(ValueError, match="did not fill the requested sample size"):
         geo_sampling._require_extension_fill([], [], per_group=1)
 

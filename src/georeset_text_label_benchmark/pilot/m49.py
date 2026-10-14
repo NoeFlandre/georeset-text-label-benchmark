@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, cached_property, lru_cache
 from importlib.resources import files
 from itertools import pairwise
 from typing import Any
@@ -20,6 +20,8 @@ M49_STRATIFICATION_VERSION = "un-m49-10m-common-quota-cell-flow-maximin-v2"
 M49_UNASSIGNED = "UNASSIGNED"
 _GRID_DEGREES = 5
 _BOUNDARY_EPSILON = 1e-10
+_Ring = tuple[tuple[float, float], ...]
+_PreparedRing = tuple[_Ring, float]
 
 
 @dataclass(frozen=True)
@@ -36,8 +38,12 @@ class M49Assignment:
 class _Polygon:
     subregion_code: str | None
     subregion_name: str | None
-    rings: tuple[tuple[tuple[float, float], ...], ...]
+    rings: tuple[_Ring, ...]
     bounds: tuple[float, float, float, float]
+
+    @cached_property
+    def prepared_rings(self) -> tuple[_PreparedRing, ...]:
+        return tuple(_prepare_ring(ring) for ring in self.rings)
 
 
 def m49_assignment_for_row(row: Mapping[str, Any]) -> M49Assignment:
@@ -48,7 +54,18 @@ def m49_assignment_for_row(row: Mapping[str, Any]) -> M49Assignment:
 def m49_assignment_for_coordinate(latitude: float, longitude: float) -> M49Assignment:
     """Assign one unambiguous Natural Earth country hit to its official UN M49 region."""
     _validate_coordinate(latitude, longitude)
-    polygons, index = _load_boundaries()
+    return _cached_assignment_for_coordinate(latitude, longitude, _load_boundaries)
+
+
+@lru_cache(maxsize=4096)
+def _cached_assignment_for_coordinate(
+    latitude: float,
+    longitude: float,
+    load_boundaries: Callable[
+        [], tuple[tuple[_Polygon, ...], dict[tuple[int, int], tuple[int, ...]]]
+    ],
+) -> M49Assignment:
+    polygons, index = load_boundaries()
     hits = _coordinate_polygon_hits(latitude, longitude, polygons, index)
     known_hits = {(code, name) for code, name in hits if code is not None}
     has_unmapped_hit = any(code is None for code, _ in hits)
@@ -223,11 +240,11 @@ def _polygon_contains(polygon: _Polygon, latitude: float, longitude: float) -> b
     if not (min_lat - _BOUNDARY_EPSILON <= latitude <= max_lat + _BOUNDARY_EPSILON):
         return False
     adjusted = _longitude_near(longitude, (min_lon + max_lon) / 2)
-    if not _ring_contains(polygon.rings[0], latitude, adjusted):
+    if not _ring_contains_prepared(polygon.prepared_rings[0], latitude, adjusted):
         return False
     return not any(
-        _ring_contains(ring, latitude, adjusted, boundary_is_inside=False)
-        for ring in polygon.rings[1:]
+        _ring_contains_prepared(ring, latitude, adjusted, boundary_is_inside=False)
+        for ring in polygon.prepared_rings[1:]
     )
 
 
@@ -242,8 +259,25 @@ def _ring_contains(
     *,
     boundary_is_inside: bool = True,
 ) -> bool:
+    return _ring_contains_prepared(
+        _prepare_ring(ring), latitude, longitude, boundary_is_inside=boundary_is_inside
+    )
+
+
+def _prepare_ring(ring: _Ring) -> _PreparedRing:
     points = _unwrap_ring(ring)
     reference = sum(point[0] for point in points) / len(points)
+    return points, reference
+
+
+def _ring_contains_prepared(
+    prepared_ring: _PreparedRing,
+    latitude: float,
+    longitude: float,
+    *,
+    boundary_is_inside: bool = True,
+) -> bool:
+    points, reference = prepared_ring
     adjusted_longitude = _longitude_near(longitude, reference)
     inside = False
     for first, second in pairwise(points):

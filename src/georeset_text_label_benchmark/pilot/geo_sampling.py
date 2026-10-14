@@ -978,6 +978,7 @@ def _extend_flow_group(
     _require_group_flow_capacity(group, cells, demands)
     centres = _flow_candidate_centres(cells, centre_of)
     anchors = _prefix_centres_by_region(prefix, stratum_of)
+    nearest = _nearest_region_distances(cells, centres, anchors)
     selected_cells: set[str] = set()
     selected_counts: dict[str, int] = dict.fromkeys(demands, 0)
     added: list[dict[str, Any]] = []
@@ -989,7 +990,7 @@ def _extend_flow_group(
             selected_counts,
             selected_cells,
             centres,
-            anchors,
+            nearest,
             added,
             seed,
         )
@@ -1024,17 +1025,17 @@ def _select_next_flow_cell(
     selected_counts: dict[str, int],
     selected_cells: set[str],
     centres: Mapping[str, tuple[float, float]],
-    anchors: dict[str, list[tuple[float, float]]],
+    nearest: dict[str, dict[str, float]],
     added: list[dict[str, Any]],
     seed: int,
 ) -> None:
     stratum = _least_filled_region(prefix_counts, selected_counts, demands, seed)
-    cell = _maximin_feasible_cell(stratum, cells, demands, selected_cells, centres, anchors, seed)
+    cell = _maximin_feasible_cell(stratum, cells, demands, selected_cells, nearest, seed)
     added.append(_row_for_extension_cell(cells[cell][stratum][0], cell, centres[cell]))
     selected_cells.add(cell)
     demands[stratum] -= 1
     selected_counts[stratum] += 1
-    anchors.setdefault(stratum, []).append(centres[cell])
+    _update_nearest_region_distances(stratum, cells, centres, nearest, cell)
 
 
 def _prefix_centres_by_region(
@@ -1045,6 +1046,47 @@ def _prefix_centres_by_region(
         stratum = _validated_stratum(stratum_of(row))
         anchors.setdefault(stratum, []).append((row["cell_centre_lat"], row["cell_centre_lon"]))
     return anchors
+
+
+def _nearest_region_distances(
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    centres: Mapping[str, tuple[float, float]],
+    anchors: Mapping[str, Sequence[tuple[float, float]]],
+) -> dict[str, dict[str, float]]:
+    strata = sorted({stratum for regions in cells.values() for stratum in regions})
+    return {
+        stratum: _nearest_distances_for_region(stratum, cells, centres, anchors)
+        for stratum in strata
+    }
+
+
+def _nearest_distances_for_region(
+    stratum: str,
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    centres: Mapping[str, tuple[float, float]],
+    anchors: Mapping[str, Sequence[tuple[float, float]]],
+) -> dict[str, float]:
+    region_anchors = anchors.get(stratum, ())
+    return {
+        cell: _nearest_anchor_distance(centres[cell], region_anchors)
+        for cell, regions in cells.items()
+        if stratum in regions
+    }
+
+
+def _update_nearest_region_distances(
+    stratum: str,
+    cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
+    centres: Mapping[str, tuple[float, float]],
+    nearest: dict[str, dict[str, float]],
+    selected_cell: str,
+) -> None:
+    for cell, regions in cells.items():
+        if stratum in regions:
+            nearest[stratum][cell] = min(
+                nearest[stratum][cell],
+                _haversine_km(centres[cell], centres[selected_cell]),
+            )
 
 
 def _least_filled_region(
@@ -1068,11 +1110,10 @@ def _maximin_feasible_cell(
     cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
     demands: Mapping[str, int],
     selected_cells: set[str],
-    centres: Mapping[str, tuple[float, float]],
-    anchors: Mapping[str, Sequence[tuple[float, float]]],
+    nearest: Mapping[str, Mapping[str, float]],
     seed: int,
 ) -> str:
-    ranked = _rank_maximin_candidates(stratum, cells, selected_cells, centres, anchors, seed)
+    ranked = _rank_maximin_candidates(stratum, cells, selected_cells, nearest, seed)
     return _first_flow_feasible_candidate(stratum, ranked, cells, demands, selected_cells)
 
 
@@ -1080,8 +1121,7 @@ def _rank_maximin_candidates(
     stratum: str,
     cells: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
     selected_cells: set[str],
-    centres: Mapping[str, tuple[float, float]],
-    anchors: Mapping[str, Sequence[tuple[float, float]]],
+    nearest: Mapping[str, Mapping[str, float]],
     seed: int,
 ) -> list[str]:
     candidates = [
@@ -1089,10 +1129,7 @@ def _rank_maximin_candidates(
     ]
     return sorted(
         candidates,
-        key=lambda cell: (
-            -_nearest_anchor_distance(centres[cell], anchors.get(stratum, ())),
-            _stable_key(seed, cell),
-        ),
+        key=lambda cell: (-nearest[stratum][cell], _stable_key(seed, cell)),
     )
 
 

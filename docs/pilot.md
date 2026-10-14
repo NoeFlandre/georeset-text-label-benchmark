@@ -170,11 +170,16 @@ feasible under the preserved row and cell capacities, including cross-region cel
 The final `UNASSIGNED` quota includes the prefix: five yes prefix rows require one yes
 extension row, and six no prefix rows require zero no extension rows. The inventory reports
 877 yes and 343 no extension candidate rows in `UNASSIGNED`, confirming that the required
-yes candidate exists; the preserved flow check also confirms no same-class H3 reuse.
+yes capacity exists; the preserved flow check also confirms no same-class H3 reuse. The
+inventory does not preserve the identity of the exact yes row that would be selected. Keep
+the freeze blocked until that single extension row is identified and verified against the
+byte-pinned Parquet alongside the immutable 100-row prefix.
 An alternative would add one extra yes in region 151 and remove one yes from `UNASSIGNED`;
 it is not used because that would give the classes different regional mixes. The matched
 vector is the selected implementation of the user's geographic and yes/no balance request.
 The sample digest remains unverified until the freeze is run against the exact pinned pool.
+Do not run this command until the required `UNASSIGNED` yes row has been verified by identity
+and the base-prefix digest has been rechecked against the committed sample.
 
 By default, the extension requires the same labelled-pool and pipeline-manifest hashes as
 the base sample. The separate mode below is only for a reconstructed pipeline manifest:
