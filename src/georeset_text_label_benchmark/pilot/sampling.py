@@ -68,8 +68,18 @@ def _candidate_record(code: str, observed_name: str, details: Mapping[str, str])
 def build_candidate_labels(
     rows: Iterable[Mapping[str, Any]], taxonomy: Mapping[str, Mapping[str, str]]
 ) -> list[dict[str, str]]:
-    """Build sorted candidate labels from pinned polygon names and taxonomy descriptions."""
+    """Build the full sorted taxonomy vocabulary, checking names present in the pool."""
     names = _observed_names(rows)
-    if set(names) != set(taxonomy):
-        raise ValueError("taxonomy codes do not match observed EUNIS codes")
-    return [_candidate_record(code, names[code], taxonomy[code]) for code in sorted(names)]
+    unknown_codes = sorted(set(names) - set(taxonomy))
+    if unknown_codes:
+        raise ValueError(
+            "observed EUNIS codes are absent from taxonomy: " + ", ".join(unknown_codes)
+        )
+    return [
+        _candidate_record(
+            code,
+            names[code] if code in names else _required_string(details, "name"),
+            details,
+        )
+        for code, details in sorted(taxonomy.items())
+    ]

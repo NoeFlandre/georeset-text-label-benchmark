@@ -54,7 +54,8 @@ def test_freeze_help_lists_exactly_its_flags(monkeypatch: pytest.MonkeyPatch) ->
         "                             --pipeline-manifest PIPELINE_MANIFEST\n"
         "                             [--candidate-csv CANDIDATE_CSV]\n"
         "                             [--output-dir OUTPUT_DIR] [--per-group PER_GROUP]\n"
-        "                             [--seed SEED]\n\n"
+        "                             [--seed SEED] [--extend-from EXTEND_FROM]\n"
+        "                             [--allow-reconstructed-pipeline-manifest]\n\n"
         "options:\n"
         "  -h, --help            show this help message and exit\n"
         "  --labelled-parquet LABELLED_PARQUET\n"
@@ -63,6 +64,10 @@ def test_freeze_help_lists_exactly_its_flags(monkeypatch: pytest.MonkeyPatch) ->
         "  --output-dir OUTPUT_DIR\n"
         "  --per-group PER_GROUP\n"
         "  --seed SEED\n"
+        "  --extend-from EXTEND_FROM\n"
+        "  --allow-reconstructed-pipeline-manifest\n"
+        "                        allow a different manifest for an extension when the\n"
+        "                        pinned labelled pool is identical\n"
     )
 
 
@@ -97,7 +102,8 @@ def test_run_dspark_smoke_help_lists_exactly_its_flags(monkeypatch: pytest.Monke
         "                                       OUTPUT_DIR [--model-cache MODEL_CACHE]\n"
         "                                       [--model-cache-seed MODEL_CACHE_SEED]\n"
         "                                       --computation-commit COMPUTATION_COMMIT\n"
-        "                                       --validation-commit VALIDATION_COMMIT\n\n"
+        "                                       --validation-commit VALIDATION_COMMIT\n"
+        "                                       [--generation-profile {eunis-direct-label-512-v1,lfm25-dspark-max-new-tokens-16384-diagnostic-v1}]\n\n"
         "options:\n"
         "  -h, --help            show this help message and exit\n"
         "  --run-dir RUN_DIR\n"
@@ -106,6 +112,8 @@ def test_run_dspark_smoke_help_lists_exactly_its_flags(monkeypatch: pytest.Monke
         "  --model-cache-seed MODEL_CACHE_SEED\n"
         "  --computation-commit COMPUTATION_COMMIT\n"
         "  --validation-commit VALIDATION_COMMIT\n"
+        "  --generation-profile {eunis-direct-label-512-v1,lfm25-dspark-max-new-tokens-16384-diagnostic-v1}\n"
+        "                        select the generation budget for this bounded smoke\n"
     )
 
 
@@ -125,6 +133,9 @@ def test_freeze_parses_every_flag_into_its_own_field() -> None:
             "7",
             "--seed",
             "9",
+            "--extend-from",
+            "base.json",
+            "--allow-reconstructed-pipeline-manifest",
         ]
     )
 
@@ -136,6 +147,8 @@ def test_freeze_parses_every_flag_into_its_own_field() -> None:
         output_dir=Path("run-out"),
         per_group=7,
         seed=9,
+        extend_from=Path("base.json"),
+        allow_reconstructed_pipeline_manifest=True,
     )
     assert type(args.per_group) is int
     assert type(args.seed) is int
@@ -154,6 +167,8 @@ def test_freeze_defaults_name_the_pinned_candidate_table_and_pilot_run_directory
         output_dir=Path("artifacts/pilot-100-seed42"),
         per_group=50,
         seed=42,
+        extend_from=None,
+        allow_reconstructed_pipeline_manifest=False,
     )
     assert type(args.per_group) is int
 
@@ -245,6 +260,7 @@ def test_run_dspark_smoke_defaults_name_the_pilot_run_and_model_cache() -> None:
         model_cache_seed=None,
         computation_commit=COMMIT,
         validation_commit=VALIDATION_COMMIT,
+        generation_profile="eunis-direct-label-512-v1",
     )
 
 
@@ -277,6 +293,9 @@ def test_main_freeze_passes_inputs_in_order_and_prints_sorted_json(
             "7",
             "--seed",
             "9",
+            "--extend-from",
+            "base.json",
+            "--allow-reconstructed-pipeline-manifest",
         ]
     )
 
@@ -289,7 +308,12 @@ def test_main_freeze_passes_inputs_in_order_and_prints_sorted_json(
                 Path("manifest.json"),
                 Path("run-out"),
             ),
-            {"per_group": 7, "seed": 9},
+            {
+                "per_group": 7,
+                "seed": 9,
+                "extend_from": Path("base.json"),
+                "allow_reconstructed_pipeline_manifest": True,
+            },
         )
     ]
     assert capsys.readouterr().out == '{\n  "alpha": "café",\n  "zeta": 1\n}\n'
@@ -386,12 +410,19 @@ def test_candidates_are_sorted_by_code_regardless_of_row_order() -> None:
     assert [candidate["eunis_code"] for candidate in candidates] == ["MA221", "T11", "ZZ9"]
 
 
-def test_taxonomy_must_cover_exactly_the_observed_codes() -> None:
-    message = "taxonomy codes do not match observed EUNIS codes"
+def test_taxonomy_vocabulary_can_include_codes_absent_from_observed_rows() -> None:
+    candidates = build_candidate_labels(
+        [_row()], {"T11": _taxonomy(), "MA221": _taxonomy("Saltmarsh")}
+    )
+
+    assert [candidate["eunis_code"] for candidate in candidates] == ["MA221", "T11"]
+    assert candidates[0]["eunis_name"] == "Saltmarsh"
+
+
+def test_observed_codes_must_be_present_in_taxonomy() -> None:
+    message = "observed EUNIS codes are absent from taxonomy: T11"
     with pytest.raises(ValueError, match=_exact(message)):
         build_candidate_labels([_row()], {})
-    with pytest.raises(ValueError, match=_exact(message)):
-        build_candidate_labels([_row()], {"T11": _taxonomy(), "MA221": _taxonomy("Saltmarsh")})
 
 
 @pytest.mark.parametrize(

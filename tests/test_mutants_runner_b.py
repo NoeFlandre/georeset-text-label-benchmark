@@ -14,8 +14,14 @@ import pyarrow.parquet as pq
 import pytest
 
 from georeset_text_label_benchmark.output_schema import LABELLED_SCHEMA
-from georeset_text_label_benchmark.pilot.geo_sampling import h3_cell_of, h3_centre_of
+from georeset_text_label_benchmark.pilot.geo_sampling import (
+    H3_RESOLUTION,
+    h3_cell_of,
+    h3_centre_of,
+    sample_id_of,
+)
 from georeset_text_label_benchmark.pilot.runner import (
+    SELECTION_METHOD,
     _is_sha256,
     _read_frozen_sample,
     _read_pipeline_manifest,
@@ -431,19 +437,24 @@ def test_read_pipeline_manifest_decodes_utf8_when_the_default_encoding_is_ascii(
     assert dict(_read_pipeline_manifest(path)) == payload
 
 
-def _frozen_row(sample_id: str, decision: str, cell: str, osm_id: int) -> dict[str, Any]:
+def _frozen_row(identity: str, decision: str, cell: str, osm_id: int) -> dict[str, Any]:
     lat, lon = h3_centre_of(cell)
-    return {
-        "sample_id": sample_id,
-        "text_sha256": hashlib.sha256(sample_id.encode("utf-8")).hexdigest(),
+    sentence = f"Frozen sample sentence {identity}."
+    row = {
         "source_pbf": "test-latest.osm.pbf",
         "osm_type": "way",
         "osm_id": osm_id,
+        "description_identity": identity,
+        "tag_key": "description",
+        "sentence_index": 0,
+        "sentence": sentence,
+        "text_sha256": hashlib.sha256(sentence.encode("utf-8")).hexdigest(),
         "decision": decision,
         "h3_cell": cell,
         "cell_centre_lat": lat,
         "cell_centre_lon": lon,
     }
+    return {**row, "sample_id": sample_id_of(row)}
 
 
 def _frozen_sample_document(note: str) -> dict[str, Any]:
@@ -455,8 +466,15 @@ def _frozen_sample_document(note: str) -> dict[str, Any]:
         "note": note,
         "source": {"file": LABELLED, "sha256": "a" * 64, "pipeline_manifest_sha256": "b" * 64},
         "selection": {
+            "method": SELECTION_METHOD,
+            "seed": 42,
             "sample_size": 2,
             "per_group": 1,
+            "decision_counts": {"no": 1, "yes": 1},
+            "unique_sentence_hash_count": 2,
+            "unique_polygon_count": 2,
+            "h3_resolution": H3_RESOLUTION,
+            "cell_count": 2,
             "sample_ids_sha256": _sha256_json([row["sample_id"] for row in rows]),
         },
         "selected_rows": rows,
@@ -476,7 +494,6 @@ def test_read_frozen_sample_returns_the_document_and_its_selected_rows(tmp_path:
     sample, rows = _read_frozen_sample(tmp_path / "run")
 
     assert sample["note"] == "pilot"
-    assert [row["sample_id"] for row in rows] == ["sample-yes", "sample-no"]
     assert [row["decision"] for row in rows] == ["yes", "no"]
 
 
@@ -489,4 +506,4 @@ def test_read_frozen_sample_decodes_utf8_when_the_default_encoding_is_ascii(
     sample, rows = _read_frozen_sample(tmp_path / "run")
 
     assert sample["note"] == "café"
-    assert [row["sample_id"] for row in rows] == ["sample-yes", "sample-no"]
+    assert [row["decision"] for row in rows] == ["yes", "no"]

@@ -1,5 +1,23 @@
-"""Immutable candidate, sample and seed settings for the published pilot."""
+"""Immutable candidate, supported sample sizes and seed settings for the pilot."""
 
 CANDIDATE_LABELS_SHA256 = "2e6cc694da7baa8edf9debeed08a0adda719518be74e659a0533b3ae9e56afa8"
 SAMPLE_SIZE = 100
 SAMPLE_SEED = 42
+EXTENDED_SAMPLE_SIZE = 1000
+SUPPORTED_SAMPLE_SIZES = (SAMPLE_SIZE, EXTENDED_SAMPLE_SIZE)
+EXPECTED_SAMPLE_IDS_SHA256 = "e481f7fa38a6efaccdf2358a9bdb4b2b3a34df8cd85c7023df74a12a44dddc6d"
+EXPECTED_BASE_FROZEN_SAMPLE_SHA256 = (
+    "4c62ea9bd15839a80515eae344698acdad9b2cfc3b3ce2e90649d12f9c163a24"
+)
+EXPECTED_BASE_SELECTED_ROWS_SHA256 = (
+    "86435fd50d31d09322bffac18fccfe731b859a9cae72af746292ff8c81c80359"
+)
+EXPECTED_BASE_MANIFEST_SHA256 = "febd79a106195b3a7ebbe673696a5fcd9e73f18059677d19bacdade659fb0a10"
+EXPECTED_BASE_PIPELINE_MANIFEST_SHA256 = (
+    "67dd8b4d0c420496c03d897dab4ff13a0e3b1e03a459607defc1306a95478ae7"
+)
+EXPECTED_LABELLED_POOL_SHA256 = "c3e6e8b726f41a1f9b71217767c1be94d8779a42b6b6b6fffc38d917fcfda6f4"
+# The 1,000-row M49 digest is intentionally unpinned until that sample is frozen and approved.
+EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE = {
+    SAMPLE_SIZE: EXPECTED_SAMPLE_IDS_SHA256,
+}

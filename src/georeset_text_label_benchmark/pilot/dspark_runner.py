@@ -1,4 +1,4 @@
-"""Run the frozen 100-row pilot as direct, single-label LFM2.5 DSpark generation."""
+"""Run the supported frozen EUNIS samples as direct LFM2.5 DSpark generation."""
 
 from __future__ import annotations
 
@@ -40,7 +40,10 @@ from georeset_text_label_benchmark.pilot.publication import (
     staged_directory,
 )
 from georeset_text_label_benchmark.pilot.runner import (
+    EXTENDED_SELECTION_METHOD,
+    SELECTION_METHOD,
     _candidate_provenance,
+    _is_integer_metadata,
     _sha256_json,
     _validate_commit,
     _validate_staged_hashes,
@@ -84,12 +87,16 @@ def run_dspark_pilot(
     model_cache_seed_dir: Path | None = None,
     smoke: bool = False,
     smoke_evidence: Path | None = None,
+    generation_profile: str = dspark.DEFAULT_GENERATION_PROFILE,
 ) -> dict[str, Any]:
     """Run the frozen DSpark pilot or its fixed eight-row readiness smoke."""
-    destination = _output_destination(run_dir, output_dir, smoke)
-    _validate_run_options(run_dir, destination, computation_commit, validation_commit)
+    profile = _profile_for_run_scope(generation_profile, smoke)
     sample, frozen_rows, candidates = read_frozen_pilot_inputs(run_dir)
     _validate_published_sample(sample, frozen_rows)
+    destination = _output_destination(
+        run_dir, output_dir, smoke, sample_size=sample["selection"]["sample_size"]
+    )
+    _validate_run_options(run_dir, destination, computation_commit, validation_commit)
     frozen_manifest_sha256 = _validate_frozen_manifest(run_dir, sample)
     smoke_evidence_manifest = _validate_full_run_smoke_evidence(
         smoke,
@@ -118,6 +125,7 @@ def run_dspark_pilot(
             validation_commit,
             frozen_manifest_sha256,
             run_scope,
+            generation_profile=profile,
             smoke_evidence_manifest=smoke_evidence_manifest,
             smoke_evidence_path=smoke_evidence,
         )
@@ -136,10 +144,15 @@ def run_dspark_pilot(
     tokenizer_start = _clock()
     tokenizer = dspark.load_tokenizer()
     tokenizer_seconds = _clock() - tokenizer_start
-    encoded, prompt_hashes = _encode_frozen_prompts(tokenizer, rows, candidates)
+    encoded, prompt_hashes = _encode_frozen_prompts(
+        tokenizer,
+        rows,
+        candidates,
+        max_new_tokens=profile.max_new_tokens,
+    )
     template_hash = dspark.template_sha256(tokenizer)
     engine_start = _clock()
-    engine = dspark.SGLangEngine(dspark.engine_kwargs(), dspark.SAMPLING)
+    engine = dspark.SGLangEngine(dspark.engine_kwargs(), dspark.sampling_params(profile))
     engine_seconds = _clock() - engine_start
     generation_start = _clock()
     try:
@@ -182,6 +195,7 @@ def run_dspark_pilot(
             frozen_manifest_sha256,
             cuda_preflight,
             model_cache_seed_dir,
+            profile,
         )
         _write_json_exclusive(staged_manifest, manifest)
         publish_directory(staging, destination)
@@ -204,11 +218,29 @@ def run_dspark_pilot(
     return result
 
 
-def _output_destination(run_dir: Path, output_dir: Path | None, smoke: bool) -> Path:
+def _profile_for_run_scope(profile_id: str, smoke: bool) -> dspark.GenerationProfile:
+    """Resolve a profile and prevent diagnostic budgets from reaching full runs."""
+    profile = dspark.generation_profile(profile_id)
+    if profile.smoke_only and not smoke:
+        raise ValueError("diagnostic generation profile is restricted to smoke runs")
+    return profile
+
+
+def _output_destination(
+    run_dir: Path,
+    output_dir: Path | None,
+    smoke: bool,
+    *,
+    sample_size: int = SAMPLE_SIZE,
+) -> Path:
     """Use a caller-supplied path or a distinct default name for each run scope."""
     if output_dir is not None:
         return output_dir
-    name = "lfm2.5-2.6b-dspark-smoke-8-seed42" if smoke else "lfm2.5-2.6b-dspark-100-seed42"
+    if smoke:
+        sample_suffix = "" if sample_size == SAMPLE_SIZE else f"-from-{sample_size}"
+        name = f"lfm2.5-2.6b-dspark-smoke-8{sample_suffix}-seed42"
+    else:
+        name = f"lfm2.5-2.6b-dspark-{sample_size}-seed42"
     return run_dir.parent / name
 
 
@@ -323,13 +355,15 @@ def _encode_frozen_prompts(
     tokenizer: Any,
     rows: Sequence[Mapping[str, Any]],
     candidates: Sequence[Mapping[str, str]],
+    *,
+    max_new_tokens: int = dspark.MAX_NEW_TOKENS,
 ) -> tuple[list[tuple[list[int], int]], list[str]]:
     encoded = []
     prompt_hashes = []
     for row in rows:
         prompt = dspark.build_prompt(row["sentence"], candidates)
         input_ids = dspark.encode_prompt(tokenizer, prompt)
-        dspark.validate_context_length(len(input_ids))
+        dspark.validate_context_length(len(input_ids), max_new_tokens=max_new_tokens)
         encoded.append((input_ids, len(input_ids)))
         prompt_hashes.append(hashlib.sha256(prompt.encode("utf-8")).hexdigest())
     return encoded, prompt_hashes
@@ -384,10 +418,57 @@ def _prediction_row(
         "prompt_tokens": prompt_tokens,
         "generated_tokens": generated_tokens,
         "finish_reason": finish_reason,
+        "finish_reason_metadata_json": _finish_reason_metadata_json(meta),
+        **_output_token_diagnostics(output),
         "accepted_drafts": _optional_int(meta.get("spec_num_correct_drafts")),
         "proposed_drafts": _optional_int(meta.get("spec_num_proposed_drafts")),
         "generation_seconds": elapsed_seconds,
     }
+
+
+def _finish_reason_metadata_json(meta: Mapping[str, Any]) -> str | None:
+    """Preserve SGLang's unnormalized finish metadata as a stable JSON string."""
+    finish_metadata = meta.get("finish_reason")
+    if finish_metadata is None:
+        return None
+    if isinstance(finish_metadata, Mapping):
+        finish_metadata = dict(finish_metadata)
+    return json.dumps(
+        finish_metadata,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _output_token_diagnostics(output: Mapping[str, Any]) -> dict[str, Any]:
+    """Summarize returned token IDs, leaving unavailable data explicitly unknown."""
+    output_ids = output.get("output_ids")
+    if not _is_output_token_id_sequence(output_ids):
+        return {
+            "output_token_ids_available": None,
+            "last_output_token_id": None,
+            "target_eos_present": None,
+            "target_eos_first_position": None,
+        }
+    eos_present = dspark.TARGET_EOS_TOKEN_ID in output_ids
+    return {
+        "output_token_ids_available": True,
+        "last_output_token_id": output_ids[-1] if output_ids else None,
+        "target_eos_present": eos_present,
+        "target_eos_first_position": (
+            output_ids.index(dspark.TARGET_EOS_TOKEN_ID) if eos_present else None
+        ),
+    }
+
+
+def _is_output_token_id_sequence(value: Any) -> TypeGuard[Sequence[int]]:
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes, bytearray))
+        and all(isinstance(token_id, int) and not isinstance(token_id, bool) for token_id in value)
+    )
 
 
 def _metrics_payload(
@@ -458,8 +539,28 @@ def _build_manifest(
     frozen_manifest_sha256: str,
     cuda_preflight: Mapping[str, Any],
     model_cache_seed_dir: Path | None,
+    generation_profile: dspark.GenerationProfile | None = None,
 ) -> dict[str, Any]:
-    generation_config = _generation_config(template_hash, sample)
+    profile = generation_profile or dspark.generation_profile(dspark.DEFAULT_GENERATION_PROFILE)
+    generation_config = _generation_config(template_hash, sample, profile)
+    limitations = [
+        "The source is the fixed 100-sentence positive-overlap pilot.",
+        "Gold labels are existing polygon-level EUNIS assignments, not sentence-level truth.",
+        "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
+        "The sample has one sentence per H3 cell, 50 yes and 50 no, with unique sentence hashes and polygons.",
+        "Direct generation has no top-5 ranking.",
+        "Generation uses the target model card's sampled decoding settings.",
+        "The DSpark vendor parity benchmarks use greedy decoding; this sampled run does not claim greedy parity.",
+    ]
+    if profile.profile_id == dspark.BUDGET_DIAGNOSTIC_PROFILE:
+        limitations.append(
+            "This bounded smoke changes the generation budget to 16,384 tokens and is not directly "
+            "comparable to the current 512-token default."
+        )
+    if run_scope["kind"] == "bounded-smoke":
+        limitations.append(
+            "This is an eight-row readiness smoke and its metrics are not a full pilot result."
+        )
     return {
         "format_version": 1,
         "computation_commit": computation_commit,
@@ -494,22 +595,7 @@ def _build_manifest(
             PREDICTIONS_NAME: sha256_file(prediction_path),
             METRICS_NAME: sha256_file(metrics_path),
         },
-        "limitations": [
-            "The source is the fixed 100-sentence positive-overlap pilot.",
-            "Gold labels are existing polygon-level EUNIS assignments, not sentence-level truth.",
-            "The 158 candidates are the frozen EEA vocabulary; they omit built and intensive-cropland classes.",
-            "The sample has one sentence per H3 cell, 50 yes and 50 no, with unique sentence hashes and polygons.",
-            "Direct generation has no top-5 ranking.",
-            "Generation uses the target model card's sampled decoding settings.",
-            "The DSpark vendor parity benchmarks use greedy decoding; this sampled run does not claim greedy parity.",
-            *(
-                [
-                    "This is an eight-row readiness smoke and its metrics are not a full pilot result."
-                ]
-                if run_scope["kind"] == "bounded-smoke"
-                else []
-            ),
-        ],
+        "limitations": limitations,
     }
 
 
@@ -532,23 +618,50 @@ def _model_sections() -> dict[str, Any]:
     }
 
 
-def _generation_config(template_hash: str, sample: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+def _generation_config(
+    template_hash: str,
+    sample: Mapping[str, Any],
+    generation_profile: dspark.GenerationProfile | str = dspark.DEFAULT_GENERATION_PROFILE,
+) -> dict[str, Any]:
+    profile = (
+        dspark.generation_profile(generation_profile)
+        if isinstance(generation_profile, str)
+        else generation_profile
+    )
+    config = {
         "prompt_version": dspark.PROMPT_VERSION,
         "prompt_instructions_sha256": dspark.PROMPT_SHA256,
         "tokenizer_chat_template_sha256": template_hash,
         "chat_template_kwargs": dspark.CHAT_TEMPLATE_KWARGS,
-        "sampling": dspark.SAMPLING,
+        "sampling": dspark.sampling_params(profile),
         "engine": dspark.ENGINE_ARGS,
         "setting_provenance": dspark.GENERATION_SETTING_PROVENANCE,
         "runtime_context_limit_tokens": dspark.RUNTIME_CONTEXT_TOKENS,
-        "maximum_new_tokens": dspark.MAX_NEW_TOKENS,
+        "maximum_new_tokens": profile.max_new_tokens,
         "candidate_count": len(sample["candidate_labels"]["codes"]),
         "candidate_csv_sha256": CANDIDATE_LABELS_SHA256,
         "sample_ids_sha256": sample["selection"]["sample_ids_sha256"],
         "gold_label_used_in_prompt": False,
         "embeddings_shortlisting": False,
     }
+    if profile.profile_id == dspark.BUDGET_DIAGNOSTIC_PROFILE:
+        config["generation_profile"] = {
+            "profile_id": profile.profile_id,
+            "version": profile.version,
+            "scope": "bounded-smoke-only",
+            "max_new_tokens": profile.max_new_tokens,
+            "based_on_profile": dspark.DEFAULT_GENERATION_PROFILE,
+            "comparability": "generation budget differs; report as a separate diagnostic",
+        }
+        config["setting_provenance"] = {
+            **dspark.GENERATION_SETTING_PROVENANCE,
+            "sampling.max_new_tokens": (
+                "Versioned bounded diagnostic profile raises only max_new_tokens from the "
+                "current 512-token default to 16,384; length finishes remain truncated and "
+                "invalid, and results are reported separately."
+            ),
+        }
+    return config
 
 
 def _validate_run_inputs(
@@ -592,10 +705,12 @@ def _resume_staged_dspark_run(
     frozen_manifest_sha256: str,
     run_scope: Mapping[str, Any] | None = None,
     *,
+    generation_profile: dspark.GenerationProfile | str = dspark.DEFAULT_GENERATION_PROFILE,
     smoke_evidence_manifest: Mapping[str, Any] | None = None,
     smoke_evidence_path: Path | None = None,
 ) -> dict[str, Any]:
     manifest = _read_staged_dspark_manifest(staging)
+    _validate_staged_generation_config(staging, manifest, sample, generation_profile)
     _validate_staged_dspark_protocol(
         staging,
         manifest,
@@ -618,6 +733,61 @@ def _resume_staged_dspark_run(
     ensure_publication_supported(destination.parent)
     publish_directory(staging, destination)
     return _staged_dspark_summary(destination, run_dir, staging, sample, candidates, manifest)
+
+
+def _validate_staged_generation_config(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    sample: Mapping[str, Any],
+    generation_profile: dspark.GenerationProfile | str,
+) -> None:
+    """Require a retained transaction to use the same named generation budget."""
+    if isinstance(generation_profile, str):
+        profile = dspark.generation_profile(generation_profile)
+    else:
+        profile = generation_profile
+    if profile.profile_id == dspark.DEFAULT_GENERATION_PROFILE:
+        _validate_staged_default_generation_config(staging, manifest, sample)
+        return
+    _validate_staged_named_generation_config(staging, manifest, sample, profile)
+
+
+def _validate_staged_default_generation_config(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    sample: Mapping[str, Any],
+) -> None:
+    if _is_default_staged_generation_config(manifest, sample):
+        return
+    raise ValueError(
+        f"retained DSpark staging generation config does not match this profile: {staging}"
+    )
+
+
+def _validate_staged_named_generation_config(
+    staging: Path,
+    manifest: Mapping[str, Any],
+    sample: Mapping[str, Any],
+    profile: dspark.GenerationProfile,
+) -> None:
+    expected = _generation_config(dspark.TARGET_CHAT_TEMPLATE_SHA256, sample, profile)
+    if manifest.get("generation_config") == expected and manifest.get(
+        "generation_config_sha256"
+    ) == _sha256_json(expected):
+        return
+    raise ValueError(
+        f"retained DSpark staging generation config does not match this profile: {staging}"
+    )
+
+
+def _is_default_staged_generation_config(
+    manifest: Mapping[str, Any], sample: Mapping[str, Any]
+) -> bool:
+    """Accept only the exact historical 512-token config and its matching hash."""
+    expected = _generation_config(dspark.TARGET_CHAT_TEMPLATE_SHA256, sample)
+    return manifest.get("generation_config") == expected and manifest.get(
+        "generation_config_sha256"
+    ) == _sha256_json(expected)
 
 
 def _read_staged_dspark_manifest(staging: Path) -> Mapping[str, Any]:
@@ -993,6 +1163,8 @@ def _verify_frozen_input_hashes(run_dir: Path, manifest: Mapping[str, Any]) -> N
 
 def _verify_frozen_selection(manifest: Mapping[str, Any], sample: Mapping[str, Any]) -> None:
     selection = sample["selection"]
+    if not all(_is_integer_metadata(manifest.get(key)) for key in ("seed", "sample_size")):
+        raise ValueError("frozen manifest does not match frozen_sample.json")
     for key in ("sample_ids_sha256", "seed", "sample_size"):
         if manifest.get(key) != selection.get(key):
             raise ValueError("frozen manifest does not match frozen_sample.json")
@@ -1001,15 +1173,51 @@ def _verify_frozen_selection(manifest: Mapping[str, Any], sample: Mapping[str, A
 def _validate_sample_selection(
     selection: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]
 ) -> None:
-    if selection["sample_size"] != SAMPLE_SIZE or len(rows) != SAMPLE_SIZE:
-        raise ValueError("DSpark evaluation requires the published 100-row pilot sample")
-    if selection["seed"] != SAMPLE_SEED:
+    sample_size = selection["sample_size"]
+    if not _is_supported_sample_size(sample_size, len(rows)):
+        raise ValueError("DSpark evaluation requires a supported pilot sample size")
+    if not _is_integer_metadata(selection["seed"]) or selection["seed"] != SAMPLE_SEED:
         raise ValueError("frozen sample seed does not match the published pilot")
+    _validate_sample_selection_protocol(selection, sample_size)
+
+
+def _is_supported_sample_size(value: Any, row_count: int) -> TypeGuard[int]:
+    return (
+        _is_integer_metadata(value)
+        and value in dspark.SUPPORTED_SAMPLE_SIZES
+        and row_count == value
+    )
+
+
+def _validate_sample_selection_protocol(selection: Mapping[str, Any], sample_size: int) -> None:
+    expected_method = SELECTION_METHOD if sample_size == SAMPLE_SIZE else EXTENDED_SELECTION_METHOD
+    if (
+        not _sample_group_size_matches(selection, sample_size)
+        or selection.get("method") != expected_method
+    ):
+        raise ValueError("frozen sample selection method or group size does not match the protocol")
+
+
+def _sample_group_size_matches(selection: Mapping[str, Any], sample_size: int) -> bool:
+    per_group = selection.get("per_group")
+    return (
+        not isinstance(per_group, bool)
+        and isinstance(per_group, int)
+        and 2 * per_group == sample_size
+    )
 
 
 def _validate_sample_digests(sample: Mapping[str, Any]) -> None:
     selection = sample["selection"]
-    if selection["sample_ids_sha256"] != dspark.EXPECTED_SAMPLE_IDS_SHA256:
+    sample_size = selection["sample_size"]
+    expected = (
+        dspark.EXPECTED_SAMPLE_IDS_SHA256
+        if sample_size == SAMPLE_SIZE
+        else dspark.EXPECTED_SAMPLE_IDS_SHA256_BY_SIZE.get(sample_size)
+    )
+    if expected is None:
+        raise ValueError("1,000-row sample ID digest has not been approved for inference")
+    if selection["sample_ids_sha256"] != expected:
         raise ValueError("frozen sample IDs do not match the published pilot")
     if sample["candidate_labels"]["sha256"] != CANDIDATE_LABELS_SHA256:
         raise ValueError("candidate CSV hash does not match the published pilot")
