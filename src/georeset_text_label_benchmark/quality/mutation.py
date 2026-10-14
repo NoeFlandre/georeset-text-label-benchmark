@@ -334,6 +334,88 @@ EQUIVALENT_RATIONALES = {
     "georeset_text_label_benchmark.pilot.runner.x__read_pipeline_manifest__mutmut_5": (
         'read_text(encoding="UTF-8") resolves to the same utf-8 codec, so the manifest decodes identically.'
     ),
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_17": (
+        "json.dumps treats ensure_ascii=None as false, so CLI results have identical Unicode "
+        "serialization to ensure_ascii=False."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__ancestor_at_level__mutmut_5": (
+        "For a validated taxonomy, parent levels strictly precede child levels. When a node "
+        "is shallower than the target, continuing to its parents still ends without finding "
+        "that deeper target level; returning None immediately is equivalent."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__ancestor_at_level__mutmut_6": (
+        "The node.level == level case returns before this comparison, so changing < to <= "
+        "cannot alter the ancestor result."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__candidate_source_hash__mutmut_8": (
+        "Validated classification keys are lowercase 64-character SHA-256 values. For a "
+        "missing or empty source hash, both the empty default and this non-hash lookup miss; "
+        "for a present valid hash, both lookups use the same value."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__mcc_denominator__mutmut_18": (
+        "_count_variance is non-negative, so the product is non-negative. The mutant's "
+        "always-true branch returns the same square root for every reachable product."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__mcc_denominator__mutmut_21": (
+        "Predicted and true variances are non-negative integers. A zero product returns 0 "
+        "under either branch; every positive product returns the same square root."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__mcc_denominator__mutmut_22": (
+        "Each variance is an integer and its smallest positive value is 2; a positive product "
+        "is therefore at least 4. Testing product > 1 has the same result as product > 0."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__mcc_from_labels__mutmut_39": (
+        "The denominator is zero when either class variance is zero; every positive class "
+        "variance is an integer of at least 2, so the square-root denominator is either 0 "
+        "or at least 2. Returning 0 for denominator <= 1 is equivalent to <= 0."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__unmapped_counts__mutmut_18": (
+        "The later strict three-way zip validates equal indices, gold, and predicted lengths "
+        "before the helper returns. For aligned inputs the first zip's strict flag cannot "
+        "change the result; malformed-vector errors are an internal helper detail."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__unmapped_counts__mutmut_21": (
+        "The later strict three-way zip validates equal indices, gold, and predicted lengths "
+        "before the helper returns. For aligned inputs omitting strict on the first zip cannot "
+        "change the result; malformed-vector errors are an internal helper detail."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy.x__unmapped_counts__mutmut_22": (
+        "The later strict three-way zip validates equal indices, gold, and predicted lengths "
+        "before the helper returns. For aligned inputs strict=False on the first zip cannot "
+        "change the result; malformed-vector errors are an internal helper detail."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__read_json__mutmut_5": (
+        "Python resolves UTF-8 and utf-8 to the same codec, so JSON bytes decode identically."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__read_candidate_sources__mutmut_23": (
+        "Python resolves UTF-8 and utf-8 to the same codec, so candidate CSV bytes decode identically."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__write_csv__mutmut_10": (
+        "Python resolves UTF-8 and utf-8 to the same codec, so CSV bytes are encoded identically."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__write_csv__mutmut_24": (
+        "json.dumps treats ensure_ascii=None as false, so Unicode label universes serialize "
+        "identically to ensure_ascii=False."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__write_csv__mutmut_31": (
+        "The JSON value in label_universe is always a sequence, so json.dumps never uses "
+        "the key separator. Changing that separator cannot affect any CSV output."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__validate_prediction_identity__mutmut_7": (
+        "_validate_prediction_order compares the complete prediction sample-ID vector with "
+        "the frozen IDs before this zip; equality requires the same sequence length, so "
+        "strict=None cannot change iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__validate_prediction_identity__mutmut_10": (
+        "_validate_prediction_order compares the complete prediction sample-ID vector with "
+        "the frozen IDs before this zip; equality requires the same sequence length, so "
+        "omitting strict cannot change iteration."
+    ),
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__validate_prediction_identity__mutmut_11": (
+        "_validate_prediction_order compares the complete prediction sample-ID vector with "
+        "the frozen IDs before this zip; equality requires the same sequence length, so "
+        "strict=False cannot change iteration."
+    ),
 }
 
 
@@ -426,6 +508,25 @@ EQUIVALENT_FINGERPRINTS: dict[str, str] = {
     "georeset_text_label_benchmark.pilot.runner.x__read_source_rows__mutmut_7": "870ed624c570811e4fa395118427ff46a4964161d70e63160f253f7b1f0c4a4a",
     "georeset_text_label_benchmark.pilot.runner.x__read_source_rows__mutmut_9": "6a77630566425e50a963e9f4021db6963204075f9f2ad72971e43a01c07a2a08",
     "georeset_text_label_benchmark.pilot.runner.x__read_pipeline_manifest__mutmut_5": "1c92600e744d6fe3c5cc445b705786c7b2646faba0c7713f56a7f1cb094995e8",
+    "georeset_text_label_benchmark.pilot.cli.x_main__mutmut_17": "f34a1a2916c6cab4b7a7e9f8bcb64123eee45eac744d5eaa607bfabfaafb07a2",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__ancestor_at_level__mutmut_5": "870dccd622139e019a01d4d1cbac74a33127456f2ae394bb9a0f57e7694e1506",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__ancestor_at_level__mutmut_6": "51a0d075e001457064f5508331b3651d8ba00b122c1b799754a8a9b1da61185c",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__candidate_source_hash__mutmut_8": "6bf0f3bfdb1f4f99935418220e125e7a77edd4640560865aa804f674e82f6b65",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__mcc_denominator__mutmut_21": "d9e3ddf9f22d83780ddb14b1ff1e478e1e1a8341f1302f1a79e1fdaeb13f2ae3",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__mcc_denominator__mutmut_22": "7bf478b6fc4bfa69576766b346bd6828afc80b23c1f9c4fb29ab7b8c0be56a4e",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__mcc_denominator__mutmut_18": "e769e125c7a39ec05003378240d879145efd15e6c49887bc3ef93f43aa8ab17f",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__mcc_from_labels__mutmut_39": "ef472fe82d57930a89778399458ad1a5954d778c5bb0ecfe9fab46dcbec9416d",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__unmapped_counts__mutmut_18": "416a2ee2c21cd5f193fb01cc12252e589343139e962032d65805c08fa9dc95a9",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__unmapped_counts__mutmut_21": "a4b5368a7e65adf0329a7d3886dcb03efc70cebd4546bc2e55b4441b15bfd124",
+    "georeset_text_label_benchmark.pilot.hierarchy.x__unmapped_counts__mutmut_22": "150f9234a44c69c5d44654a7817362e622e31ee59ab9dca72b5696f5054517af",
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__read_json__mutmut_5": "734eaae4026872e3e19762c7d2ea76b925b2fcb3485cdc1689662256cf61925e",
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__read_candidate_sources__mutmut_23": "46777864fb5836110c2f2b645569f598487f7db85ccc50ae51a23def02830086",
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__write_csv__mutmut_10": "fcdd8220a049c51c96d93555b3ec2eb4b712c0b37650333d897418e910a815ba",
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__write_csv__mutmut_24": "29d9f624b4331493706d9eac0c3db902bcd0de990b9a7cce21b4be06c0ed8500",
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__write_csv__mutmut_31": "8aee55da669725f01fc5a982941a80b6ce4e10954d426a2c0ae3cbce2812dd1d",
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__validate_prediction_identity__mutmut_7": "ec8982f74598bba6c41e9bc1d1ff105a1893a30660c46501889bd3e6ae5e30c0",
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__validate_prediction_identity__mutmut_10": "8a916be80eb1b985858812a9735d8f8923946435c916aa9ae845b7937db9829f",
+    "georeset_text_label_benchmark.pilot.hierarchy_runner.x__validate_prediction_identity__mutmut_11": "30c523455f312ec2863fe484578573fb63b2e9d9873306699d92eaa24b923207",
 }
 
 REVIEWED_EXEMPTIONS = {
